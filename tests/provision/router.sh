@@ -50,8 +50,13 @@ table ip nat {
 }
 EOF
 
-systemctl enable nftables
-systemctl start nftables
+# Run hermitshell-agent to apply nftables rules
+if [ -f /opt/hermitshell/hermitshell-agent ]; then
+    /opt/hermitshell/hermitshell-agent
+else
+    echo "Warning: hermitshell-agent not found, using static rules"
+    nft -f /etc/nftables.conf
+fi
 
 # Configure dnsmasq for LAN DHCP
 cat > /etc/dnsmasq.conf <<EOF
