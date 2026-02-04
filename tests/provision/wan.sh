@@ -2,7 +2,7 @@
 set -e
 
 apt-get update
-apt-get install -y dnsmasq
+apt-get install -y dnsmasq nftables
 
 # Configure dnsmasq as DHCP server for router's WAN interface
 cat > /etc/dnsmasq.conf <<EOF
@@ -17,6 +17,8 @@ echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-forward.conf
 sysctl -p /etc/sysctl.d/99-forward.conf
 
 # NAT for "internet" access (via Vagrant's default NAT interface)
-iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+nft add table ip nat
+nft add chain ip nat postrouting { type nat hook postrouting priority 100 \; }
+nft add rule ip nat postrouting oifname "eth0" masquerade
 
 systemctl restart dnsmasq
