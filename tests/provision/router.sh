@@ -71,3 +71,7 @@ systemctl restart dnsmasq
 # Bring up interfaces
 ifup eth1 || true
 ifup eth2 || true
+
+# Fix default route to go through WAN (eth1) instead of Vagrant management (eth0)
+ip route del default via 192.168.121.1 dev eth0 2>/dev/null || true
+ip route add default via 192.168.100.1 dev eth1 2>/dev/null || true

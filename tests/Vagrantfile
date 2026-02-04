@@ -24,7 +24,7 @@ Vagrant.configure("2") do |config|
   # Router VM - runs HermitShell
   config.vm.define "router" do |router|
     router.vm.hostname = "router"
-    router.vm.synced_folder "../target/release", "/opt/hermitshell", create: true
+    router.vm.synced_folder "../target/release", "/opt/hermitshell", type: "rsync", create: true
     # WAN interface
     router.vm.network :private_network,
       libvirt__network_name: "hermit-wan",
