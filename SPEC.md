@@ -1901,6 +1901,24 @@ chain custom_forward {
 # ip route add default via 10.8.0.1 table vpn
 ```
 
+**Example: Residential proxy node detection (rate-limit + log suspicious devices)**
+
+```nft
+chain custom_forward_early {
+    # Log + drop when any single device exceeds 100 new outbound connections/min
+    # Normal devices rarely hit this; proxy exit nodes easily do
+    ct state new iifname "eth1.*" oifname "eth0" \
+        meter proxy_detect { ip saddr limit rate over 100/minute } \
+        log prefix "[HERMIT:PROXY_SUSPECT] " counter drop
+
+    # Block DNS-over-TLS bypass (prevents proxy SDKs using hardcoded resolvers)
+    tcp dport 853 drop
+}
+```
+
+The agent's behavioral analysis (§17.3) provides the smart layer on top — these
+rules are a blunt fallback that limits damage while investigation happens.
+
 #### What You Can Break
 
 Custom rules run with full nftables privileges. You can:
@@ -2380,6 +2398,41 @@ IoT devices rarely need to talk to other internal devices. Alert when:
 - Any device scans multiple internal IPs
 - Quarantine device attempts internal connection
 
+**Residential proxy / botnet node detection:**
+
+Trojanized apps and "bandwidth sharing" SDKs silently turn devices into proxy exit
+nodes, routing strangers' traffic through your IP. Real-world examples: IPIDEA
+(disrupted by Google GTIG, Jan 2026 — 600+ trojanized Android apps, 3000+
+trojanized Windows binaries, 550+ threat groups using exit nodes), 911 S5 (19M
+compromised IPs, dismantled by FBI/DOJ May 2024). Detection heuristics:
+
+- **Connection fan-out:** Proxy exit nodes make connections to many distinct
+  destination IPs that the device owner never initiated. Alert when a device
+  exceeds its baseline unique-destination count by 5x+.
+- **Symmetric traffic ratio:** Normal browsing is heavily download-biased. A
+  device acting as a proxy exit node shows upload ≈ download. Flag devices where
+  upload/download ratio exceeds 0.7 sustained over 1 hour.
+- **Connection rate:** Residential proxy nodes relay many short-lived connections.
+  Alert when `ct state new` rate exceeds device-class baseline (e.g. >60/min for
+  an IoT device, >200/min for a workstation).
+- **TLS fingerprint mismatch:** Proxy SDK traffic often has JA3/JA4 hashes that
+  don't match the expected application. A smart TV making connections with a
+  Python-like or Go-like TLS fingerprint is a strong signal.
+- **DNS bypass attempts:** Proxy SDKs frequently hardcode DNS resolvers to reach
+  C2 infrastructure, bypassing the router's resolver. Transparent DNS
+  interception (§17.4) catches this.
+- **Known proxy infra IPs:** Integrate threat intel feeds (e.g. Spur, Black Lotus
+  Labs) to flag connections to known proxy relay/C2 infrastructure.
+
+```
+⚠️ Anomaly: Samsung Smart TV (10.0.8.2)
+  - 347 unique destination IPs in past hour (baseline: 12)
+  - Upload/download ratio: 0.83 (baseline: 0.05)
+  - 4 connections to known IPIDEA relay IPs (Spur feed)
+  - JA3 hash matches Go HTTP client, not Tizen browser
+  - Recommend: quarantine + investigate installed apps
+```
+
 This is the gap between "asset inventory" (runZero) and "network policy" (HermitShell) - continuous behavioral monitoring.
 
 ### 17.4 Privacy-Focused Features
@@ -2482,6 +2535,7 @@ suricata-update enable-source oisf/trafficid       # Traffic identification
 suricata-update enable-source sslbl/ssl-fp-blacklist  # Malicious SSL certs
 suricata-update enable-source sslbl/ja3-fingerprints  # Malicious JA3 fingerprints
 suricata-update enable-source tgreen/hunting       # Threat hunting rules
+suricata-update enable-source etnetera/aggressive  # Proxy/anonymizer detection
 suricata-update
 ```
 
@@ -2959,6 +3013,7 @@ FallbackNTP=0.pool.ntp.org 1.pool.ntp.org
 |--------|------------|
 | Compromised IoT device attacking LAN | VLAN isolation, nftables inter-VLAN rules |
 | Malicious device on network | Quarantine by default, must be approved |
+| Device enrolled in residential proxy botnet | Per-device traffic anomaly detection, connection rate limits, upload/download ratio monitoring (see §17.3) |
 | DNS-based tracking by ISP | DoT upstream, DNSSEC validation |
 | UI vulnerabilities | Container isolation, agent validates all input |
 | Local attacker with network access | Admin auth required, HTTPS optional |
