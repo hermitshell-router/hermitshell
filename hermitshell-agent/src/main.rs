@@ -1,4 +1,5 @@
 mod db;
+mod dhcp;
 mod nftables;
 
 use anyhow::Result;
