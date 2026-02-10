@@ -1,8 +1,9 @@
-FROM rust:1.75-bookworm AS builder
+FROM rust:latest AS builder
 
 WORKDIR /app
-COPY hermitshell/ ./hermitshell/
 COPY Cargo.toml ./
+COPY hermitshell/ ./hermitshell/
+COPY hermitshell-agent/ ./hermitshell-agent/
 
 # Build only the hermitshell crate
 RUN cargo build --release -p hermitshell

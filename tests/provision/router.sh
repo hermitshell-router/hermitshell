@@ -84,9 +84,12 @@ fi
 # Load and run container if image exists
 if [ -f /opt/hermitshell/hermitshell-container.tar ]; then
     docker load -i /opt/hermitshell/hermitshell-container.tar
+    # Remove existing container if any
+    docker rm -f hermitshell 2>/dev/null || true
+    # Use --network host to avoid iptables conflicts with nftables
     docker run -d \
         --name hermitshell \
-        -p 3000:3000 \
+        --network host \
         -v /run/hermitshell/agent.sock:/run/hermitshell/agent.sock \
         hermitshell:latest
 fi
