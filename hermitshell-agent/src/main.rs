@@ -1,6 +1,7 @@
 mod db;
 mod dhcp;
 mod nftables;
+mod socket;
 
 use anyhow::Result;
 
