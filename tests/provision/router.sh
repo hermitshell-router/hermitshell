@@ -2,7 +2,7 @@
 set -e
 
 apt-get update
-apt-get install -y nftables dnsmasq
+apt-get install -y nftables dnsmasq docker.io socat
 
 # eth1 = WAN (gets IP from wan-vm via DHCP)
 # eth2 = LAN (static IP, runs DHCP server)
@@ -25,7 +25,7 @@ EOF
 echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-forward.conf
 sysctl -p /etc/sysctl.d/99-forward.conf
 
-# Basic nftables for NAT
+# Basic nftables for NAT (fallback)
 cat > /etc/nftables.conf <<EOF
 #!/usr/sbin/nft -f
 flush ruleset
@@ -50,14 +50,6 @@ table ip nat {
 }
 EOF
 
-# Run hermitshell-agent to apply nftables rules
-if [ -f /opt/hermitshell/hermitshell-agent ]; then
-    /opt/hermitshell/hermitshell-agent
-else
-    echo "Warning: hermitshell-agent not found, using static rules"
-    nft -f /etc/nftables.conf
-fi
-
 # Configure dnsmasq for LAN DHCP
 cat > /etc/dnsmasq.conf <<EOF
 interface=eth2
@@ -75,3 +67,26 @@ ifup eth2 || true
 # Fix default route to go through WAN (eth1) instead of Vagrant management (eth0)
 ip route del default via 192.168.121.1 dev eth0 2>/dev/null || true
 ip route add default via 192.168.100.1 dev eth1 2>/dev/null || true
+
+# Create directories for agent
+mkdir -p /data/hermitshell/db
+mkdir -p /run/hermitshell
+
+# Run hermitshell-agent as daemon
+if [ -f /opt/hermitshell/hermitshell-agent ]; then
+    /opt/hermitshell/hermitshell-agent &
+    sleep 2
+else
+    echo "Warning: hermitshell-agent not found, using static rules"
+    nft -f /etc/nftables.conf
+fi
+
+# Load and run container if image exists
+if [ -f /opt/hermitshell/hermitshell-container.tar ]; then
+    docker load -i /opt/hermitshell/hermitshell-container.tar
+    docker run -d \
+        --name hermitshell \
+        -p 3000:3000 \
+        -v /run/hermitshell/agent.sock:/run/hermitshell/agent.sock \
+        hermitshell:latest
+fi
