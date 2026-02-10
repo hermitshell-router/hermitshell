@@ -1,3 +1,4 @@
+mod db;
 mod nftables;
 
 use anyhow::Result;
