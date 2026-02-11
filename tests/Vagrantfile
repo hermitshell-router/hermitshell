@@ -31,12 +31,12 @@ Vagrant.configure("2") do |config|
       libvirt__dhcp_enabled: false,
       libvirt__forward_mode: "none",
       auto_config: false
-    # LAN interface
+    # LAN interface (auto_config: false, provision script sets /16 netmask)
     router.vm.network :private_network,
       libvirt__network_name: "hermit-lan",
       libvirt__dhcp_enabled: false,
       libvirt__forward_mode: "none",
-      ip: "10.0.0.1"
+      auto_config: false
     router.vm.provision "shell", path: "provision/router.sh"
   end
 

@@ -2,7 +2,7 @@
 set -e
 
 apt-get update
-apt-get install -y nftables dnsmasq docker.io socat
+apt-get install -y nftables docker.io socat conntrack
 
 # eth1 = WAN (gets IP from wan-vm via DHCP)
 # eth2 = LAN (static IP, runs DHCP server)
@@ -13,12 +13,12 @@ auto eth1
 iface eth1 inet dhcp
 EOF
 
-# Configure LAN interface with static IP
+# Configure LAN interface with static IP (/16 covers all /30 subnets)
 cat > /etc/network/interfaces.d/lan <<EOF
 auto eth2
 iface eth2 inet static
     address 10.0.0.1
-    netmask 255.255.255.0
+    netmask 255.255.0.0
 EOF
 
 # Enable IP forwarding
@@ -50,15 +50,7 @@ table ip nat {
 }
 EOF
 
-# Configure dnsmasq for LAN DHCP
-cat > /etc/dnsmasq.conf <<EOF
-interface=eth2
-dhcp-range=10.0.0.100,10.0.0.200,24h
-dhcp-option=option:router,10.0.0.1
-dhcp-option=option:dns-server,10.0.0.1
-EOF
-
-systemctl restart dnsmasq
+# Agent handles DHCP for LAN (no dnsmasq needed)
 
 # Bring up interfaces
 ifup eth1 || true
@@ -72,9 +64,9 @@ ip route add default via 192.168.100.1 dev eth1 2>/dev/null || true
 mkdir -p /data/hermitshell/db
 mkdir -p /run/hermitshell
 
-# Run hermitshell-agent as daemon
+# Run hermitshell-agent as daemon (nohup prevents SIGHUP on session close)
 if [ -f /opt/hermitshell/hermitshell-agent ]; then
-    /opt/hermitshell/hermitshell-agent &
+    nohup /opt/hermitshell/hermitshell-agent > /var/log/hermitshell-agent.log 2>&1 &
     sleep 2
 else
     echo "Warning: hermitshell-agent not found, using static rules"

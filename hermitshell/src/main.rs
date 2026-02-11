@@ -1,9 +1,12 @@
 mod client;
 
+use axum::response::IntoResponse;
+use axum::extract::Form;
 use axum::Router;
 use leptos::*;
 use leptos_axum::{generate_route_list, LeptosRoutes};
 use leptos_router::*;
+use serde::Deserialize;
 
 #[component]
 fn App() -> impl IntoView {
@@ -62,19 +65,55 @@ fn DeviceList() -> impl IntoView {
                                 <th>"MAC"</th>
                                 <th>"IP"</th>
                                 <th>"Hostname"</th>
+                                <th>"Group"</th>
                                 <th>"RX"</th>
                                 <th>"TX"</th>
+                                <th>"Actions"</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {devs.into_iter().map(|d| view! {
-                                <tr>
-                                    <td>{d.mac}</td>
-                                    <td>{d.ip.unwrap_or_default()}</td>
-                                    <td>{d.hostname.unwrap_or_default()}</td>
-                                    <td>{format_bytes(d.rx_bytes)}</td>
-                                    <td>{format_bytes(d.tx_bytes)}</td>
-                                </tr>
+                            {devs.into_iter().map(|d| {
+                                let mac = d.mac.clone();
+                                let group = d.device_group.clone();
+                                let actions = if group == "quarantine" {
+                                    view! {
+                                        <form method="post" action="/api/approve">
+                                            <input type="hidden" name="mac" value={mac.clone()} />
+                                            <select name="group">
+                                                <option value="trusted">"Trusted"</option>
+                                                <option value="iot">"IoT"</option>
+                                                <option value="guest">"Guest"</option>
+                                                <option value="servers">"Servers"</option>
+                                            </select>
+                                            <button type="submit">"Approve"</button>
+                                        </form>
+                                    }.into_view()
+                                } else if group == "blocked" {
+                                    view! {
+                                        <form method="post" action="/api/unblock">
+                                            <input type="hidden" name="mac" value={mac.clone()} />
+                                            <button type="submit">"Unblock"</button>
+                                        </form>
+                                    }.into_view()
+                                } else {
+                                    view! {
+                                        <form method="post" action="/api/block">
+                                            <input type="hidden" name="mac" value={mac.clone()} />
+                                            <button type="submit">"Block"</button>
+                                        </form>
+                                    }.into_view()
+                                };
+                                view! {
+                                    <tr>
+                                        <td>{d.mac}</td>
+                                        <td>{d.ip.unwrap_or_default()}</td>
+                                        <td>{d.hostname.unwrap_or_default()}</td>
+                                        <td>{d.device_group}</td>
+                                        <td>{format_bytes(d.rx_bytes)}</td>
+                                        <td>{format_bytes(d.tx_bytes)}</td>
+                                        <td>{actions}</td>
+                                    </tr>
+                                }
                             }).collect_view()}
                         </tbody>
                     </table>
@@ -97,6 +136,32 @@ fn format_bytes(bytes: i64) -> String {
     }
 }
 
+#[derive(Deserialize)]
+struct ApproveForm {
+    mac: String,
+    group: String,
+}
+
+#[derive(Deserialize)]
+struct DeviceForm {
+    mac: String,
+}
+
+async fn handle_approve(Form(form): Form<ApproveForm>) -> impl IntoResponse {
+    let _ = client::set_device_group(&form.mac, &form.group);
+    axum::response::Redirect::to("/devices")
+}
+
+async fn handle_block(Form(form): Form<DeviceForm>) -> impl IntoResponse {
+    let _ = client::block_device(&form.mac);
+    axum::response::Redirect::to("/devices")
+}
+
+async fn handle_unblock(Form(form): Form<DeviceForm>) -> impl IntoResponse {
+    let _ = client::unblock_device(&form.mac);
+    axum::response::Redirect::to("/devices")
+}
+
 #[tokio::main]
 async fn main() {
     let conf = get_configuration(None).await.unwrap();
@@ -105,6 +170,9 @@ async fn main() {
     let routes = generate_route_list(App);
 
     let app = Router::new()
+        .route("/api/approve", axum::routing::post(handle_approve))
+        .route("/api/block", axum::routing::post(handle_block))
+        .route("/api/unblock", axum::routing::post(handle_unblock))
         .leptos_routes(&leptos_options, routes, App)
         .with_state(leptos_options);
 

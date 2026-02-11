@@ -5,11 +5,15 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-# Run command on VM (filters out Vagrant noise)
+# Run command on VM (filters out Vagrant noise, preserves exit code)
 vm_exec() {
     local vm=$1
     shift
-    vagrant ssh "$vm" -c "$*" 2>/dev/null | grep -v "^==>" | grep -v "^\[fog\]"
+    local output
+    output=$(vagrant ssh "$vm" -c "$*" 2>/dev/null)
+    local rc=$?
+    echo "$output" | grep -v "^==>" | grep -v "^\[fog\]"
+    return $rc
 }
 
 # Assert string matches regex

@@ -11,10 +11,31 @@ table inet filter {{
         type filter hook input priority 0; policy accept;
     }}
     chain forward {{
-        type filter hook forward priority 0; policy accept;
+        type filter hook forward priority 0; policy drop;
+        ct state established,related accept
     }}
     chain output {{
         type filter hook output priority 0; policy accept;
+    }}
+
+    chain quarantine_fwd {{
+        oifname "{wan_iface}" accept
+        drop
+    }}
+    chain trusted_fwd {{
+        accept
+    }}
+    chain iot_fwd {{
+        oifname "{wan_iface}" accept
+        drop
+    }}
+    chain guest_fwd {{
+        oifname "{wan_iface}" accept
+        drop
+    }}
+    chain servers_fwd {{
+        oifname "{wan_iface}" accept
+        drop
     }}
 }}
 
@@ -121,4 +142,64 @@ pub fn get_device_counters(ip: &str) -> Result<(i64, i64)> {
     let rx = counters.get(&format!("dev_{}_rx", ip_key)).map(|c| c.bytes).unwrap_or(0);
     let tx = counters.get(&format!("dev_{}_tx", ip_key)).map(|c| c.bytes).unwrap_or(0);
     Ok((rx, tx))
+}
+
+/// Add nftables forward rule: ip saddr {ip} jump {group}_fwd
+pub fn add_device_forward_rule(ip: &str, group: &str) -> Result<()> {
+    let chain = format!("{}_fwd", group);
+    let status = Command::new("nft")
+        .args(["add", "rule", "inet", "filter", "forward",
+               "ip", "saddr", ip, "jump", &chain])
+        .status()?;
+    if status.success() {
+        println!("Added forward rule: {} -> {}", ip, chain);
+        Ok(())
+    } else {
+        anyhow::bail!("Failed to add forward rule for {}", ip)
+    }
+}
+
+/// Remove nftables forward rule for device IP.
+/// Lists rules with handles, finds the one matching the IP, deletes it.
+pub fn remove_device_forward_rule(ip: &str) -> Result<()> {
+    let output = Command::new("nft")
+        .args(["-a", "list", "chain", "inet", "filter", "forward"])
+        .output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    for line in stdout.lines() {
+        if line.contains(&format!("ip saddr {}", ip)) {
+            // Extract handle number from "# handle N"
+            if let Some(handle) = line.rsplit("# handle ").next() {
+                let handle = handle.trim();
+                Command::new("nft")
+                    .args(["delete", "rule", "inet", "filter", "forward", "handle", handle])
+                    .status()?;
+                println!("Removed forward rule for {} (handle {})", ip, handle);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Add /30 gateway address to LAN interface
+pub fn add_gateway_address(gateway: &str, lan_iface: &str) -> Result<()> {
+    let addr = format!("{}/30", gateway);
+    let status = Command::new("ip")
+        .args(["addr", "add", &addr, "dev", lan_iface])
+        .status()?;
+    // Ignore "already exists" errors
+    if status.success() {
+        println!("Added gateway address {} on {}", addr, lan_iface);
+    }
+    Ok(())
+}
+
+/// Remove /30 gateway address from LAN interface
+pub fn remove_gateway_address(gateway: &str, lan_iface: &str) -> Result<()> {
+    let addr = format!("{}/30", gateway);
+    let _ = Command::new("ip")
+        .args(["addr", "del", &addr, "dev", lan_iface])
+        .status();
+    Ok(())
 }

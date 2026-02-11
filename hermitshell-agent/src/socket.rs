@@ -5,11 +5,14 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
 use crate::db::Db;
+use crate::nftables;
+use crate::subnet;
 
 #[derive(Debug, Deserialize)]
 struct Request {
     method: String,
     mac: Option<String>,
+    group: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -130,6 +133,89 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 device_count,
             });
             resp
+        }
+        "set_device_group" => {
+            let Some(mac) = req.mac else {
+                return Response::err("mac required");
+            };
+            let Some(group) = req.group else {
+                return Response::err("group required");
+            };
+            match group.as_str() {
+                "trusted" | "iot" | "guest" | "servers" => {}
+                _ => return Response::err("invalid group: must be trusted, iot, guest, or servers"),
+            }
+            let db = db.lock().unwrap();
+            let device = match db.get_device(&mac) {
+                Ok(Some(d)) => d,
+                Ok(None) => return Response::err("device not found"),
+                Err(e) => return Response::err(&e.to_string()),
+            };
+            let Some(subnet_id) = device.subnet_id else {
+                return Response::err("device has no subnet assignment");
+            };
+            let Some(info) = subnet::compute_subnet(subnet_id) else {
+                return Response::err("invalid subnet_id");
+            };
+            let ip = &info.device_ip;
+            if let Err(e) = nftables::remove_device_forward_rule(ip) {
+                return Response::err(&format!("failed to remove old rule: {}", e));
+            }
+            if let Err(e) = db.set_device_group(&mac, &group) {
+                return Response::err(&format!("failed to update group: {}", e));
+            }
+            if let Err(e) = nftables::add_device_forward_rule(ip, &group) {
+                return Response::err(&format!("failed to add new rule: {}", e));
+            }
+            match db.get_device(&mac) {
+                Ok(Some(device)) => {
+                    let mut resp = Response::ok();
+                    resp.device = Some(device);
+                    resp
+                }
+                Ok(None) => Response::err("device not found after update"),
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
+        "block_device" => {
+            let Some(mac) = req.mac else {
+                return Response::err("mac required");
+            };
+            let db = db.lock().unwrap();
+            let device = match db.get_device(&mac) {
+                Ok(Some(d)) => d,
+                Ok(None) => return Response::err("device not found"),
+                Err(e) => return Response::err(&e.to_string()),
+            };
+            if let Some(ref ip) = device.ip {
+                if let Err(e) = nftables::remove_device_forward_rule(ip) {
+                    return Response::err(&format!("failed to remove forward rule: {}", e));
+                }
+            }
+            if let Err(e) = db.block_device(&mac) {
+                return Response::err(&format!("failed to block device: {}", e));
+            }
+            Response::ok()
+        }
+        "unblock_device" => {
+            let Some(mac) = req.mac else {
+                return Response::err("mac required");
+            };
+            let db = db.lock().unwrap();
+            let device = match db.get_device(&mac) {
+                Ok(Some(d)) => d,
+                Ok(None) => return Response::err("device not found"),
+                Err(e) => return Response::err(&e.to_string()),
+            };
+            if let Err(e) = db.unblock_device(&mac) {
+                return Response::err(&format!("failed to unblock device: {}", e));
+            }
+            if let Some(ref ip) = device.ip {
+                if let Err(e) = nftables::add_device_forward_rule(ip, "quarantine") {
+                    return Response::err(&format!("failed to add forward rule: {}", e));
+                }
+            }
+            Response::ok()
         }
         _ => Response::err("unknown method"),
     }
