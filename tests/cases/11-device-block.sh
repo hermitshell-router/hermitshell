@@ -13,12 +13,9 @@ devices=$(vm_exec router 'echo "{\"method\":\"list_devices\"}" | socat - UNIX-CO
 assert_match "$devices" '"device_group":"blocked"' "Device group is blocked"
 
 # Blocked device should NOT be able to reach internet (nftables drops)
-if vm_exec lan "ping -c1 -W3 192.168.100.1" >/dev/null 2>&1; then
-    echo -e "${RED}FAIL${NC}: Blocked device should not reach WAN"
-    # Note: test continues (don't exit) - unblock below to restore state
-else
-    echo -e "${GREEN}PASS${NC}: Blocked device cannot reach WAN"
-fi
+assert_failure "Blocked device cannot reach WAN" \
+    vm_exec lan "ping -c1 -W3 192.168.100.1"
+block_test=$?
 
 # Unblock the device (restore for any subsequent tests)
 result=$(vm_exec router "echo '{\"method\":\"unblock_device\",\"mac\":\"$lan_mac\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock")

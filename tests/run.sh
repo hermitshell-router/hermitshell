@@ -14,16 +14,21 @@ vagrant status --machine-readable | grep -q "state,running" || {
     exit 1
 }
 
-# Run test cases
+# Run test cases, detect both script failures and individual assertion failures
 failed=0
 for test in cases/*.sh; do
     [ -f "$test" ] || continue
     echo "--- Running: $(basename "$test") ---"
-    if bash "$test"; then
-        echo
-    else
+    output=$(bash "$test" 2>&1)
+    rc=$?
+    echo "$output"
+    echo
+
+    if [ $rc -ne 0 ]; then
         failed=$((failed + 1))
-        echo
+    elif echo "$output" | grep -q "FAIL"; then
+        echo "  (assertion failure detected)"
+        failed=$((failed + 1))
     fi
 done
 

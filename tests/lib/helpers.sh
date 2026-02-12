@@ -45,6 +45,19 @@ assert_success() {
     fi
 }
 
+# Assert command fails (for negative tests)
+assert_failure() {
+    local msg=$1
+    shift
+    if "$@" >/dev/null 2>&1; then
+        echo -e "${RED}FAIL${NC}: $msg (expected failure but succeeded)"
+        return 1
+    else
+        echo -e "${GREEN}PASS${NC}: $msg"
+        return 0
+    fi
+}
+
 # Wait for condition with timeout
 wait_for() {
     local timeout=$1
