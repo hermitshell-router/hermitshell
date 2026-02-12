@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::process::Command;
 
-pub fn apply_base_rules(wan_iface: &str, _lan_iface: &str) -> Result<()> {
+pub fn apply_base_rules(wan_iface: &str, lan_iface: &str) -> Result<()> {
     let rules = format!(r#"#!/usr/sbin/nft -f
 flush ruleset
 
@@ -40,6 +40,11 @@ table inet filter {{
 }}
 
 table ip nat {{
+    chain prerouting {{
+        type nat hook prerouting priority -100;
+        iifname "{lan_iface}" udp dport 53 dnat to 10.0.0.1:53
+        iifname "{lan_iface}" tcp dport 53 dnat to 10.0.0.1:53
+    }}
     chain postrouting {{
         type nat hook postrouting priority 100;
         oifname "{wan_iface}" masquerade

@@ -24,12 +24,15 @@ pub struct Response {
     pub devices: Option<Vec<Device>>,
     pub device: Option<Device>,
     pub status: Option<Status>,
+    pub ad_blocking_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Status {
     pub uptime_secs: u64,
     pub device_count: usize,
+    #[serde(default)]
+    pub ad_blocking_enabled: bool,
 }
 
 fn send_request(method: &str, mac: Option<&str>) -> Result<Response, String> {
@@ -92,6 +95,38 @@ pub fn block_device(mac: &str) -> Result<(), String> {
 
 pub fn unblock_device(mac: &str) -> Result<(), String> {
     let resp = send_request("unblock_device", Some(mac))?;
+    if resp.ok {
+        Ok(())
+    } else {
+        Err(resp.error.unwrap_or_else(|| "Unknown error".to_string()))
+    }
+}
+
+pub fn get_ad_blocking() -> Result<bool, String> {
+    let resp = send_request("get_ad_blocking", None)?;
+    if resp.ok {
+        Ok(resp.ad_blocking_enabled.unwrap_or(true))
+    } else {
+        Err(resp.error.unwrap_or_else(|| "Unknown error".to_string()))
+    }
+}
+
+pub fn set_ad_blocking(enabled: bool) -> Result<(), String> {
+    let mut stream = UnixStream::connect(SOCKET_PATH)
+        .map_err(|e| format!("Failed to connect to agent: {}", e))?;
+
+    let request = format!(r#"{{"method":"set_ad_blocking","enabled":{}}}"#, enabled);
+    writeln!(stream, "{}", request)
+        .map_err(|e| format!("Failed to send request: {}", e))?;
+
+    let mut reader = BufReader::new(stream);
+    let mut response = String::new();
+    reader.read_line(&mut response)
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+    let resp: Response = serde_json::from_str(&response)
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
     if resp.ok {
         Ok(())
     } else {

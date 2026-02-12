@@ -1,0 +1,153 @@
+use anyhow::{Context, Result};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
+use std::process::{Child, Command};
+
+pub struct BlockyManager {
+    upstream_dns: Vec<String>,
+    listen_addr: String,
+    config_dir: String,
+    binary_path: String,
+    child: Option<Child>,
+}
+
+impl BlockyManager {
+    pub fn new(
+        upstream_dns: Vec<String>,
+        listen_addr: String,
+        config_dir: String,
+        binary_path: String,
+    ) -> Self {
+        Self {
+            upstream_dns,
+            listen_addr,
+            config_dir,
+            binary_path,
+            child: None,
+        }
+    }
+
+    pub fn write_config(&self) -> Result<()> {
+        std::fs::create_dir_all(&self.config_dir)?;
+
+        let servers: String = self
+            .upstream_dns
+            .iter()
+            .map(|s| format!("      - {}", s))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let config = format!(
+            r#"upstreams:
+  groups:
+    default:
+{servers}
+blocking:
+  denylists:
+    ads:
+      - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+  clientGroupsBlock:
+    default:
+      - ads
+ports:
+  dns: {listen}
+  http: 127.0.0.1:4000
+log:
+  level: warn
+"#,
+            servers = servers,
+            listen = self.listen_addr,
+        );
+
+        let path = format!("{}/config.yml", self.config_dir);
+        std::fs::write(&path, config)?;
+        println!("Wrote blocky config to {}", path);
+        Ok(())
+    }
+
+    pub fn start(&mut self) -> Result<()> {
+        // Kill any existing blocky process
+        self.stop();
+
+        self.write_config()?;
+
+        let config_path = format!("{}/config.yml", self.config_dir);
+        let child = Command::new(&self.binary_path)
+            .args(["--config", &config_path])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .context("failed to spawn blocky")?;
+
+        println!("Started blocky (pid {})", child.id());
+        self.child = Some(child);
+        Ok(())
+    }
+
+    pub fn stop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+            println!("Stopped blocky");
+        }
+    }
+
+    pub fn set_blocking_enabled(&self, enabled: bool) -> Result<()> {
+        let path = if enabled {
+            "/api/blocking/enable"
+        } else {
+            "/api/blocking/disable"
+        };
+        http_request("127.0.0.1:4000", path)?;
+        Ok(())
+    }
+
+    pub fn is_blocking_enabled(&self) -> Result<bool> {
+        let body = http_request("127.0.0.1:4000", "/api/blocking/status")?;
+        // blocky returns JSON like {"enabled":true, ...}
+        Ok(body.contains("\"enabled\":true") || body.contains("\"enabled\": true"))
+    }
+}
+
+impl Drop for BlockyManager {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn http_request(addr: &str, path: &str) -> Result<String> {
+    let mut stream = TcpStream::connect(addr).context("connect to blocky API")?;
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+
+    let request = format!(
+        "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+        path, addr
+    );
+    stream.write_all(request.as_bytes())?;
+    stream.flush()?;
+
+    let mut reader = BufReader::new(&stream);
+    let mut headers_done = false;
+    let mut body = String::new();
+
+    // Read headers
+    loop {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                if line.trim().is_empty() {
+                    headers_done = true;
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+
+    if headers_done {
+        let _ = reader.read_to_string(&mut body);
+    }
+
+    Ok(body)
+}

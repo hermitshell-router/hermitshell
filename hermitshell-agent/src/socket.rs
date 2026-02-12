@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
+use crate::blocky::BlockyManager;
 use crate::db::Db;
 use crate::nftables;
 use crate::subnet;
@@ -13,6 +14,7 @@ struct Request {
     method: String,
     mac: Option<String>,
     group: Option<String>,
+    enabled: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -26,24 +28,27 @@ struct Response {
     device: Option<crate::db::Device>,
     #[serde(skip_serializing_if = "Option::is_none")]
     status: Option<Status>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ad_blocking_enabled: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
 struct Status {
     uptime_secs: u64,
     device_count: usize,
+    ad_blocking_enabled: bool,
 }
 
 impl Response {
     fn ok() -> Self {
-        Self { ok: true, error: None, devices: None, device: None, status: None }
+        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None }
     }
     fn err(msg: &str) -> Self {
-        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None }
+        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None }
     }
 }
 
-pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::time::Instant) -> Result<()> {
+pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>) -> Result<()> {
     // Remove old socket if exists
     let _ = std::fs::remove_file(socket_path);
 
@@ -67,23 +72,24 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
         let (stream, _) = listener.accept().await?;
         let db = db.clone();
         let start = start_time;
+        let blocky = blocky.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_client(stream, db, start).await {
+            if let Err(e) = handle_client(stream, db, start, blocky).await {
                 eprintln!("Client error: {}", e);
             }
         });
     }
 }
 
-async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant) -> Result<()> {
+async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
 
     while reader.read_line(&mut line).await? > 0 {
         let response = match serde_json::from_str::<Request>(&line) {
-            Ok(req) => handle_request(req, &db, start_time),
+            Ok(req) => handle_request(req, &db, start_time, &blocky),
             Err(e) => Response::err(&format!("Invalid JSON: {}", e)),
         };
 
@@ -96,7 +102,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
     Ok(())
 }
 
-fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant) -> Response {
+fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: &Arc<Mutex<BlockyManager>>) -> Response {
     match req.method.as_str() {
         "list_devices" => {
             let db = db.lock().unwrap();
@@ -127,10 +133,17 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "get_status" => {
             let db = db.lock().unwrap();
             let device_count = db.list_devices().map(|d| d.len()).unwrap_or(0);
+            let ad_blocking = db
+                .get_config("ad_blocking_enabled")
+                .ok()
+                .flatten()
+                .map(|v| v == "true")
+                .unwrap_or(true);
             let mut resp = Response::ok();
             resp.status = Some(Status {
                 uptime_secs: start_time.elapsed().as_secs(),
                 device_count,
+                ad_blocking_enabled: ad_blocking,
             });
             resp
         }
@@ -216,6 +229,35 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 }
             }
             Response::ok()
+        }
+        "get_ad_blocking" => {
+            let db = db.lock().unwrap();
+            let enabled = db
+                .get_config("ad_blocking_enabled")
+                .ok()
+                .flatten()
+                .map(|v| v == "true")
+                .unwrap_or(true);
+            let mut resp = Response::ok();
+            resp.ad_blocking_enabled = Some(enabled);
+            resp
+        }
+        "set_ad_blocking" => {
+            let Some(enabled) = req.enabled else {
+                return Response::err("enabled required");
+            };
+            let db = db.lock().unwrap();
+            if let Err(e) = db.set_config("ad_blocking_enabled", if enabled { "true" } else { "false" }) {
+                return Response::err(&format!("failed to update config: {}", e));
+            }
+            drop(db);
+            let mgr = blocky.lock().unwrap();
+            if let Err(e) = mgr.set_blocking_enabled(enabled) {
+                return Response::err(&format!("failed to update blocky: {}", e));
+            }
+            let mut resp = Response::ok();
+            resp.ad_blocking_enabled = Some(enabled);
+            resp
         }
         _ => Response::err("unknown method"),
     }

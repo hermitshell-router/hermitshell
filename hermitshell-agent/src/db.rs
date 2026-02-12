@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS config (
 );
 
 INSERT OR IGNORE INTO config (key, value) VALUES ('next_subnet_id', '0');
+INSERT OR IGNORE INTO config (key, value) VALUES ('ad_blocking_enabled', 'true');
 "#;
 
 #[derive(Debug, Clone, Serialize)]
@@ -165,6 +166,25 @@ impl Db {
         self.conn.execute(
             "UPDATE devices SET device_group = 'quarantine' WHERE mac = ?1",
             [mac],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_config(&self, key: &str) -> Result<Option<String>> {
+        let mut stmt = self.conn.prepare("SELECT value FROM config WHERE key = ?1")?;
+        let mut rows = stmt.query([key])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn set_config(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO config (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = ?2",
+            (key, value),
         )?;
         Ok(())
     }

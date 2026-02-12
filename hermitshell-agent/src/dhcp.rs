@@ -17,15 +17,13 @@ const LEASE_TIME: u32 = 3600; // 1 hour
 pub struct DhcpServer {
     db: Arc<Mutex<Db>>,
     lan_iface: String,
-    upstream_dns: Vec<Ipv4Addr>,
 }
 
 impl DhcpServer {
-    pub fn new(db: Arc<Mutex<Db>>, lan_iface: String, upstream_dns: Vec<Ipv4Addr>) -> Self {
+    pub fn new(db: Arc<Mutex<Db>>, lan_iface: String) -> Self {
         Self {
             db,
             lan_iface,
-            upstream_dns,
         }
     }
 
@@ -42,7 +40,6 @@ impl DhcpServer {
         println!("DHCP server listening on 0.0.0.0:67 ({})", self.lan_iface);
 
         let db = self.db.clone();
-        let upstream_dns = self.upstream_dns.clone();
 
         tokio::task::spawn_blocking(move || -> Result<()> {
             let mut buf = [MaybeUninit::<u8>::uninit(); 1500];
@@ -87,7 +84,7 @@ impl DhcpServer {
                 let response = match msg_type {
                     MessageType::Discover => {
                         println!("DHCPDISCOVER from {}", mac);
-                        match handle_discover(&db, &upstream_dns, &msg, &mac) {
+                        match handle_discover(&db, &msg, &mac) {
                             Ok(resp) => resp,
                             Err(e) => {
                                 eprintln!("Error handling DISCOVER from {}: {}", mac, e);
@@ -97,7 +94,7 @@ impl DhcpServer {
                     }
                     MessageType::Request => {
                         println!("DHCPREQUEST from {}", mac);
-                        match handle_request(&db, &upstream_dns, &msg, &mac) {
+                        match handle_request(&db, &msg, &mac) {
                             Ok(Some(resp)) => resp,
                             Ok(None) => continue,
                             Err(e) => {
@@ -192,7 +189,6 @@ fn build_response(request: &Message, msg_type: MessageType, yiaddr: Ipv4Addr) ->
 /// Handle DHCPDISCOVER: allocate or look up subnet, respond with DHCPOFFER.
 fn handle_discover(
     db: &Arc<Mutex<Db>>,
-    upstream_dns: &[Ipv4Addr],
     request: &Message,
     mac: &str,
 ) -> Result<Message> {
@@ -228,10 +224,8 @@ fn handle_discover(
 
     let mut resp = build_response(request, MessageType::Offer, device_ip);
 
-    if !upstream_dns.is_empty() {
-        resp.opts_mut()
-            .insert(DhcpOption::DomainNameServer(upstream_dns.to_vec()));
-    }
+    resp.opts_mut()
+        .insert(DhcpOption::DomainNameServer(vec![SERVER_IP]));
 
     // Override subnet mask with the actual /30 mask
     resp.opts_mut().insert(DhcpOption::SubnetMask(Ipv4Addr::new(
@@ -256,7 +250,6 @@ fn handle_discover(
 /// Handle DHCPREQUEST: verify requested IP matches, respond with DHCPACK.
 fn handle_request(
     db: &Arc<Mutex<Db>>,
-    upstream_dns: &[Ipv4Addr],
     request: &Message,
     mac: &str,
 ) -> Result<Option<Message>> {
@@ -310,10 +303,8 @@ fn handle_request(
 
     let mut resp = build_response(request, MessageType::Ack, assigned_ip);
 
-    if !upstream_dns.is_empty() {
-        resp.opts_mut()
-            .insert(DhcpOption::DomainNameServer(upstream_dns.to_vec()));
-    }
+    resp.opts_mut()
+        .insert(DhcpOption::DomainNameServer(vec![SERVER_IP]));
 
     resp.opts_mut().insert(DhcpOption::SubnetMask(Ipv4Addr::new(
         info.netmask_octets[0],

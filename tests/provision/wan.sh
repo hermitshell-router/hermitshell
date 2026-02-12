@@ -13,6 +13,7 @@ dhcp-option=option:dns-server,192.168.100.1
 no-resolv
 server=4.2.2.1
 server=4.2.2.2
+address=/ads.test.hermitshell/93.184.216.34
 EOF
 
 # Disable DNSSEC trust anchors that cause "Not Ready" REFUSED responses

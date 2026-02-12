@@ -2,7 +2,7 @@
 set -e
 
 apt-get update
-apt-get install -y nftables docker.io socat conntrack
+apt-get install -y nftables docker.io socat conntrack curl dnsutils
 usermod -aG docker vagrant
 
 # eth1 = WAN (gets IP from wan-vm via DHCP)
@@ -66,7 +66,7 @@ mkdir -p /run/hermitshell
 # Run hermitshell-agent as daemon (nohup prevents SIGHUP on session close)
 if [ -f /opt/hermitshell/hermitshell-agent ]; then
     nohup /opt/hermitshell/hermitshell-agent > /var/log/hermitshell-agent.log 2>&1 &
-    sleep 2
+    sleep 5
 else
     echo "Warning: hermitshell-agent not found, using static rules"
     nft -f /etc/nftables.conf

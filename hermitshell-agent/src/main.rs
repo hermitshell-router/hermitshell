@@ -1,3 +1,4 @@
+mod blocky;
 mod db;
 mod dhcp;
 mod nftables;
@@ -108,21 +109,54 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Start blocky DNS server
+    let upstream_dns = read_upstream_dns(wan_iface);
+    println!("Upstream DNS: {:?}", upstream_dns);
+
+    let blocky_mgr = {
+        let dns_strings: Vec<String> = upstream_dns.iter().map(|ip| ip.to_string()).collect();
+        let mut mgr = blocky::BlockyManager::new(
+            dns_strings,
+            "10.0.0.1:53".to_string(),
+            "/data/hermitshell/blocky".to_string(),
+            "/opt/hermitshell/blocky".to_string(),
+        );
+        if let Err(e) = mgr.start() {
+            eprintln!("Failed to start blocky: {}", e);
+        } else {
+            // Wait for blocky to be ready
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            // Check ad_blocking_enabled setting
+            let db_guard = db.lock().unwrap();
+            let enabled = db_guard
+                .get_config("ad_blocking_enabled")
+                .ok()
+                .flatten()
+                .map(|v| v == "true")
+                .unwrap_or(true);
+            drop(db_guard);
+            if !enabled {
+                if let Err(e) = mgr.set_blocking_enabled(false) {
+                    eprintln!("Failed to disable blocking: {}", e);
+                }
+            }
+        }
+        Arc::new(Mutex::new(mgr))
+    };
+
     // Spawn socket server
     let db_clone = db.clone();
+    let blocky_clone = blocky_mgr.clone();
     tokio::spawn(async move {
-        if let Err(e) = socket::run_server(SOCKET_PATH, db_clone, start_time).await {
+        if let Err(e) = socket::run_server(SOCKET_PATH, db_clone, start_time, blocky_clone).await {
             eprintln!("Socket server error: {}", e);
         }
     });
 
     // Spawn DHCP server
-    let upstream_dns = read_upstream_dns(wan_iface);
-    println!("Upstream DNS: {:?}", upstream_dns);
     let dhcp_server = dhcp::DhcpServer::new(
         db.clone(),
         lan_iface.to_string(),
-        upstream_dns,
     );
     let db_for_counters = db.clone();
     tokio::spawn(async move {

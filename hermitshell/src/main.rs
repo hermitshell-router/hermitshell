@@ -34,12 +34,20 @@ fn Dashboard() -> impl IntoView {
         <nav><a href="/devices">"View Devices"</a></nav>
         <Suspense fallback=move || view! { <p>"Loading..."</p> }>
             {move || status.get().map(|result| match result {
-                Ok(s) => view! {
-                    <div>
-                        <p>"Devices: " {s.device_count}</p>
-                        <p>"Uptime: " {s.uptime_secs} " seconds"</p>
-                    </div>
-                }.into_view(),
+                Ok(s) => {
+                    let blocking_text = if s.ad_blocking_enabled { "Enabled" } else { "Disabled" };
+                    view! {
+                        <div>
+                            <p>"Devices: " {s.device_count}</p>
+                            <p>"Uptime: " {s.uptime_secs} " seconds"</p>
+                            <p>"Ad Blocking: " {blocking_text}</p>
+                            <form method="post" action="/api/ad-blocking">
+                                <input type="hidden" name="enabled" value={if s.ad_blocking_enabled { "false" } else { "true" }} />
+                                <button type="submit">{if s.ad_blocking_enabled { "Disable Ad Blocking" } else { "Enable Ad Blocking" }}</button>
+                            </form>
+                        </div>
+                    }.into_view()
+                },
                 Err(e) => view! { <p class="error">"Error: " {e}</p> }.into_view(),
             })}
         </Suspense>
@@ -147,6 +155,17 @@ struct DeviceForm {
     mac: String,
 }
 
+#[derive(Deserialize)]
+struct AdBlockingForm {
+    enabled: String,
+}
+
+async fn handle_ad_blocking(Form(form): Form<AdBlockingForm>) -> impl IntoResponse {
+    let enabled = form.enabled == "true";
+    let _ = client::set_ad_blocking(enabled);
+    axum::response::Redirect::to("/")
+}
+
 async fn handle_approve(Form(form): Form<ApproveForm>) -> impl IntoResponse {
     let _ = client::set_device_group(&form.mac, &form.group);
     axum::response::Redirect::to("/devices")
@@ -170,6 +189,7 @@ async fn main() {
     let routes = generate_route_list(App);
 
     let app = Router::new()
+        .route("/api/ad-blocking", axum::routing::post(handle_ad_blocking))
         .route("/api/approve", axum::routing::post(handle_approve))
         .route("/api/block", axum::routing::post(handle_block))
         .route("/api/unblock", axum::routing::post(handle_unblock))

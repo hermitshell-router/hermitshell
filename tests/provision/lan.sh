@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+apt-get update
+apt-get install -y dnsutils
+
 # eth1 = LAN (gets IP from router via DHCP)
 
 # Configure LAN interface to use DHCP from router
