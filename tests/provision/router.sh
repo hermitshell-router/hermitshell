@@ -14,12 +14,10 @@ auto eth1
 iface eth1 inet dhcp
 EOF
 
-# Configure LAN interface with static IP (/16 covers all /30 subnets)
+# Configure LAN interface (agent adds addresses at startup)
 cat > /etc/network/interfaces.d/lan <<EOF
 auto eth2
-iface eth2 inet static
-    address 10.0.0.1
-    netmask 255.255.0.0
+iface eth2 inet manual
 EOF
 
 # Enable IP forwarding

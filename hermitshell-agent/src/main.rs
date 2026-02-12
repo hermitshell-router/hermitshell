@@ -8,8 +8,29 @@ use anyhow::Result;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, Mutex};
 
-/// Read nameservers from /etc/resolv.conf, falling back to public DNS.
-fn read_upstream_dns() -> Vec<Ipv4Addr> {
+/// Read nameservers from WAN DHCP lease, then /etc/resolv.conf, falling back to public DNS.
+fn read_upstream_dns(wan_iface: &str) -> Vec<Ipv4Addr> {
+    // Prefer DNS from WAN DHCP lease (most accurate for a router)
+    let lease_path = format!("/var/lib/dhcp/dhclient.{}.leases", wan_iface);
+    if let Ok(content) = std::fs::read_to_string(&lease_path) {
+        // Parse last "option domain-name-servers" line (most recent lease)
+        if let Some(line) = content.lines().rev().find(|l| l.contains("option domain-name-servers")) {
+            let servers: Vec<Ipv4Addr> = line
+                .split("domain-name-servers")
+                .nth(1)
+                .unwrap_or("")
+                .trim()
+                .trim_end_matches(';')
+                .split(',')
+                .filter_map(|s| s.trim().parse().ok())
+                .collect();
+            if !servers.is_empty() {
+                return servers;
+            }
+        }
+    }
+
+    // Fall back to /etc/resolv.conf
     let content = std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default();
     let servers: Vec<Ipv4Addr> = content
         .lines()
@@ -38,15 +59,27 @@ fn read_upstream_dns() -> Vec<Ipv4Addr> {
 const DB_PATH: &str = "/data/hermitshell/db/hermitshell.db";
 const SOCKET_PATH: &str = "/run/hermitshell/agent.sock";
 const POLL_INTERVAL_SECS: u64 = 10;
+const LAN_ADDR: &str = "10.0.0.1/16";
 
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("hermitshell-agent starting...");
     let start_time = std::time::Instant::now();
 
-    // Apply base nftables rules
     let wan_iface = "eth1";
     let lan_iface = "eth2";
+
+    // Ensure LAN interface has the /16 base address for /30 subnet routing
+    let status = std::process::Command::new("ip")
+        .args(["addr", "add", LAN_ADDR, "dev", lan_iface])
+        .status();
+    match status {
+        Ok(s) if s.success() || s.code() == Some(2) => {} // 2 = already exists
+        Ok(s) => eprintln!("Warning: ip addr add {} dev {} exited {:?}", LAN_ADDR, lan_iface, s.code()),
+        Err(e) => eprintln!("Warning: failed to add LAN address: {}", e),
+    }
+
+    // Apply base nftables rules
     nftables::apply_base_rules(wan_iface, lan_iface)?;
 
     // Open database
@@ -84,7 +117,7 @@ async fn main() -> Result<()> {
     });
 
     // Spawn DHCP server
-    let upstream_dns = read_upstream_dns();
+    let upstream_dns = read_upstream_dns(wan_iface);
     println!("Upstream DNS: {:?}", upstream_dns);
     let dhcp_server = dhcp::DhcpServer::new(
         db.clone(),
