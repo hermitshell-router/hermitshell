@@ -12,9 +12,6 @@ assert_match "$result" '"ok":true' "block_device succeeds"
 devices=$(vm_exec router 'echo "{\"method\":\"list_devices\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$devices" '"device_group":"blocked"' "Device group is blocked"
 
-# Flush conntrack so existing connections don't bypass the block
-vm_exec router "sudo conntrack -F 2>/dev/null || true" >/dev/null 2>&1
-
 # Blocked device should NOT be able to reach internet (nftables drops)
 if vm_exec lan "ping -c1 -W3 192.168.100.1" >/dev/null 2>&1; then
     echo -e "${RED}FAIL${NC}: Blocked device should not reach WAN"

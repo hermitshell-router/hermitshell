@@ -159,7 +159,7 @@ pub fn add_device_forward_rule(ip: &str, group: &str) -> Result<()> {
     }
 }
 
-/// Remove nftables forward rule for device IP.
+/// Remove nftables forward rule for device IP and flush its conntrack entries.
 /// Lists rules with handles, finds the one matching the IP, deletes it.
 pub fn remove_device_forward_rule(ip: &str) -> Result<()> {
     let output = Command::new("nft")
@@ -179,6 +179,12 @@ pub fn remove_device_forward_rule(ip: &str) -> Result<()> {
             }
         }
     }
+
+    // Flush conntrack entries so established connections don't bypass the block
+    let _ = Command::new("conntrack")
+        .args(["-D", "-s", ip])
+        .status();
+
     Ok(())
 }
 

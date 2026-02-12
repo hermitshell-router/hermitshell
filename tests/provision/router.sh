@@ -3,6 +3,7 @@ set -e
 
 apt-get update
 apt-get install -y nftables docker.io socat conntrack
+usermod -aG docker vagrant
 
 # eth1 = WAN (gets IP from wan-vm via DHCP)
 # eth2 = LAN (static IP, runs DHCP server)
