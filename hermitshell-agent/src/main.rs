@@ -1,9 +1,9 @@
 mod blocky;
 mod db;
-mod dhcp;
 mod nftables;
 mod socket;
-mod subnet;
+
+use hermitshell_common::subnet;
 
 use anyhow::Result;
 use std::net::Ipv4Addr;
@@ -153,17 +153,23 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Spawn DHCP server
-    let dhcp_server = dhcp::DhcpServer::new(
-        db.clone(),
-        lan_iface.to_string(),
-    );
-    let db_for_counters = db.clone();
+    // Spawn DHCP IPC socket
+    const DHCP_SOCKET_PATH: &str = "/run/hermitshell/dhcp.sock";
+    let db_dhcp = db.clone();
+    let lan_iface_dhcp = lan_iface.to_string();
     tokio::spawn(async move {
-        if let Err(e) = dhcp_server.run().await {
-            eprintln!("DHCP server error: {}", e);
+        if let Err(e) = socket::run_dhcp_socket(DHCP_SOCKET_PATH, db_dhcp, lan_iface_dhcp).await {
+            eprintln!("DHCP socket error: {}", e);
         }
     });
+
+    // Spawn DHCP server as child process
+    let db_for_counters = db.clone();
+    std::process::Command::new("/opt/hermitshell/hermitshell-dhcp")
+        .arg(lan_iface)
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()?;
 
     // Main polling loop: update traffic counters for assigned devices
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(POLL_INTERVAL_SECS));

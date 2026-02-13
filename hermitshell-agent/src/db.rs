@@ -2,6 +2,8 @@ use anyhow::Result;
 use rusqlite::Connection;
 use serde::Serialize;
 
+const MAX_DEVICES: i64 = 1024;
+
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS devices (
     mac TEXT PRIMARY KEY,
@@ -116,13 +118,17 @@ impl Db {
         }
     }
 
-    /// Allocate next subnet_id atomically: read current value, increment, return old value
+    /// Allocate next subnet_id atomically: read current value, increment, return old value.
+    /// Refuses to allocate beyond MAX_DEVICES to prevent resource exhaustion.
     pub fn allocate_subnet_id(&self) -> Result<i64> {
         let id: i64 = self.conn.query_row(
             "SELECT value FROM config WHERE key = 'next_subnet_id'",
             [],
             |row| row.get::<_, String>(0),
         )?.parse()?;
+        if id >= MAX_DEVICES {
+            anyhow::bail!("device limit reached ({} max)", MAX_DEVICES);
+        }
         self.conn.execute(
             "UPDATE config SET value = ?1 WHERE key = 'next_subnet_id'",
             [(id + 1).to_string()],

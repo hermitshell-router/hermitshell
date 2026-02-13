@@ -7,7 +7,7 @@ use tokio::net::{UnixListener, UnixStream};
 use crate::blocky::BlockyManager;
 use crate::db::Db;
 use crate::nftables;
-use crate::subnet;
+use hermitshell_common::subnet;
 
 #[derive(Debug, Deserialize)]
 struct Request {
@@ -15,6 +15,7 @@ struct Request {
     mac: Option<String>,
     group: Option<String>,
     enabled: Option<bool>,
+    subnet_id: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -30,6 +31,12 @@ struct Response {
     status: Option<Status>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ad_blocking_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subnet_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_ip: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    is_new: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -41,10 +48,10 @@ struct Status {
 
 impl Response {
     fn ok() -> Self {
-        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None }
+        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ip: None, is_new: None }
     }
     fn err(msg: &str) -> Self {
-        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None }
+        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ip: None, is_new: None }
     }
 }
 
@@ -63,7 +70,7 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o666))?;
+        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660))?;
     }
 
     println!("Socket server listening on {}", socket_path);
@@ -258,6 +265,125 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             let mut resp = Response::ok();
             resp.ad_blocking_enabled = Some(enabled);
             resp
+        }
+        _ => Response::err("unknown method"),
+    }
+}
+
+pub async fn run_dhcp_socket(socket_path: &str, db: Arc<Mutex<Db>>, lan_iface: String) -> Result<()> {
+    let _ = std::fs::remove_file(socket_path);
+
+    if let Some(parent) = std::path::Path::new(socket_path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let listener = UnixListener::bind(socket_path)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660))?;
+    }
+
+    println!("DHCP IPC socket listening on {}", socket_path);
+
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let db = db.clone();
+        let lan_iface = lan_iface.clone();
+
+        tokio::spawn(async move {
+            if let Err(e) = handle_dhcp_client(stream, db, lan_iface).await {
+                eprintln!("DHCP IPC client error: {}", e);
+            }
+        });
+    }
+}
+
+async fn handle_dhcp_client(stream: UnixStream, db: Arc<Mutex<Db>>, lan_iface: String) -> Result<()> {
+    let (reader, mut writer) = stream.into_split();
+    let mut reader = BufReader::new(reader);
+    let mut line = String::new();
+
+    while reader.read_line(&mut line).await? > 0 {
+        let response = match serde_json::from_str::<Request>(&line) {
+            Ok(req) => handle_dhcp_request(req, &db, &lan_iface),
+            Err(e) => Response::err(&format!("Invalid JSON: {}", e)),
+        };
+
+        let mut json = serde_json::to_string(&response)?;
+        json.push('\n');
+        writer.write_all(json.as_bytes()).await?;
+        line.clear();
+    }
+
+    Ok(())
+}
+
+fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Response {
+    match req.method.as_str() {
+        "dhcp_discover" => {
+            let Some(mac) = req.mac else {
+                return Response::err("mac required");
+            };
+            let db = db.lock().unwrap();
+
+            match db.get_device(&mac) {
+                Ok(Some(dev)) if dev.subnet_id.is_some() => {
+                    let sid = dev.subnet_id.unwrap();
+                    let Some(info) = subnet::compute_subnet(sid) else {
+                        return Response::err("subnet_id out of range");
+                    };
+                    let mut resp = Response::ok();
+                    resp.subnet_id = Some(sid);
+                    resp.device_ip = Some(info.device_ip);
+                    resp.is_new = Some(false);
+                    resp
+                }
+                Ok(_) => {
+                    let sid = match db.allocate_subnet_id() {
+                        Ok(s) => s,
+                        Err(e) => return Response::err(&e.to_string()),
+                    };
+                    let Some(info) = subnet::compute_subnet(sid) else {
+                        return Response::err("subnet address space exhausted");
+                    };
+                    if let Err(e) = db.insert_new_device(&mac, sid, &info.device_ip) {
+                        return Response::err(&e.to_string());
+                    }
+                    let mut resp = Response::ok();
+                    resp.subnet_id = Some(sid);
+                    resp.device_ip = Some(info.device_ip);
+                    resp.is_new = Some(true);
+                    resp
+                }
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
+        "dhcp_provision" => {
+            let Some(mac) = req.mac else {
+                return Response::err("mac required");
+            };
+            let Some(sid) = req.subnet_id else {
+                return Response::err("subnet_id required");
+            };
+            let Some(info) = subnet::compute_subnet(sid) else {
+                return Response::err("invalid subnet_id");
+            };
+
+            println!("DHCP provision {} -> {}, gateway {}", mac, info.device_ip, info.gateway);
+
+            if let Err(e) = nftables::add_gateway_address(&info.gateway, lan_iface) {
+                eprintln!("  Failed to add gateway address {}: {}", info.gateway, e);
+            }
+            if let Err(e) = nftables::add_device_counter(&info.device_ip) {
+                eprintln!("  Failed to add counter for {}: {}", info.device_ip, e);
+            }
+            if let Err(e) = nftables::add_device_forward_rule(&info.device_ip, "quarantine") {
+                eprintln!("  Failed to add forward rule for {}: {}", info.device_ip, e);
+            }
+
+            Response::ok()
         }
         _ => Response::err("unknown method"),
     }

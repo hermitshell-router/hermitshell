@@ -701,13 +701,28 @@ name = "hermitshell-agent"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "dhcproto",
- "libc",
+ "hermitshell-common",
  "rusqlite",
  "serde",
  "serde_json",
- "socket2 0.5.10",
  "tokio",
+]
+
+[[package]]
+name = "hermitshell-common"
+version = "0.1.0"
+
+[[package]]
+name = "hermitshell-dhcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dhcproto",
+ "hermitshell-common",
+ "libc",
+ "serde",
+ "serde_json",
+ "socket2 0.5.10",
 ]
 
 [[package]]

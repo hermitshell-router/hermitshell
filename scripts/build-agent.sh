@@ -2,13 +2,15 @@
 set -e
 
 # Build with musl for static linking (portable across Linux distros)
-cargo build --release -p hermitshell-agent --target x86_64-unknown-linux-musl
+cargo build --release -p hermitshell-agent -p hermitshell-dhcp --target x86_64-unknown-linux-musl
 
 # Copy to release dir for convenience
 mkdir -p target/release
 cp target/x86_64-unknown-linux-musl/release/hermitshell-agent target/release/
+cp target/x86_64-unknown-linux-musl/release/hermitshell-dhcp target/release/
 
 echo "Agent built: target/release/hermitshell-agent (statically linked)"
+echo "DHCP built: target/release/hermitshell-dhcp (statically linked)"
 
 # Download blocky binary (cached)
 BLOCKY_VERSION="v0.24"

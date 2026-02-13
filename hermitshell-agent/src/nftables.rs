@@ -1,6 +1,27 @@
 use anyhow::Result;
 use std::collections::HashMap;
+use std::net::Ipv4Addr;
 use std::process::Command;
+
+const VALID_GROUPS: &[&str] = &["quarantine", "trusted", "iot", "guest", "servers"];
+
+/// Validate that an IP string is a valid IPv4 address within 10.0.0.0/8.
+fn validate_ip(ip: &str) -> Result<()> {
+    let addr: Ipv4Addr = ip.parse().map_err(|_| anyhow::anyhow!("invalid IP: {}", ip))?;
+    let octets = addr.octets();
+    if octets[0] != 10 {
+        anyhow::bail!("IP {} not in 10.0.0.0/8 range", ip);
+    }
+    Ok(())
+}
+
+/// Validate that a group name is one of the known forwarding chains.
+fn validate_group(group: &str) -> Result<()> {
+    if !VALID_GROUPS.contains(&group) {
+        anyhow::bail!("invalid group: {}", group);
+    }
+    Ok(())
+}
 
 pub fn apply_base_rules(wan_iface: &str, lan_iface: &str) -> Result<()> {
     let rules = format!(r#"#!/usr/sbin/nft -f
@@ -74,6 +95,7 @@ table inet traffic {{
 }
 
 pub fn add_device_counter(ip: &str) -> Result<()> {
+    validate_ip(ip)?;
     // Add TX counter (traffic from device)
     let _ = Command::new("nft")
         .args(["add", "counter", "inet", "traffic", &format!("dev_{}_tx", ip.replace('.', "_"))])
@@ -151,6 +173,8 @@ pub fn get_device_counters(ip: &str) -> Result<(i64, i64)> {
 
 /// Add nftables forward rule: ip saddr {ip} jump {group}_fwd
 pub fn add_device_forward_rule(ip: &str, group: &str) -> Result<()> {
+    validate_ip(ip)?;
+    validate_group(group)?;
     let chain = format!("{}_fwd", group);
     let status = Command::new("nft")
         .args(["add", "rule", "inet", "filter", "forward",
@@ -167,6 +191,7 @@ pub fn add_device_forward_rule(ip: &str, group: &str) -> Result<()> {
 /// Remove nftables forward rule for device IP and flush its conntrack entries.
 /// Lists rules with handles, finds the one matching the IP, deletes it.
 pub fn remove_device_forward_rule(ip: &str) -> Result<()> {
+    validate_ip(ip)?;
     let output = Command::new("nft")
         .args(["-a", "list", "chain", "inet", "filter", "forward"])
         .output()?;
@@ -195,6 +220,7 @@ pub fn remove_device_forward_rule(ip: &str) -> Result<()> {
 
 /// Add /30 gateway address to LAN interface
 pub fn add_gateway_address(gateway: &str, lan_iface: &str) -> Result<()> {
+    validate_ip(gateway)?;
     let addr = format!("{}/30", gateway);
     let status = Command::new("ip")
         .args(["addr", "add", &addr, "dev", lan_iface])

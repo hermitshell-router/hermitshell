@@ -5,11 +5,12 @@ source "$(dirname "$0")/../lib/helpers.sh"
 before=$(vm_exec router 'echo "{\"method\":\"list_devices\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$before" '"ok":true' "list_devices before restart"
 
-# Kill the agent
+# Kill the agent and DHCP process
 vm_exec router "pkill hermitshell-agent" || true
+vm_exec router "pkill hermitshell-dhcp" || true
 sleep 1
 
-# Verify it's dead
+# Verify they're dead
 agent_dead() {
     ! vm_exec router "pgrep hermitshell-agent" | grep -q '[0-9]'
 }
@@ -40,6 +41,12 @@ wait_for 10 "Blocky restarted" blocky_running
 
 blocky_pid=$(vm_exec router "pgrep blocky" || echo "")
 assert_match "$blocky_pid" "^[0-9]+" "Blocky process running after restart"
+
+# Verify DHCP process is running
+dhcp_running() {
+    vm_exec router "pgrep hermitshell-dhcp" | grep -q '[0-9]'
+}
+wait_for 10 "DHCP process running after restart" dhcp_running
 
 # Verify DNS resolution works through blocky
 dns_works() {
