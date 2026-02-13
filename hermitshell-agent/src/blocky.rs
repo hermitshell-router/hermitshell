@@ -37,6 +37,8 @@ impl BlockyManager {
             .collect::<Vec<_>>()
             .join("\n");
 
+        let custom_blocklist = format!("{}/custom-blocklist.txt", self.config_dir);
+
         let config = format!(
             r#"upstreams:
   groups:
@@ -46,6 +48,7 @@ blocking:
   denylists:
     ads:
       - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+      - file://{custom_blocklist}
   clientGroupsBlock:
     default:
       - ads
@@ -56,12 +59,19 @@ log:
   level: warn
 "#,
             servers = servers,
+            custom_blocklist = custom_blocklist,
             listen = self.listen_addr,
         );
 
         let path = format!("{}/config.yml", self.config_dir);
         std::fs::write(&path, config)?;
         println!("Wrote blocky config to {}", path);
+
+        // Ensure the custom blocklist file exists (empty = no extra blocking)
+        if !std::path::Path::new(&custom_blocklist).exists() {
+            std::fs::write(&custom_blocklist, "")?;
+        }
+
         Ok(())
     }
 
