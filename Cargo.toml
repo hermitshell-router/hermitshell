@@ -1,3 +1,6 @@
 [workspace]
 resolver = "2"
 members = ["hermitshell", "hermitshell-agent", "hermitshell-common", "hermitshell-dhcp"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

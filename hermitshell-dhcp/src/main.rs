@@ -5,9 +5,7 @@ use hermitshell_common::subnet;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
-use std::mem::MaybeUninit;
-use std::net::{Ipv4Addr, SocketAddrV4};
-use std::os::unix::io::AsRawFd;
+use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::os::unix::net::UnixStream;
 use std::time::Instant;
 
@@ -35,17 +33,19 @@ fn main() -> Result<()> {
     sock.set_reuse_address(true)?;
     sock.set_broadcast(true)?;
 
-    bind_to_device(&sock, &lan_iface)?;
+    sock.bind_device(Some(lan_iface.as_bytes()))?;
 
     sock.bind(&SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 67).into())?;
 
+    let udp: UdpSocket = sock.into();
+
     println!("hermitshell-dhcp listening on 0.0.0.0:67 ({})", lan_iface);
 
-    let mut buf = [MaybeUninit::<u8>::uninit(); 1500];
+    let mut buf = [0u8; 1500];
     let mut discover_times: HashMap<String, Instant> = HashMap::new();
 
     loop {
-        let (len, _addr) = match sock.recv_from(&mut buf) {
+        let (len, _addr) = match udp.recv_from(&mut buf) {
             Ok((len, addr)) => (len, addr),
             Err(e) => {
                 eprintln!("DHCP recv error: {}", e);
@@ -53,11 +53,7 @@ fn main() -> Result<()> {
             }
         };
 
-        // Safety: recv_from initialized buf[..len]
-        let data: Vec<u8> = buf[..len]
-            .iter()
-            .map(|b| unsafe { b.assume_init() })
-            .collect();
+        let data = &buf[..len];
 
         let msg = match Message::decode(&mut dhcproto::decoder::Decoder::new(&data)) {
             Ok(m) => m,
@@ -129,8 +125,8 @@ fn main() -> Result<()> {
             continue;
         }
 
-        let dest = socket2::SockAddr::from(SocketAddrV4::new(Ipv4Addr::BROADCAST, 68));
-        if let Err(e) = sock.send_to(&enc_buf, &dest) {
+        let dest = SocketAddrV4::new(Ipv4Addr::BROADCAST, 68);
+        if let Err(e) = udp.send_to(&enc_buf, dest) {
             eprintln!("DHCP send error: {}", e);
         }
     }
@@ -149,26 +145,6 @@ fn agent_request(req: &serde_json::Value) -> Result<serde_json::Value> {
     reader.read_line(&mut response)?;
 
     serde_json::from_str(&response).context("failed to parse agent response")
-}
-
-fn bind_to_device(sock: &Socket, iface: &str) -> Result<()> {
-    let fd = sock.as_raw_fd();
-    let iface_bytes = iface.as_bytes();
-    let ret = unsafe {
-        libc::setsockopt(
-            fd,
-            libc::SOL_SOCKET,
-            libc::SO_BINDTODEVICE,
-            iface_bytes.as_ptr() as *const libc::c_void,
-            iface_bytes.len() as libc::socklen_t,
-        )
-    };
-    if ret < 0 {
-        Err(std::io::Error::last_os_error())
-            .context(format!("SO_BINDTODEVICE to {} failed", iface))
-    } else {
-        Ok(())
-    }
 }
 
 fn format_mac(chaddr: &[u8]) -> String {
