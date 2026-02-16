@@ -6,6 +6,7 @@ COPY hermitshell/ ./hermitshell/
 COPY hermitshell-agent/ ./hermitshell-agent/
 COPY hermitshell-common/ ./hermitshell-common/
 COPY hermitshell-dhcp/ ./hermitshell-dhcp/
+COPY hermitshell-ui/ ./hermitshell-ui/
 
 # Build only the hermitshell crate
 RUN cargo build --release -p hermitshell
