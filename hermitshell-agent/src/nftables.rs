@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::process::Command;
 
-const VALID_GROUPS: &[&str] = &["quarantine", "trusted", "iot", "guest", "servers"];
+const VALID_GROUPS: &[&str] = &["quarantine", "trusted", "iot", "guest", "servers", "blocked"];
 
 /// Validate that an IP string is a valid IPv4 address within 10.0.0.0/8.
 fn validate_ip(ip: &str) -> Result<()> {
@@ -28,12 +28,17 @@ pub fn apply_base_rules(wan_iface: &str, lan_iface: &str) -> Result<()> {
 flush ruleset
 
 table inet filter {{
+    map device_groups {{
+        type ipv4_addr : verdict;
+    }}
+
     chain input {{
         type filter hook input priority 0; policy accept;
     }}
     chain forward {{
         type filter hook forward priority 0; policy drop;
         ct state established,related accept
+        ip saddr vmap @device_groups
     }}
     chain output {{
         type filter hook output priority 0; policy accept;
@@ -58,6 +63,9 @@ table inet filter {{
         oifname "{wan_iface}" accept
         drop
     }}
+    chain blocked_fwd {{
+        drop
+    }}
 }}
 
 table ip nat {{
@@ -73,8 +81,21 @@ table ip nat {{
 }}
 
 table inet traffic {{
+    set tx_devices {{
+        type ipv4_addr
+        flags dynamic
+        counter
+    }}
+    set rx_devices {{
+        type ipv4_addr
+        flags dynamic
+        counter
+    }}
+
     chain count_lan {{
         type filter hook forward priority -10; policy accept;
+        ip saddr @tx_devices
+        ip daddr @rx_devices
     }}
 }}
 "#);
@@ -96,117 +117,89 @@ table inet traffic {{
 
 pub fn add_device_counter(ip: &str) -> Result<()> {
     validate_ip(ip)?;
-    // Add TX counter (traffic from device)
+    let element = format!("{{ {} }}", ip);
+
+    // Add to TX counter set (traffic from device)
     let _ = Command::new("nft")
-        .args(["add", "counter", "inet", "traffic", &format!("dev_{}_tx", ip.replace('.', "_"))])
+        .args(["add", "element", "inet", "traffic", "tx_devices", &element])
         .status()?;
 
-    // Add RX counter (traffic to device)
+    // Add to RX counter set (traffic to device)
     let _ = Command::new("nft")
-        .args(["add", "counter", "inet", "traffic", &format!("dev_{}_rx", ip.replace('.', "_"))])
-        .status()?;
-
-    // Add counting rules
-    let _ = Command::new("nft")
-        .args([
-            "add", "rule", "inet", "traffic", "count_lan",
-            "ip", "saddr", ip, "counter", "name", &format!("dev_{}_tx", ip.replace('.', "_"))
-        ])
-        .status()?;
-
-    let _ = Command::new("nft")
-        .args([
-            "add", "rule", "inet", "traffic", "count_lan",
-            "ip", "daddr", ip, "counter", "name", &format!("dev_{}_rx", ip.replace('.', "_"))
-        ])
+        .args(["add", "element", "inet", "traffic", "rx_devices", &element])
         .status()?;
 
     Ok(())
 }
 
-#[derive(Debug, Default)]
-pub struct Counter {
-    pub bytes: i64,
-}
-
-/// Get all counters, returns map of counter_name -> Counter
-pub fn get_counters() -> Result<HashMap<String, Counter>> {
-    let output = Command::new("nft")
-        .args(["list", "counters"])
-        .output()?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
+/// Parse counter set output into map of ip -> bytes.
+/// Element lines look like: "10.0.1.2 counter packets 123 bytes 45678"
+fn parse_counter_set(output: &str) -> HashMap<String, i64> {
     let mut counters = HashMap::new();
-    let mut current_name = String::new();
-
-    for line in stdout.lines() {
+    for line in output.lines() {
         let line = line.trim();
-        if line.starts_with("counter inet traffic") {
-            // Extract counter name: "counter inet traffic dev_10_0_0_100_tx {"
-            if let Some(name) = line.split_whitespace().nth(3) {
-                current_name = name.trim_end_matches(" {").to_string();
+        if !line.contains("counter packets") {
+            continue;
+        }
+        for entry in line.split(',') {
+            let entry = entry.trim().trim_start_matches("elements = {").trim().trim_end_matches('}').trim();
+            if entry.is_empty() {
+                continue;
             }
-        } else if line.starts_with("packets") && !current_name.is_empty() {
-            // Parse: "packets 123 bytes 45678"
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 4 {
-                let bytes = parts[3].parse().unwrap_or(0);
-                counters.insert(current_name.clone(), Counter { bytes });
+            let parts: Vec<&str> = entry.split_whitespace().collect();
+            // Expected: ["10.0.1.2", "counter", "packets", "123", "bytes", "45678"]
+            if parts.len() >= 6 && parts[1] == "counter" && parts[4] == "bytes" {
+                if let Ok(bytes) = parts[5].parse::<i64>() {
+                    counters.insert(parts[0].to_string(), bytes);
+                }
             }
-            current_name.clear();
         }
     }
-
-    Ok(counters)
+    counters
 }
 
 /// Get rx/tx bytes for a specific IP
 pub fn get_device_counters(ip: &str) -> Result<(i64, i64)> {
-    let counters = get_counters()?;
-    let ip_key = ip.replace('.', "_");
-    let rx = counters.get(&format!("dev_{}_rx", ip_key)).map(|c| c.bytes).unwrap_or(0);
-    let tx = counters.get(&format!("dev_{}_tx", ip_key)).map(|c| c.bytes).unwrap_or(0);
+    let tx_output = Command::new("nft")
+        .args(["list", "set", "inet", "traffic", "tx_devices"])
+        .output()?;
+    let rx_output = Command::new("nft")
+        .args(["list", "set", "inet", "traffic", "rx_devices"])
+        .output()?;
+
+    let tx_map = parse_counter_set(&String::from_utf8_lossy(&tx_output.stdout));
+    let rx_map = parse_counter_set(&String::from_utf8_lossy(&rx_output.stdout));
+
+    let tx = tx_map.get(ip).copied().unwrap_or(0);
+    let rx = rx_map.get(ip).copied().unwrap_or(0);
     Ok((rx, tx))
 }
 
-/// Add nftables forward rule: ip saddr {ip} jump {group}_fwd
+/// Add device to verdict map: ip -> jump {group}_fwd
 pub fn add_device_forward_rule(ip: &str, group: &str) -> Result<()> {
     validate_ip(ip)?;
     validate_group(group)?;
     let chain = format!("{}_fwd", group);
+    let element = format!("{{ {} : jump {} }}", ip, chain);
     let status = Command::new("nft")
-        .args(["add", "rule", "inet", "filter", "forward",
-               "ip", "saddr", ip, "jump", &chain])
+        .args(["add", "element", "inet", "filter", "device_groups", &element])
         .status()?;
     if status.success() {
-        println!("Added forward rule: {} -> {}", ip, chain);
+        println!("Added device_groups element: {} -> {}", ip, chain);
         Ok(())
     } else {
-        anyhow::bail!("Failed to add forward rule for {}", ip)
+        anyhow::bail!("Failed to add device_groups element for {}", ip)
     }
 }
 
-/// Remove nftables forward rule for device IP and flush its conntrack entries.
-/// Lists rules with handles, finds the one matching the IP, deletes it.
+/// Remove device from verdict map and flush conntrack entries.
 pub fn remove_device_forward_rule(ip: &str) -> Result<()> {
     validate_ip(ip)?;
-    let output = Command::new("nft")
-        .args(["-a", "list", "chain", "inet", "filter", "forward"])
-        .output()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    for line in stdout.lines() {
-        if line.contains(&format!("ip saddr {}", ip)) {
-            // Extract handle number from "# handle N"
-            if let Some(handle) = line.rsplit("# handle ").next() {
-                let handle = handle.trim();
-                Command::new("nft")
-                    .args(["delete", "rule", "inet", "filter", "forward", "handle", handle])
-                    .status()?;
-                println!("Removed forward rule for {} (handle {})", ip, handle);
-            }
-        }
-    }
+    let element = format!("{{ {} }}", ip);
+    // Ignore errors — element may not exist (e.g. already blocked)
+    let _ = Command::new("nft")
+        .args(["delete", "element", "inet", "filter", "device_groups", &element])
+        .status();
 
     // Flush conntrack entries so established connections don't bypass the block
     let _ = Command::new("conntrack")
