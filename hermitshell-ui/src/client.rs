@@ -1,21 +1,10 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 
-const SOCKET_PATH: &str = "/run/hermitshell/agent.sock";
+use crate::types::{Device, Status};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Device {
-    pub mac: String,
-    pub ip: Option<String>,
-    pub hostname: Option<String>,
-    pub first_seen: i64,
-    pub last_seen: i64,
-    pub rx_bytes: i64,
-    pub tx_bytes: i64,
-    pub device_group: String,
-    pub subnet_id: Option<i64>,
-}
+const SOCKET_PATH: &str = "/run/hermitshell/agent.sock";
 
 #[derive(Debug, Deserialize)]
 pub struct Response {
@@ -27,14 +16,6 @@ pub struct Response {
     pub ad_blocking_enabled: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Status {
-    pub uptime_secs: u64,
-    pub device_count: usize,
-    #[serde(default)]
-    pub ad_blocking_enabled: bool,
-}
-
 fn send_request(method: &str, mac: Option<&str>) -> Result<Response, String> {
     let mut stream = UnixStream::connect(SOCKET_PATH)
         .map_err(|e| format!("Failed to connect to agent: {}", e))?;
@@ -43,6 +24,28 @@ fn send_request(method: &str, mac: Option<&str>) -> Result<Response, String> {
         format!(r#"{{"method":"{}","mac":"{}"}}"#, method, m)
     } else {
         format!(r#"{{"method":"{}"}}"#, method)
+    };
+
+    writeln!(stream, "{}", request)
+        .map_err(|e| format!("Failed to send request: {}", e))?;
+
+    let mut reader = BufReader::new(stream);
+    let mut response = String::new();
+    reader.read_line(&mut response)
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+    serde_json::from_str(&response)
+        .map_err(|e| format!("Failed to parse response: {}", e))
+}
+
+fn send_request_with_group(method: &str, mac: Option<&str>, group: Option<&str>) -> Result<Response, String> {
+    let mut stream = UnixStream::connect(SOCKET_PATH)
+        .map_err(|e| format!("Failed to connect to agent: {}", e))?;
+
+    let request = match (mac, group) {
+        (Some(m), Some(g)) => format!(r#"{{"method":"{}","mac":"{}","group":"{}"}}"#, method, m, g),
+        (Some(m), None) => format!(r#"{{"method":"{}","mac":"{}"}}"#, method, m),
+        _ => format!(r#"{{"method":"{}"}}"#, method),
     };
 
     writeln!(stream, "{}", request)
@@ -132,26 +135,4 @@ pub fn set_ad_blocking(enabled: bool) -> Result<(), String> {
     } else {
         Err(resp.error.unwrap_or_else(|| "Unknown error".to_string()))
     }
-}
-
-fn send_request_with_group(method: &str, mac: Option<&str>, group: Option<&str>) -> Result<Response, String> {
-    let mut stream = UnixStream::connect(SOCKET_PATH)
-        .map_err(|e| format!("Failed to connect to agent: {}", e))?;
-
-    let request = match (mac, group) {
-        (Some(m), Some(g)) => format!(r#"{{"method":"{}","mac":"{}","group":"{}"}}"#, method, m, g),
-        (Some(m), None) => format!(r#"{{"method":"{}","mac":"{}"}}"#, method, m),
-        _ => format!(r#"{{"method":"{}"}}"#, method),
-    };
-
-    writeln!(stream, "{}", request)
-        .map_err(|e| format!("Failed to send request: {}", e))?;
-
-    let mut reader = BufReader::new(stream);
-    let mut response = String::new();
-    reader.read_line(&mut response)
-        .map_err(|e| format!("Failed to read response: {}", e))?;
-
-    serde_json::from_str(&response)
-        .map_err(|e| format!("Failed to parse response: {}", e))
 }
