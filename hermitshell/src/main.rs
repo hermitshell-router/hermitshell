@@ -26,6 +26,13 @@ struct DeviceForm {
 }
 
 #[derive(Deserialize)]
+struct SetGroupForm {
+    mac: String,
+    group: String,
+    redirect: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct AdBlockingForm {
     enabled: String,
 }
@@ -34,6 +41,12 @@ async fn handle_ad_blocking(Form(form): Form<AdBlockingForm>) -> impl IntoRespon
     let enabled = form.enabled == "true";
     let _ = client::set_ad_blocking(enabled);
     axum::response::Redirect::to("/")
+}
+
+async fn handle_set_group(Form(form): Form<SetGroupForm>) -> impl IntoResponse {
+    let _ = client::set_device_group(&form.mac, &form.group);
+    let redirect = form.redirect.unwrap_or_else(|| "/devices".to_string());
+    axum::response::Redirect::to(&redirect)
 }
 
 async fn handle_approve(Form(form): Form<ApproveForm>) -> impl IntoResponse {
@@ -61,6 +74,7 @@ async fn main() {
     let app = Router::new()
         .route("/style.css", axum::routing::get(serve_css))
         .route("/api/ad-blocking", axum::routing::post(handle_ad_blocking))
+        .route("/api/set-group", axum::routing::post(handle_set_group))
         .route("/api/approve", axum::routing::post(handle_approve))
         .route("/api/block", axum::routing::post(handle_block))
         .route("/api/unblock", axum::routing::post(handle_unblock))

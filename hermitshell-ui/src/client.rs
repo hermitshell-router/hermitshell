@@ -105,6 +105,15 @@ pub fn unblock_device(mac: &str) -> Result<(), String> {
     }
 }
 
+pub fn get_device(mac: &str) -> Result<Device, String> {
+    let resp = send_request("get_device", Some(mac))?;
+    if resp.ok {
+        resp.device.ok_or_else(|| "No device in response".to_string())
+    } else {
+        Err(resp.error.unwrap_or_else(|| "Unknown error".to_string()))
+    }
+}
+
 pub fn get_ad_blocking() -> Result<bool, String> {
     let resp = send_request("get_ad_blocking", None)?;
     if resp.ok {

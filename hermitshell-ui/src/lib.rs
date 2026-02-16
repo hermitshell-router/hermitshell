@@ -7,6 +7,7 @@ use leptos::*;
 use leptos_router::*;
 
 use pages::dashboard::Dashboard;
+use pages::device_detail::DeviceDetail;
 use pages::devices::DeviceList;
 
 #[component]
@@ -17,6 +18,7 @@ pub fn App() -> impl IntoView {
                 <Routes>
                     <Route path="/" view=Dashboard />
                     <Route path="/devices" view=DeviceList />
+                    <Route path="/devices/:mac" view=DeviceDetail />
                 </Routes>
             </main>
         </Router>
