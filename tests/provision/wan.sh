@@ -8,8 +8,8 @@ apt-get install -y dnsmasq nftables
 cat > /etc/dnsmasq.conf <<EOF
 interface=eth1
 dhcp-range=192.168.100.100,192.168.100.200,24h
-dhcp-option=option:router,192.168.100.1
-dhcp-option=option:dns-server,192.168.100.1
+dhcp-option=option:router,192.168.100.2
+dhcp-option=option:dns-server,192.168.100.2
 no-resolv
 server=4.2.2.1
 server=4.2.2.2

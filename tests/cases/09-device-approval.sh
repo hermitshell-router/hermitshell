@@ -14,4 +14,4 @@ devices=$(vm_exec router 'echo "{\"method\":\"list_devices\"}" | socat - UNIX-CO
 assert_match "$devices" '"device_group":"trusted"' "Device group updated to trusted"
 
 # Trusted device should still reach internet
-assert_success "Trusted device can ping WAN" vm_exec lan "ping -c1 -W2 192.168.100.1"
+assert_success "Trusted device can ping WAN" vm_exec lan "ping -c1 -W2 192.168.100.2"

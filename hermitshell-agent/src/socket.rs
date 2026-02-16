@@ -162,8 +162,8 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 return Response::err("group required");
             };
             match group.as_str() {
-                "trusted" | "iot" | "guest" | "servers" => {}
-                _ => return Response::err("invalid group: must be trusted, iot, guest, or servers"),
+                "quarantine" | "trusted" | "iot" | "guest" | "servers" => {}
+                _ => return Response::err("invalid group: must be quarantine, trusted, iot, guest, or servers"),
             }
             let db = db.lock().unwrap();
             let device = match db.get_device(&mac) {

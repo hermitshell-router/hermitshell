@@ -57,7 +57,7 @@ ifup eth2 || true
 
 # Fix default route to go through WAN (eth1) instead of Vagrant management (eth0)
 ip route del default via 192.168.121.1 dev eth0 2>/dev/null || true
-ip route add default via 192.168.100.1 dev eth1 2>/dev/null || true
+ip route add default via 192.168.100.2 dev eth1 2>/dev/null || true
 
 # Create directories for agent
 mkdir -p /data/hermitshell/db
@@ -69,7 +69,7 @@ echo "0.0.0.0 ads.test.hermitshell" > /data/hermitshell/blocky/custom-blocklist.
 
 # Run hermitshell-agent as daemon (nohup prevents SIGHUP on session close)
 if [ -f /opt/hermitshell/hermitshell-agent ]; then
-    nohup /opt/hermitshell/hermitshell-agent > /var/log/hermitshell-agent.log 2>&1 &
+    setsid /opt/hermitshell/hermitshell-agent > /var/log/hermitshell-agent.log 2>&1 &
     sleep 5
 else
     echo "Warning: hermitshell-agent not found, using static rules"

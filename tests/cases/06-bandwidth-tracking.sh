@@ -2,7 +2,7 @@
 source "$(dirname "$0")/../lib/helpers.sh"
 
 # Generate some traffic from LAN VM
-vm_exec lan "curl -s http://192.168.100.1 || true" >/dev/null 2>&1
+vm_exec lan "curl -s http://192.168.100.2 || true" >/dev/null 2>&1
 
 # Wait for counters to appear
 counters_present() {

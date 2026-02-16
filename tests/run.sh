@@ -7,6 +7,11 @@ source lib/helpers.sh
 echo "=== HermitShell Integration Tests ==="
 echo
 
+# Build binaries before testing
+echo "Building binaries..."
+(cd .. && bash scripts/build-agent.sh)
+echo
+
 # Check VMs are running
 echo "Checking VM status..."
 vagrant status --machine-readable | grep -q "state,running" || {
@@ -19,8 +24,7 @@ failed=0
 for test in cases/*.sh; do
     [ -f "$test" ] || continue
     echo "--- Running: $(basename "$test") ---"
-    output=$(bash "$test" 2>&1)
-    rc=$?
+    output=$(bash "$test" 2>&1) && rc=0 || rc=$?
     echo "$output"
     echo
 

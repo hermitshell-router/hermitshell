@@ -16,7 +16,7 @@ for group in iot guest servers; do
     assert_match "$devices" "\"device_group\":\"$group\"" "Device group shows $group"
 
     # Verify device can still reach WAN
-    assert_success "$group device can reach WAN" vm_exec lan "ping -c1 -W3 192.168.100.1"
+    assert_success "$group device can reach WAN" vm_exec lan "ping -c1 -W3 192.168.100.2"
 done
 
 # Restore device to quarantine for subsequent tests

@@ -14,7 +14,7 @@ assert_match "$devices" '"device_group":"blocked"' "Device group is blocked"
 
 # Blocked device should NOT be able to reach internet (nftables drops)
 assert_failure "Blocked device cannot reach WAN" \
-    vm_exec lan "ping -c1 -W3 192.168.100.1"
+    vm_exec lan "ping -c1 -W3 192.168.100.2"
 block_test=$?
 
 # Unblock the device (restore for any subsequent tests)

@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Ensure cargo is in PATH (needed when run via sudo)
+[ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
+
 # Build with musl for static linking (portable across Linux distros)
 cargo build --release -p hermitshell-agent -p hermitshell-dhcp --target x86_64-unknown-linux-musl
 
