@@ -2,7 +2,14 @@ use anyhow::Result;
 use rusqlite::Connection;
 use serde::Serialize;
 
-const MAX_DEVICES: i64 = 1024;
+/// Hard limit from 10.0.0.0/8 address space: 4,194,240 /30 subnets.
+/// Practical bottlenecks before hitting this:
+/// - Counter polling: main loop dumps full nft sets per device every 10s.
+///   Fix: single dump parsed once, or nft get element for individual lookups.
+/// - Restart restore: list_assigned_devices is a full table scan, each device
+///   re-adds a gateway IP + verdict map element + counter set element.
+/// - ARP table: thousands of /30 gateway IPs on one interface.
+const MAX_DEVICES: i64 = 4_194_240;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS devices (
