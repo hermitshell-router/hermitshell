@@ -33,6 +33,19 @@ pub fn App() -> impl IntoView {
     }
 }
 
+pub fn format_uptime(secs: u64) -> String {
+    let days = secs / 86400;
+    let hours = (secs % 86400) / 3600;
+    let minutes = (secs % 3600) / 60;
+    if days > 0 {
+        format!("{}d {}h {}m", days, hours, minutes)
+    } else if hours > 0 {
+        format!("{}h {}m", hours, minutes)
+    } else {
+        format!("{}m", minutes)
+    }
+}
+
 pub fn format_bytes(bytes: i64) -> String {
     if bytes < 1024 {
         format!("{} B", bytes)

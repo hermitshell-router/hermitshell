@@ -45,7 +45,9 @@ async fn handle_ad_blocking(Form(form): Form<AdBlockingForm>) -> impl IntoRespon
 
 async fn handle_set_group(Form(form): Form<SetGroupForm>) -> impl IntoResponse {
     let _ = client::set_device_group(&form.mac, &form.group);
-    let redirect = form.redirect.unwrap_or_else(|| "/devices".to_string());
+    let redirect = form.redirect
+        .filter(|r| r.starts_with('/') && !r.starts_with("//"))
+        .unwrap_or_else(|| "/devices".to_string());
     axum::response::Redirect::to(&redirect)
 }
 

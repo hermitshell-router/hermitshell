@@ -1,20 +1,7 @@
 use leptos::*;
 use crate::client;
 use crate::components::layout::Layout;
-
-fn format_uptime(secs: u64) -> String {
-    let days = secs / 86400;
-    let hours = (secs % 86400) / 3600;
-    let minutes = (secs % 3600) / 60;
-
-    if days > 0 {
-        format!("{}d {}h {}m", days, hours, minutes)
-    } else if hours > 0 {
-        format!("{}h {}m", hours, minutes)
-    } else {
-        format!("{}m", minutes)
-    }
-}
+use crate::format_uptime;
 
 #[component]
 pub fn Settings() -> impl IntoView {
@@ -34,7 +21,7 @@ pub fn Settings() -> impl IntoView {
 
                         view! {
                             <div class="settings-section">
-                                <h2>"System"</h2>
+                                <h3>"System"</h3>
                                 <div class="settings-row">
                                     <span class="settings-label">"Agent Uptime"</span>
                                     <span class="settings-value">{uptime}</span>
@@ -50,7 +37,7 @@ pub fn Settings() -> impl IntoView {
                             </div>
 
                             <div class="settings-section">
-                                <h2>"About"</h2>
+                                <h3>"About"</h3>
                                 <div class="settings-row">
                                     <span class="settings-label">"Software"</span>
                                     <span class="settings-value">"HermitShell"</span>

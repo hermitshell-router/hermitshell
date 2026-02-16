@@ -3,20 +3,7 @@ use crate::client;
 use crate::components::layout::Layout;
 use crate::components::stat_card::StatCard;
 use crate::types::{Device, Status};
-
-fn format_uptime(secs: u64) -> String {
-    let days = secs / 86400;
-    let hours = (secs % 86400) / 3600;
-    let minutes = (secs % 3600) / 60;
-
-    if days > 0 {
-        format!("{}d {}h {}m", days, hours, minutes)
-    } else if hours > 0 {
-        format!("{}h {}m", hours, minutes)
-    } else {
-        format!("{}m", minutes)
-    }
-}
+use crate::format_uptime;
 
 #[component]
 pub fn Dashboard() -> impl IntoView {
@@ -53,42 +40,39 @@ pub fn Dashboard() -> impl IntoView {
 
 fn render_dashboard(status: Status, mut devices: Vec<Device>) -> View {
     let total = devices.len();
-    let active = devices.iter().filter(|d| d.device_group == "default").count();
     let quarantined = devices.iter().filter(|d| d.device_group == "quarantine").count();
     let blocked = devices.iter().filter(|d| d.device_group == "blocked").count();
+    let active = total - quarantined - blocked;
     let uptime = format_uptime(status.uptime_secs);
     let ad_blocking = status.ad_blocking_enabled;
     let ad_blocking_text = if ad_blocking { "Enabled" } else { "Disabled" };
-    let ad_blocking_class = if ad_blocking { "text-success" } else { "text-warning" };
+    let ad_blocking_class = if ad_blocking { "success" } else { "warning" };
     let toggle_value = if ad_blocking { "false" } else { "true" };
-    let toggle_label = if ad_blocking { "Disable" } else { "Enable" };
 
     devices.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
     let recent: Vec<Device> = devices.into_iter().take(5).collect();
 
     view! {
-        <div class="stats-grid">
-            <StatCard label="Total Devices" value={total.to_string()} class="text-accent" />
-            <StatCard label="Active" value={active.to_string()} class="text-success" />
-            <StatCard label="Quarantined" value={quarantined.to_string()} class="text-warning" />
-            <StatCard label="Blocked" value={blocked.to_string()} class="text-danger" />
+        <div class="card-grid">
+            <StatCard label="Total Devices" value={total.to_string()} class="accent" />
+            <StatCard label="Active" value={active.to_string()} class="success" />
+            <StatCard label="Quarantined" value={quarantined.to_string()} class="warning" />
+            <StatCard label="Blocked" value={blocked.to_string()} class="danger" />
             <StatCard label="Uptime" value={uptime} />
             <StatCard label="Ad Blocking" value={ad_blocking_text.to_string()} class={ad_blocking_class.to_string()} />
         </div>
 
-        <div class="section">
-            <div class="section-header">
-                <h2>"Ad Blocking"</h2>
-                <form method="post" action="/api/ad-blocking">
-                    <input type="hidden" name="enabled" value={toggle_value} />
-                    <button type="submit" class="btn btn-sm">{toggle_label}</button>
-                </form>
-            </div>
+        <div class="actions-bar">
+            <form method="post" action="/api/ad-blocking">
+                <input type="hidden" name="enabled" value={toggle_value} />
+                <button type="submit" class={if ad_blocking { "btn btn-danger btn-sm" } else { "btn btn-primary btn-sm" }}>
+                    {if ad_blocking { "Disable Ad Blocking" } else { "Enable Ad Blocking" }}
+                </button>
+            </form>
         </div>
 
-        <div class="section">
-            <h2>"Recent Devices"</h2>
-            <table class="table">
+        <h2 class="section-header">"Recent Devices"</h2>
+        <table>
                 <thead>
                     <tr>
                         <th>"Hostname"</th>
@@ -114,6 +98,5 @@ fn render_dashboard(status: Status, mut devices: Vec<Device>) -> View {
                     }).collect_view()}
                 </tbody>
             </table>
-        </div>
     }.into_view()
 }

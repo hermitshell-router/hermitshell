@@ -22,7 +22,7 @@ pub fn Dns() -> impl IntoView {
 
                         view! {
                             <div class="settings-section">
-                                <h2>"Ad Blocking"</h2>
+                                <h3>"Ad Blocking"</h3>
                                 <div class="settings-row">
                                     <span class="settings-label">"Status"</span>
                                     <span class={status_class}>{status_text}</span>
@@ -41,7 +41,7 @@ pub fn Dns() -> impl IntoView {
                             </div>
 
                             <div class="settings-section">
-                                <h2>"Block Lists"</h2>
+                                <h3>"Block Lists"</h3>
                                 <div class="settings-row">
                                     <span class="settings-label">"StevenBlack Hosts"</span>
                                     <span class="settings-value">"Active"</span>
