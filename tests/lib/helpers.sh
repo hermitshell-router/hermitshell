@@ -10,7 +10,7 @@ vm_exec() {
     local vm=$1
     shift
     local output
-    output=$(vagrant ssh "$vm" -c "sudo sh -c $(printf '%q' "$*")" 2>/dev/null)
+    output=$(vagrant ssh "$vm" -c "$*" 2>/dev/null)
     local rc=$?
     echo "$output" | grep -v "^==>" | grep -v "^\[fog\]"
     return $rc

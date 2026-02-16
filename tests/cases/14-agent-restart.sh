@@ -5,9 +5,8 @@ source "$(dirname "$0")/../lib/helpers.sh"
 before=$(vm_exec router 'echo "{\"method\":\"list_devices\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$before" '"ok":true' "list_devices before restart"
 
-# Kill the agent and DHCP process
-vm_exec router "pkill -f hermitshell-agent" || true
-vm_exec router "pkill -f hermitshell-dhcp" || true
+# Kill the agent and DHCP process (need sudo to signal root processes)
+vagrant ssh router -c "sudo bash -c 'pkill -f hermitshell-agent || true; pkill -f hermitshell-dhcp || true'" 2>/dev/null || true
 sleep 1
 
 # Verify they're dead
@@ -16,11 +15,12 @@ agent_dead() {
 }
 wait_for 5 "Agent process stopped" agent_dead
 
-# Restart agent
-vm_exec router "setsid /opt/hermitshell/hermitshell-agent > /var/log/hermitshell-agent.log 2>&1 &"
+# Restart agent (need sudo + nohup to survive ssh disconnect)
+vagrant ssh router -c "sudo bash -c 'rm -f /run/hermitshell/*.sock; nohup /opt/hermitshell/hermitshell-agent > /var/log/hermitshell-agent.log 2>&1 &'" 2>/dev/null || true
 
 # Wait for socket to come back
 socket_ready() {
+    vagrant ssh router -c "sudo chmod 666 /run/hermitshell/agent.sock" 2>/dev/null
     vm_exec router 'echo "{\"method\":\"list_devices\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' | grep -q '"ok":true'
 }
 wait_for 15 "Agent socket ready after restart" socket_ready

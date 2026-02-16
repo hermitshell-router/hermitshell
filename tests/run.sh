@@ -12,6 +12,14 @@ echo "Building binaries..."
 (cd .. && bash scripts/build-agent.sh)
 echo
 
+# Deploy fresh binaries to router and restart agent
+echo "Deploying to router..."
+vagrant rsync router
+vagrant ssh router -c "sudo bash -c 'killall hermitshell-agent hermitshell-dhcp blocky 2>/dev/null; sleep 1; rm -f /run/hermitshell/*.sock; nohup /opt/hermitshell/hermitshell-agent > /var/log/hermitshell-agent.log 2>&1 &'" 2>/dev/null || true
+sleep 5
+vagrant ssh router -c "sudo chmod 666 /run/hermitshell/agent.sock" 2>/dev/null || true
+echo
+
 # Check VMs are running
 echo "Checking VM status..."
 vagrant status --machine-readable | grep -q "state,running" || {

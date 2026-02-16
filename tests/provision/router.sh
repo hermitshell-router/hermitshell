@@ -71,6 +71,8 @@ echo "0.0.0.0 ads.test.hermitshell" > /data/hermitshell/blocky/custom-blocklist.
 if [ -f /opt/hermitshell/hermitshell-agent ]; then
     setsid /opt/hermitshell/hermitshell-agent > /var/log/hermitshell-agent.log 2>&1 &
     sleep 5
+    # Relax socket permissions for test access
+    chmod 666 /run/hermitshell/agent.sock 2>/dev/null || true
 else
     echo "Warning: hermitshell-agent not found, using static rules"
     nft -f /etc/nftables.conf
