@@ -127,7 +127,6 @@ pub fn add_device_counter(ip: &str) -> Result<()> {
 #[derive(Debug, Default)]
 pub struct Counter {
     pub bytes: i64,
-    pub packets: i64,
 }
 
 /// Get all counters, returns map of counter_name -> Counter
@@ -151,9 +150,8 @@ pub fn get_counters() -> Result<HashMap<String, Counter>> {
             // Parse: "packets 123 bytes 45678"
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 4 {
-                let packets = parts[1].parse().unwrap_or(0);
                 let bytes = parts[3].parse().unwrap_or(0);
-                counters.insert(current_name.clone(), Counter { bytes, packets });
+                counters.insert(current_name.clone(), Counter { bytes });
             }
             current_name.clear();
         }
@@ -232,11 +230,4 @@ pub fn add_gateway_address(gateway: &str, lan_iface: &str) -> Result<()> {
     Ok(())
 }
 
-/// Remove /30 gateway address from LAN interface
-pub fn remove_gateway_address(gateway: &str, lan_iface: &str) -> Result<()> {
-    let addr = format!("{}/30", gateway);
-    let _ = Command::new("ip")
-        .args(["addr", "del", &addr, "dev", lan_iface])
-        .status();
-    Ok(())
-}
+

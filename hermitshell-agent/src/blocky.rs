@@ -112,11 +112,6 @@ log:
         Ok(())
     }
 
-    pub fn is_blocking_enabled(&self) -> Result<bool> {
-        let body = http_request("127.0.0.1:4000", "/api/blocking/status")?;
-        // blocky returns JSON like {"enabled":true, ...}
-        Ok(body.contains("\"enabled\":true") || body.contains("\"enabled\": true"))
-    }
 }
 
 impl Drop for BlockyManager {

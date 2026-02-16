@@ -51,23 +51,6 @@ impl Db {
         Ok(Self { conn })
     }
 
-    pub fn upsert_device(&self, mac: &str, ip: Option<&str>, hostname: Option<&str>) -> Result<()> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs() as i64;
-
-        self.conn.execute(
-            "INSERT INTO devices (mac, ip, hostname, first_seen, last_seen)
-             VALUES (?1, ?2, ?3, ?4, ?4)
-             ON CONFLICT(mac) DO UPDATE SET
-                ip = ?2,
-                hostname = ?3,
-                last_seen = ?4",
-            (mac, ip, hostname, now),
-        )?;
-        Ok(())
-    }
-
     pub fn update_counters(&self, ip: &str, rx_bytes: i64, tx_bytes: i64) -> Result<()> {
         self.conn.execute(
             "UPDATE devices SET rx_bytes = ?1, tx_bytes = ?2 WHERE ip = ?3",

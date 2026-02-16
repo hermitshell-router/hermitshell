@@ -60,7 +60,7 @@ fn read_upstream_dns(wan_iface: &str) -> Vec<Ipv4Addr> {
 const DB_PATH: &str = "/data/hermitshell/db/hermitshell.db";
 const SOCKET_PATH: &str = "/run/hermitshell/agent.sock";
 const POLL_INTERVAL_SECS: u64 = 10;
-const LAN_ADDR: &str = "10.0.0.1/16";
+const LAN_ADDR: &str = "10.0.0.1/32";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
     let wan_iface = "eth1";
     let lan_iface = "eth2";
 
-    // Ensure LAN interface has the /16 base address for /30 subnet routing
+    // Ensure LAN interface has the base address (each device gets its own /30)
     let status = std::process::Command::new("ip")
         .args(["addr", "add", LAN_ADDR, "dev", lan_iface])
         .status();
