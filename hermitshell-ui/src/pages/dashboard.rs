@@ -1,8 +1,11 @@
 use leptos::*;
+use crate::components::layout::Layout;
 
 #[component]
 pub fn Dashboard() -> impl IntoView {
     view! {
-        <h1>"HermitShell Dashboard"</h1>
+        <Layout title="Dashboard" active_page="dashboard">
+            <p>"Dashboard content coming soon."</p>
+        </Layout>
     }
 }
