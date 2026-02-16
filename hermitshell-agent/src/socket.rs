@@ -211,6 +211,9 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 if let Err(e) = nftables::remove_device_forward_rule(ip) {
                     return Response::err(&format!("failed to remove forward rule: {}", e));
                 }
+                if let Err(e) = nftables::add_device_forward_rule(ip, "blocked") {
+                    return Response::err(&format!("failed to add blocked rule: {}", e));
+                }
             }
             if let Err(e) = db.block_device(&mac) {
                 return Response::err(&format!("failed to block device: {}", e));
@@ -231,6 +234,9 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 return Response::err(&format!("failed to unblock device: {}", e));
             }
             if let Some(ref ip) = device.ip {
+                if let Err(e) = nftables::remove_device_forward_rule(ip) {
+                    return Response::err(&format!("failed to remove blocked rule: {}", e));
+                }
                 if let Err(e) = nftables::add_device_forward_rule(ip, "quarantine") {
                     return Response::err(&format!("failed to add forward rule: {}", e));
                 }
