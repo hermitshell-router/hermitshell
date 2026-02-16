@@ -8,6 +8,12 @@ use serde::Deserialize;
 use hermitshell_ui::App;
 use hermitshell_ui::client;
 
+const STYLE_CSS: &str = include_str!("../../hermitshell-ui/style/style.css");
+
+async fn serve_css() -> impl IntoResponse {
+    ([("content-type", "text/css")], STYLE_CSS)
+}
+
 #[derive(Deserialize)]
 struct ApproveForm {
     mac: String,
@@ -53,6 +59,7 @@ async fn main() {
     let routes = generate_route_list(App);
 
     let app = Router::new()
+        .route("/style.css", axum::routing::get(serve_css))
         .route("/api/ad-blocking", axum::routing::post(handle_ad_blocking))
         .route("/api/approve", axum::routing::post(handle_approve))
         .route("/api/block", axum::routing::post(handle_block))
