@@ -9,6 +9,10 @@ use leptos_router::*;
 use pages::dashboard::Dashboard;
 use pages::device_detail::DeviceDetail;
 use pages::devices::DeviceList;
+use pages::dns::Dns;
+use pages::groups::Groups;
+use pages::settings::Settings;
+use pages::traffic::Traffic;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -19,6 +23,10 @@ pub fn App() -> impl IntoView {
                     <Route path="/" view=Dashboard />
                     <Route path="/devices" view=DeviceList />
                     <Route path="/devices/:mac" view=DeviceDetail />
+                    <Route path="/groups" view=Groups />
+                    <Route path="/traffic" view=Traffic />
+                    <Route path="/dns" view=Dns />
+                    <Route path="/settings" view=Settings />
                 </Routes>
             </main>
         </Router>
