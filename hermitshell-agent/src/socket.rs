@@ -16,6 +16,8 @@ struct Request {
     group: Option<String>,
     enabled: Option<bool>,
     subnet_id: Option<i64>,
+    name: Option<String>,
+    public_key: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -37,6 +39,8 @@ struct Response {
     device_ip: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     is_new: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wireguard: Option<WireguardInfo>,
 }
 
 #[derive(Debug, Serialize)]
@@ -46,12 +50,29 @@ struct Status {
     ad_blocking_enabled: bool,
 }
 
+#[derive(Debug, Serialize)]
+struct WireguardInfo {
+    enabled: bool,
+    public_key: Option<String>,
+    listen_port: u16,
+    peers: Vec<WgPeerInfo>,
+}
+
+#[derive(Debug, Serialize)]
+struct WgPeerInfo {
+    public_key: String,
+    name: String,
+    ip: String,
+    device_group: String,
+    enabled: bool,
+}
+
 impl Response {
     fn ok() -> Self {
-        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ip: None, is_new: None }
+        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ip: None, is_new: None, wireguard: None }
     }
     fn err(msg: &str) -> Self {
-        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ip: None, is_new: None }
+        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ip: None, is_new: None, wireguard: None }
     }
 }
 
@@ -271,6 +292,210 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             let mut resp = Response::ok();
             resp.ad_blocking_enabled = Some(enabled);
             resp
+        }
+        "get_wireguard" => {
+            let db = db.lock().unwrap();
+            let enabled = db.get_config("wg_enabled")
+                .ok().flatten()
+                .map(|v| v == "true")
+                .unwrap_or(false);
+            let public_key = if enabled {
+                db.get_config("wg_private_key").ok().flatten().and_then(|privkey| {
+                    crate::wireguard::pubkey_from_private(&privkey).ok()
+                })
+            } else {
+                None
+            };
+            let listen_port: u16 = db.get_config("wg_listen_port")
+                .ok().flatten()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(51820);
+            let peers = db.list_wg_peers().unwrap_or_default();
+            let peer_infos: Vec<WgPeerInfo> = peers.iter().filter_map(|p| {
+                let info = subnet::compute_subnet(p.subnet_id)?;
+                Some(WgPeerInfo {
+                    public_key: p.public_key.clone(),
+                    name: p.name.clone(),
+                    ip: info.device_ip,
+                    device_group: p.device_group.clone(),
+                    enabled: p.enabled,
+                })
+            }).collect();
+            let mut resp = Response::ok();
+            resp.wireguard = Some(WireguardInfo {
+                enabled,
+                public_key,
+                listen_port,
+                peers: peer_infos,
+            });
+            resp
+        }
+        "set_wireguard_enabled" => {
+            let Some(enabled) = req.enabled else {
+                return Response::err("enabled required");
+            };
+            let db = db.lock().unwrap();
+            if enabled {
+                let private_key = match db.get_config("wg_private_key").ok().flatten() {
+                    Some(key) => key,
+                    None => {
+                        let (privkey, _pubkey) = match crate::wireguard::generate_keypair() {
+                            Ok(kp) => kp,
+                            Err(e) => return Response::err(&format!("keygen failed: {}", e)),
+                        };
+                        if let Err(e) = db.set_config("wg_private_key", &privkey) {
+                            return Response::err(&format!("failed to store key: {}", e));
+                        }
+                        privkey
+                    }
+                };
+                let listen_port: u16 = db.get_config("wg_listen_port")
+                    .ok().flatten()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(51820);
+                if let Err(e) = crate::wireguard::create_interface(&private_key, listen_port) {
+                    return Response::err(&format!("failed to create wg0: {}", e));
+                }
+                if let Err(e) = crate::wireguard::open_listen_port(listen_port) {
+                    return Response::err(&format!("failed to open port: {}", e));
+                }
+                let peers = db.list_wg_peers().unwrap_or_default();
+                for peer in &peers {
+                    if !peer.enabled { continue; }
+                    if let Some(info) = subnet::compute_subnet(peer.subnet_id) {
+                        let _ = crate::wireguard::add_peer(&peer.public_key, &info.device_ip);
+                        let _ = nftables::add_device_counter(&info.device_ip);
+                        let _ = nftables::add_device_forward_rule(&info.device_ip, &peer.device_group);
+                    }
+                }
+                if let Err(e) = db.set_config("wg_enabled", "true") {
+                    return Response::err(&format!("failed to save config: {}", e));
+                }
+            } else {
+                let peers = db.list_wg_peers().unwrap_or_default();
+                for peer in &peers {
+                    if let Some(info) = subnet::compute_subnet(peer.subnet_id) {
+                        let _ = nftables::remove_device_forward_rule(&info.device_ip);
+                        let _ = crate::wireguard::remove_peer(&peer.public_key, &info.device_ip);
+                    }
+                }
+                let _ = crate::wireguard::close_listen_port();
+                let _ = crate::wireguard::destroy_interface();
+                if let Err(e) = db.set_config("wg_enabled", "false") {
+                    return Response::err(&format!("failed to save config: {}", e));
+                }
+            }
+            Response::ok()
+        }
+        "add_wg_peer" => {
+            let Some(name) = req.name else {
+                return Response::err("name required");
+            };
+            let Some(public_key) = req.public_key else {
+                return Response::err("public_key required");
+            };
+            let group = req.group.as_deref().unwrap_or("quarantine");
+            match group {
+                "quarantine" | "trusted" | "iot" | "guest" | "servers" => {}
+                _ => return Response::err("invalid group"),
+            }
+            let db = db.lock().unwrap();
+            let wg_enabled = db.get_config("wg_enabled")
+                .ok().flatten()
+                .map(|v| v == "true")
+                .unwrap_or(false);
+            if !wg_enabled {
+                return Response::err("WireGuard is not enabled");
+            }
+            if let Ok(Some(_)) = db.get_wg_peer(&public_key) {
+                return Response::err("peer already exists");
+            }
+            let subnet_id = match db.allocate_subnet_id() {
+                Ok(s) => s,
+                Err(e) => return Response::err(&format!("subnet allocation failed: {}", e)),
+            };
+            let Some(info) = subnet::compute_subnet(subnet_id) else {
+                return Response::err("subnet address space exhausted");
+            };
+            if let Err(e) = crate::wireguard::add_peer(&public_key, &info.device_ip) {
+                return Response::err(&format!("failed to add peer: {}", e));
+            }
+            if let Err(e) = nftables::add_device_counter(&info.device_ip) {
+                return Response::err(&format!("failed to add counter: {}", e));
+            }
+            if let Err(e) = nftables::add_device_forward_rule(&info.device_ip, group) {
+                return Response::err(&format!("failed to add forward rule: {}", e));
+            }
+            if let Err(e) = db.insert_wg_peer(&public_key, &name, subnet_id, group) {
+                return Response::err(&format!("failed to save peer: {}", e));
+            }
+            let server_pubkey = db.get_config("wg_private_key")
+                .ok().flatten()
+                .and_then(|k| crate::wireguard::pubkey_from_private(&k).ok())
+                .unwrap_or_default();
+            let listen_port: u16 = db.get_config("wg_listen_port")
+                .ok().flatten()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(51820);
+            let mut resp = Response::ok();
+            resp.device_ip = Some(info.device_ip);
+            resp.wireguard = Some(WireguardInfo {
+                enabled: true,
+                public_key: Some(server_pubkey),
+                listen_port,
+                peers: vec![],
+            });
+            resp
+        }
+        "remove_wg_peer" => {
+            let Some(public_key) = req.public_key else {
+                return Response::err("public_key required");
+            };
+            let db = db.lock().unwrap();
+            let peer = match db.get_wg_peer(&public_key) {
+                Ok(Some(p)) => p,
+                Ok(None) => return Response::err("peer not found"),
+                Err(e) => return Response::err(&e.to_string()),
+            };
+            if let Some(info) = subnet::compute_subnet(peer.subnet_id) {
+                let _ = nftables::remove_device_forward_rule(&info.device_ip);
+                let _ = crate::wireguard::remove_peer(&public_key, &info.device_ip);
+            }
+            if let Err(e) = db.remove_wg_peer(&public_key) {
+                return Response::err(&format!("failed to remove peer: {}", e));
+            }
+            Response::ok()
+        }
+        "set_wg_peer_group" => {
+            let Some(public_key) = req.public_key else {
+                return Response::err("public_key required");
+            };
+            let Some(group) = req.group else {
+                return Response::err("group required");
+            };
+            match group.as_str() {
+                "quarantine" | "trusted" | "iot" | "guest" | "servers" => {}
+                _ => return Response::err("invalid group"),
+            }
+            let db = db.lock().unwrap();
+            let peer = match db.get_wg_peer(&public_key) {
+                Ok(Some(p)) => p,
+                Ok(None) => return Response::err("peer not found"),
+                Err(e) => return Response::err(&e.to_string()),
+            };
+            let Some(info) = subnet::compute_subnet(peer.subnet_id) else {
+                return Response::err("invalid subnet_id");
+            };
+            if let Err(e) = nftables::remove_device_forward_rule(&info.device_ip) {
+                return Response::err(&format!("failed to remove old rule: {}", e));
+            }
+            if let Err(e) = db.set_wg_peer_group(&public_key, &group) {
+                return Response::err(&format!("failed to update group: {}", e));
+            }
+            if let Err(e) = nftables::add_device_forward_rule(&info.device_ip, &group) {
+                return Response::err(&format!("failed to add new rule: {}", e));
+            }
+            Response::ok()
         }
         _ => Response::err("unknown method"),
     }
