@@ -157,6 +157,57 @@ async fn handle_logout() -> impl IntoResponse {
     response
 }
 
+#[derive(Deserialize)]
+struct PortForwardForm {
+    protocol: String,
+    external_port_start: u16,
+    external_port_end: u16,
+    internal_ip: String,
+    internal_port: u16,
+    description: String,
+}
+
+#[derive(Deserialize)]
+struct PortForwardIdForm {
+    id: i64,
+}
+
+#[derive(Deserialize)]
+struct ReservationForm {
+    mac: String,
+}
+
+async fn handle_add_port_forward(Form(form): Form<PortForwardForm>) -> impl IntoResponse {
+    let _ = client::add_port_forward(&form.protocol, form.external_port_start, form.external_port_end, &form.internal_ip, form.internal_port, &form.description);
+    axum::response::Redirect::to("/port-forwarding")
+}
+
+async fn handle_remove_port_forward(Form(form): Form<PortForwardIdForm>) -> impl IntoResponse {
+    let _ = client::remove_port_forward(form.id);
+    axum::response::Redirect::to("/port-forwarding")
+}
+
+async fn handle_set_reservation(Form(form): Form<ReservationForm>) -> impl IntoResponse {
+    let _ = client::set_dhcp_reservation(&form.mac, None);
+    axum::response::Redirect::to("/settings")
+}
+
+async fn handle_remove_reservation(Form(form): Form<ReservationForm>) -> impl IntoResponse {
+    let _ = client::remove_dhcp_reservation(&form.mac);
+    axum::response::Redirect::to("/settings")
+}
+
+async fn handle_backup_config() -> impl IntoResponse {
+    match client::export_config() {
+        Ok(data) => (
+            [(axum::http::header::CONTENT_TYPE, "application/json"),
+             (axum::http::header::CONTENT_DISPOSITION, "attachment; filename=hermitshell-config.json")],
+            data
+        ).into_response(),
+        Err(e) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
 async fn auth_middleware(
     req: axum::extract::Request,
     next: axum::middleware::Next,
@@ -211,6 +262,11 @@ async fn main() {
         .route("/api/approve", axum::routing::post(handle_approve))
         .route("/api/block", axum::routing::post(handle_block))
         .route("/api/unblock", axum::routing::post(handle_unblock))
+        .route("/api/add-port-forward", axum::routing::post(handle_add_port_forward))
+        .route("/api/remove-port-forward", axum::routing::post(handle_remove_port_forward))
+        .route("/api/set-reservation", axum::routing::post(handle_set_reservation))
+        .route("/api/remove-reservation", axum::routing::post(handle_remove_reservation))
+        .route("/api/backup/config", axum::routing::get(handle_backup_config))
         .leptos_routes(&leptos_options, routes, App)
         .layer(axum::middleware::from_fn(auth_middleware))
         .with_state(leptos_options);

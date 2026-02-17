@@ -4,6 +4,7 @@ pub mod devices;
 pub mod dns;
 pub mod groups;
 pub mod login;
+pub mod port_forwarding;
 pub mod settings;
 pub mod setup;
 pub mod traffic;

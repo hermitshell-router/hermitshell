@@ -13,6 +13,7 @@ pub fn Layout(
         ("Traffic", "/traffic"),
         ("DNS", "/dns"),
         ("WireGuard", "/wireguard"),
+        ("Port Forwarding", "/port-forwarding"),
         ("Settings", "/settings"),
     ];
 

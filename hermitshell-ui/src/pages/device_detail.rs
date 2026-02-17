@@ -112,6 +112,11 @@ pub fn DeviceDetail() -> impl IntoView {
                                         </form>
                                     }.into_view()
                                 }}
+
+                                <form method="post" action="/api/set-reservation" style="display:inline">
+                                    <input type="hidden" name="mac" value={mac.clone()} />
+                                    <button type="submit" class="btn btn-sm">"Reserve IP"</button>
+                                </form>
                             </div>
                         }.into_view()
                     }

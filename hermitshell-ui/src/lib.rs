@@ -15,6 +15,7 @@ use pages::login::Login;
 use pages::settings::Settings;
 use pages::setup::Setup;
 use pages::traffic::Traffic;
+use pages::port_forwarding::PortForwarding;
 use pages::wireguard::Wireguard;
 
 #[component]
@@ -30,6 +31,7 @@ pub fn App() -> impl IntoView {
                     <Route path="/traffic" view=Traffic />
                     <Route path="/dns" view=Dns />
                     <Route path="/wireguard" view=Wireguard />
+                    <Route path="/port-forwarding" view=PortForwarding />
                     <Route path="/settings" view=Settings />
                     <Route path="/login" view=Login />
                     <Route path="/setup" view=Setup />
