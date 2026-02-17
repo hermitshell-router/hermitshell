@@ -702,6 +702,131 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             }
             Response::ok()
         }
+        "export_config" => {
+            let db = db.lock().unwrap();
+            let devices = db.list_devices().unwrap_or_default();
+            let reservations = db.list_dhcp_reservations().unwrap_or_default();
+            let forwards = db.list_port_forwards().unwrap_or_default();
+            let peers = db.list_wg_peers().unwrap_or_default();
+
+            let config_keys = ["ad_blocking_enabled", "wg_listen_port", "dmz_host_ip"];
+            let mut config_map = serde_json::Map::new();
+            for key in &config_keys {
+                if let Ok(Some(val)) = db.get_config(key) {
+                    config_map.insert(key.to_string(), serde_json::Value::String(val));
+                }
+            }
+
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+
+            let export = serde_json::json!({
+                "version": 1,
+                "exported_at": now,
+                "devices": devices.iter().map(|d| serde_json::json!({
+                    "mac": d.mac, "hostname": d.hostname, "device_group": d.device_group, "subnet_id": d.subnet_id
+                })).collect::<Vec<_>>(),
+                "dhcp_reservations": reservations,
+                "port_forwards": forwards,
+                "wg_peers": peers.iter().map(|p| serde_json::json!({
+                    "public_key": p.public_key, "name": p.name, "subnet_id": p.subnet_id, "device_group": p.device_group
+                })).collect::<Vec<_>>(),
+                "config": config_map,
+            });
+
+            let mut resp = Response::ok();
+            resp.config_value = Some(export.to_string());
+            resp
+        }
+        "import_config" => {
+            let Some(data) = req.value else { return Response::err("value required (JSON config)"); };
+            let parsed: serde_json::Value = match serde_json::from_str(&data) {
+                Ok(v) => v,
+                Err(e) => return Response::err(&format!("invalid JSON: {}", e)),
+            };
+            if parsed.get("version").and_then(|v| v.as_i64()) != Some(1) {
+                return Response::err("unsupported config version");
+            }
+
+            let db = db.lock().unwrap();
+
+            // Import devices (upsert groups and hostnames)
+            if let Some(devices) = parsed.get("devices").and_then(|v| v.as_array()) {
+                for dev in devices {
+                    let mac = dev.get("mac").and_then(|v| v.as_str()).unwrap_or("");
+                    let group = dev.get("device_group").and_then(|v| v.as_str()).unwrap_or("quarantine");
+                    if !mac.is_empty() {
+                        let _ = db.set_device_group(mac, group);
+                        if let Some(hostname) = dev.get("hostname").and_then(|v| v.as_str()) {
+                            let _ = db.set_device_hostname(mac, hostname);
+                        }
+                    }
+                }
+            }
+
+            // Import DHCP reservations (replace all)
+            let _ = db.conn_exec("DELETE FROM dhcp_reservations");
+            if let Some(reservations) = parsed.get("dhcp_reservations").and_then(|v| v.as_array()) {
+                for r in reservations {
+                    let mac = r.get("mac").and_then(|v| v.as_str()).unwrap_or("");
+                    let sid = r.get("subnet_id").and_then(|v| v.as_i64()).unwrap_or(-1);
+                    if !mac.is_empty() && sid >= 0 {
+                        let _ = db.set_dhcp_reservation(mac, sid);
+                    }
+                }
+            }
+
+            // Import port forwards (replace all)
+            let _ = db.conn_exec("DELETE FROM port_forwards");
+            if let Some(forwards) = parsed.get("port_forwards").and_then(|v| v.as_array()) {
+                for f in forwards {
+                    let protocol = f.get("protocol").and_then(|v| v.as_str()).unwrap_or("both");
+                    let ext_start = f.get("external_port_start").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+                    let ext_end = f.get("external_port_end").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+                    let internal_ip = f.get("internal_ip").and_then(|v| v.as_str()).unwrap_or("");
+                    let int_port = f.get("internal_port").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+                    let desc = f.get("description").and_then(|v| v.as_str()).unwrap_or("");
+                    if ext_start > 0 && !internal_ip.is_empty() {
+                        let _ = db.add_port_forward(protocol, ext_start, ext_end, internal_ip, int_port, desc);
+                    }
+                }
+            }
+
+            // Import config (merge non-secret keys only)
+            if let Some(config) = parsed.get("config").and_then(|v| v.as_object()) {
+                for (key, val) in config {
+                    match key.as_str() {
+                        "ad_blocking_enabled" | "wg_listen_port" | "dmz_host_ip" => {
+                            if let Some(v) = val.as_str() {
+                                let _ = db.set_config(key, v);
+                            }
+                        }
+                        _ => {} // skip unknown/secret keys
+                    }
+                }
+            }
+
+            // Reapply port forward rules
+            let forwards = db.list_enabled_port_forwards().unwrap_or_default();
+            let dmz = db.get_config("dmz_host_ip").ok().flatten().unwrap_or_default();
+            let dmz_ref = if dmz.is_empty() { None } else { Some(dmz.as_str()) };
+            drop(db);
+            let _ = nftables::apply_port_forwards(wan_iface, lan_iface, &forwards, dmz_ref);
+
+            Response::ok()
+        }
+        "backup_database" => {
+            let db = db.lock().unwrap();
+            let backup_path = "/tmp/hermitshell-backup.db";
+            match db.vacuum_into(backup_path) {
+                Ok(()) => {
+                    let mut resp = Response::ok();
+                    resp.config_value = Some(backup_path.to_string());
+                    resp
+                }
+                Err(e) => Response::err(&format!("backup failed: {}", e)),
+            }
+        }
         _ => Response::err("unknown method"),
     }
 }
