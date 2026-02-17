@@ -110,6 +110,38 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Restore WireGuard state if enabled
+    {
+        let db_guard = db.lock().unwrap();
+        let wg_enabled = db_guard.get_config("wg_enabled")
+            .ok().flatten()
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if wg_enabled {
+            if let Some(private_key) = db_guard.get_config("wg_private_key").ok().flatten() {
+                let listen_port: u16 = db_guard.get_config("wg_listen_port")
+                    .ok().flatten()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(51820);
+                if let Err(e) = wireguard::create_interface(&private_key, listen_port) {
+                    eprintln!("Failed to restore wg0: {}", e);
+                } else {
+                    let _ = wireguard::open_listen_port(listen_port);
+                    let peers = db_guard.list_wg_peers().unwrap_or_default();
+                    for peer in &peers {
+                        if !peer.enabled { continue; }
+                        if let Some(info) = subnet::compute_subnet(peer.subnet_id) {
+                            let _ = wireguard::add_peer(&peer.public_key, &info.device_ip);
+                            let _ = nftables::add_device_counter(&info.device_ip);
+                            let _ = nftables::add_device_forward_rule(&info.device_ip, &peer.device_group);
+                            println!("Restored WireGuard peer {} -> {}", peer.name, info.device_ip);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Start blocky DNS server
     let upstream_dns = read_upstream_dns(wan_iface);
     println!("Upstream DNS: {:?}", upstream_dns);
