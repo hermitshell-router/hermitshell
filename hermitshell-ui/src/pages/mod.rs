@@ -3,6 +3,8 @@ pub mod device_detail;
 pub mod devices;
 pub mod dns;
 pub mod groups;
+pub mod login;
 pub mod settings;
+pub mod setup;
 pub mod traffic;
 pub mod wireguard;

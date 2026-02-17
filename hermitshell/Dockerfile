@@ -18,8 +18,7 @@ RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/
 
 COPY --from=builder /app/target/release/hermitshell /usr/local/bin/
 
-EXPOSE 3000
+EXPOSE 80 443
 
 ENV LEPTOS_OUTPUT_NAME="hermitshell"
-ENV LEPTOS_SITE_ADDR="0.0.0.0:3000"
 CMD ["hermitshell"]

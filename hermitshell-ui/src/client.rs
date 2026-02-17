@@ -17,6 +17,10 @@ pub struct Response {
     pub ad_blocking_enabled: Option<bool>,
     pub wireguard: Option<crate::types::WireguardInfo>,
     pub device_ip: Option<String>,
+    pub port_forwards: Option<Vec<crate::types::PortForward>>,
+    pub dmz_ip: Option<String>,
+    pub dhcp_reservations: Option<Vec<crate::types::DhcpReservation>>,
+    pub config_value: Option<String>,
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
@@ -100,6 +104,71 @@ pub fn add_wg_peer(name: &str, public_key: &str, group: &str) -> Result<Response
 
 pub fn remove_wg_peer(public_key: &str) -> Result<(), String> {
     ok_or_err(send(json!({"method": "remove_wg_peer", "public_key": public_key}))?)?;
+    Ok(())
+}
+
+pub fn get_config(key: &str) -> Result<Option<String>, String> {
+    let resp = ok_or_err(send(json!({"method": "get_config", "key": key}))?)?;
+    Ok(resp.config_value)
+}
+
+pub fn set_config(key: &str, value: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "set_config", "key": key, "value": value}))?)?;
+    Ok(())
+}
+
+pub fn list_port_forwards() -> Result<crate::types::PortForwardsInfo, String> {
+    let resp = ok_or_err(send(json!({"method": "list_port_forwards"}))?)?;
+    Ok(crate::types::PortForwardsInfo {
+        port_forwards: resp.port_forwards.unwrap_or_default(),
+        dmz_ip: resp.dmz_ip.unwrap_or_default(),
+    })
+}
+
+pub fn add_port_forward(protocol: &str, ext_start: u16, ext_end: u16, internal_ip: &str, internal_port: u16, description: &str) -> Result<(), String> {
+    ok_or_err(send(json!({
+        "method": "add_port_forward",
+        "protocol": protocol,
+        "external_port_start": ext_start,
+        "external_port_end": ext_end,
+        "internal_ip": internal_ip,
+        "internal_port": internal_port,
+        "description": description,
+    }))?)?;
+    Ok(())
+}
+
+pub fn remove_port_forward(id: i64) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "remove_port_forward", "id": id}))?)?;
+    Ok(())
+}
+
+pub fn list_dhcp_reservations() -> Result<Vec<crate::types::DhcpReservation>, String> {
+    let resp = ok_or_err(send(json!({"method": "list_dhcp_reservations"}))?)?;
+    Ok(resp.dhcp_reservations.unwrap_or_default())
+}
+
+pub fn set_dhcp_reservation(mac: &str, subnet_id: Option<i64>) -> Result<(), String> {
+    let mut req = json!({"method": "set_dhcp_reservation", "mac": mac});
+    if let Some(sid) = subnet_id {
+        req["subnet_id"] = serde_json::Value::Number(sid.into());
+    }
+    ok_or_err(send(req)?)?;
+    Ok(())
+}
+
+pub fn remove_dhcp_reservation(mac: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "remove_dhcp_reservation", "mac": mac}))?)?;
+    Ok(())
+}
+
+pub fn export_config() -> Result<String, String> {
+    let resp = ok_or_err(send(json!({"method": "export_config"}))?)?;
+    resp.config_value.ok_or_else(|| "No config data".to_string())
+}
+
+pub fn import_config(data: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "import_config", "value": data}))?)?;
     Ok(())
 }
 

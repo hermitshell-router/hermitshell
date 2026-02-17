@@ -11,7 +11,9 @@ use pages::device_detail::DeviceDetail;
 use pages::devices::DeviceList;
 use pages::dns::Dns;
 use pages::groups::Groups;
+use pages::login::Login;
 use pages::settings::Settings;
+use pages::setup::Setup;
 use pages::traffic::Traffic;
 use pages::wireguard::Wireguard;
 
@@ -29,6 +31,8 @@ pub fn App() -> impl IntoView {
                     <Route path="/dns" view=Dns />
                     <Route path="/wireguard" view=Wireguard />
                     <Route path="/settings" view=Settings />
+                    <Route path="/login" view=Login />
+                    <Route path="/setup" view=Setup />
                 </Routes>
             </main>
         </Router>

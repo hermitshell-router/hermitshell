@@ -37,3 +37,27 @@ pub struct WgPeerInfo {
     pub device_group: String,
     pub enabled: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortForward {
+    pub id: i64,
+    pub protocol: String,
+    pub external_port_start: u16,
+    pub external_port_end: u16,
+    pub internal_ip: String,
+    pub internal_port: u16,
+    pub enabled: bool,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DhcpReservation {
+    pub mac: String,
+    pub subnet_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortForwardsInfo {
+    pub port_forwards: Vec<PortForward>,
+    pub dmz_ip: String,
+}
