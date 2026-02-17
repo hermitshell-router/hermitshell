@@ -60,7 +60,14 @@ table inet filter {{
     }}
 
     chain input {{
-        type filter hook input priority 0; policy accept;
+        type filter hook input priority 0; policy drop;
+        ct state established,related accept
+        iifname "lo" accept
+        iifname "{lan_iface}" tcp dport {{ 80, 443 }} accept
+        iifname "{lan_iface}" udp dport 67 accept
+        iifname "{lan_iface}" tcp dport 53 accept
+        iifname "{lan_iface}" udp dport 53 accept
+        iifname "{wan_iface}" icmp type echo-request accept
     }}
     chain forward {{
         type filter hook forward priority 0; policy drop;

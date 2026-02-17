@@ -134,7 +134,9 @@ pub fn remove_peer(public_key: &str, device_ip: &str) -> Result<()> {
 pub fn open_listen_port(port: u16) -> Result<()> {
     let port_str = port.to_string();
     let status = Command::new("/usr/sbin/nft")
-        .args(["add", "rule", "inet", "filter", "input", "udp", "dport", &port_str, "accept"])
+        .args(["add", "rule", "inet", "filter", "input",
+               "udp", "dport", &port_str, "accept",
+               "comment", "\"wireguard\""])
         .status()?;
     if !status.success() {
         anyhow::bail!("failed to open WireGuard port {}", port);
@@ -142,10 +144,21 @@ pub fn open_listen_port(port: u16) -> Result<()> {
     Ok(())
 }
 
-/// Close the WireGuard listen port in nftables. Flushes the input chain.
+/// Close the WireGuard listen port by removing only the wireguard-commented rule.
 pub fn close_listen_port() -> Result<()> {
-    let _ = Command::new("/usr/sbin/nft")
-        .args(["flush", "chain", "inet", "filter", "input"])
-        .status();
+    let output = Command::new("/usr/sbin/nft")
+        .args(["-a", "list", "chain", "inet", "filter", "input"])
+        .output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if line.contains("wireguard") {
+            if let Some(handle) = line.split("# handle ").last() {
+                let handle = handle.trim();
+                let _ = Command::new("/usr/sbin/nft")
+                    .args(["delete", "rule", "inet", "filter", "input", "handle", handle])
+                    .status();
+            }
+        }
+    }
     Ok(())
 }
