@@ -31,6 +31,10 @@ assert_match "$response" "Ad Blocking" "DNS page responds"
 response=$(vm_exec router "curl -s http://localhost:3000/settings")
 assert_match "$response" "Settings" "Settings page responds"
 
+# Check wireguard page
+response=$(vm_exec router "curl -s http://localhost:3000/wireguard")
+assert_match "$response" "WireGuard" "WireGuard page responds"
+
 # Check CSS is served
 response=$(vm_exec router "curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/style.css")
 assert_match "$response" "200" "CSS file served"
