@@ -250,4 +250,129 @@ pub fn add_gateway_address(gateway: &str, lan_iface: &str) -> Result<()> {
     Ok(())
 }
 
+/// Apply port forwarding DNAT rules and corresponding forward rules.
+/// Flushes and rebuilds the nat prerouting chain and a dedicated forward chain.
+pub fn apply_port_forwards(
+    wan_iface: &str,
+    lan_iface: &str,
+    forwards: &[crate::db::PortForward],
+    dmz_ip: Option<&str>,
+) -> Result<()> {
+    validate_iface(wan_iface)?;
+    validate_iface(lan_iface)?;
 
+    // Build prerouting chain rules
+    let mut prerouting_rules = String::new();
+
+    // Port forward DNAT rules
+    for fwd in forwards {
+        validate_ip(&fwd.internal_ip)?;
+        let protos: Vec<&str> = match fwd.protocol.as_str() {
+            "tcp" => vec!["tcp"],
+            "udp" => vec!["udp"],
+            _ => vec!["tcp", "udp"],
+        };
+        for proto in protos {
+            if fwd.external_port_start == fwd.external_port_end {
+                prerouting_rules.push_str(&format!(
+                    "        iifname \"{}\" {} dport {} dnat to {}:{}\n",
+                    wan_iface, proto, fwd.external_port_start, fwd.internal_ip, fwd.internal_port
+                ));
+            } else {
+                prerouting_rules.push_str(&format!(
+                    "        iifname \"{}\" {} dport {}-{} dnat to {}:{}-{}\n",
+                    wan_iface, proto, fwd.external_port_start, fwd.external_port_end,
+                    fwd.internal_ip, fwd.internal_port,
+                    fwd.internal_port + (fwd.external_port_end - fwd.external_port_start)
+                ));
+            }
+        }
+    }
+
+    // DMZ catch-all (must be last before DNS redirect)
+    if let Some(ip) = dmz_ip {
+        if !ip.is_empty() {
+            validate_ip(ip)?;
+            prerouting_rules.push_str(&format!(
+                "        iifname \"{}\" dnat to {}\n",
+                wan_iface, ip
+            ));
+        }
+    }
+
+    // DNS redirect rules (always present)
+    prerouting_rules.push_str(&format!(
+        "        iifname \"{}\" udp dport 53 dnat to 10.0.0.1:53\n",
+        lan_iface
+    ));
+    prerouting_rules.push_str(&format!(
+        "        iifname \"{}\" tcp dport 53 dnat to 10.0.0.1:53\n",
+        lan_iface
+    ));
+
+    // Build forward allow rules for port forwards
+    let mut forward_rules = String::new();
+    for fwd in forwards {
+        let protos: Vec<&str> = match fwd.protocol.as_str() {
+            "tcp" => vec!["tcp"],
+            "udp" => vec!["udp"],
+            _ => vec!["tcp", "udp"],
+        };
+        for proto in protos {
+            if fwd.external_port_start == fwd.external_port_end {
+                forward_rules.push_str(&format!(
+                    "        ct state new iifname \"{}\" ip daddr {} {} dport {} accept\n",
+                    wan_iface, fwd.internal_ip, proto, fwd.internal_port
+                ));
+            } else {
+                forward_rules.push_str(&format!(
+                    "        ct state new iifname \"{}\" ip daddr {} {} dport {}-{} accept\n",
+                    wan_iface, fwd.internal_ip, proto, fwd.internal_port,
+                    fwd.internal_port + (fwd.external_port_end - fwd.external_port_start)
+                ));
+            }
+        }
+    }
+    // DMZ forward rule
+    if let Some(ip) = dmz_ip {
+        if !ip.is_empty() {
+            forward_rules.push_str(&format!(
+                "        ct state new iifname \"{}\" ip daddr {} accept\n",
+                wan_iface, ip
+            ));
+        }
+    }
+
+    // Rebuild the nat prerouting chain
+    let nft_script = format!(r#"#!/usr/sbin/nft -f
+flush chain ip nat prerouting
+table ip nat {{
+    chain prerouting {{
+        type nat hook prerouting priority -100;
+{prerouting_rules}    }}
+}}
+
+delete chain inet filter port_fwd 2>/dev/null
+table inet filter {{
+    chain port_fwd {{
+{forward_rules}    }}
+}}
+"#);
+
+    let temp_path = "/tmp/hermitshell-portfwd.nft";
+    std::fs::write(temp_path, &nft_script)?;
+    let status = Command::new("/usr/sbin/nft")
+        .args(["-f", temp_path])
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("failed to apply port forwarding rules");
+    }
+
+    // Add jump to port_fwd from forward chain (idempotent)
+    let _ = Command::new("/usr/sbin/nft")
+        .args(["add", "rule", "inet", "filter", "forward",
+               "ct", "state", "new", "jump", "port_fwd"])
+        .status();
+
+    Ok(())
+}

@@ -118,6 +118,21 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Restore port forwarding rules
+    {
+        let db_guard = db.lock().unwrap();
+        let forwards = db_guard.list_enabled_port_forwards().unwrap_or_default();
+        let dmz = db_guard.get_config("dmz_host_ip").ok().flatten().unwrap_or_default();
+        let dmz_ref = if dmz.is_empty() { None } else { Some(dmz.as_str()) };
+        if !forwards.is_empty() || dmz_ref.is_some() {
+            if let Err(e) = nftables::apply_port_forwards(wan_iface, lan_iface, &forwards, dmz_ref) {
+                error!(error = %e, "failed to restore port forwards");
+            } else {
+                info!(count = forwards.len(), "port forwards restored");
+            }
+        }
+    }
+
     // Restore WireGuard state if enabled
     {
         let db_guard = db.lock().unwrap();
@@ -188,8 +203,10 @@ async fn main() -> Result<()> {
     // Spawn socket server
     let db_clone = db.clone();
     let blocky_clone = blocky_mgr.clone();
+    let wan_for_socket = wan_iface.to_string();
+    let lan_for_socket = lan_iface.to_string();
     tokio::spawn(async move {
-        if let Err(e) = socket::run_server(SOCKET_PATH, db_clone, start_time, blocky_clone).await {
+        if let Err(e) = socket::run_server(SOCKET_PATH, db_clone, start_time, blocky_clone, wan_for_socket, lan_for_socket).await {
             error!(error = %e, "socket server error");
         }
     });

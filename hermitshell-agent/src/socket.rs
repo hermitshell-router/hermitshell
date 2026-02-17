@@ -102,7 +102,7 @@ impl Response {
     }
 }
 
-pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>) -> Result<()> {
+pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String) -> Result<()> {
     // Remove old socket if exists
     let _ = std::fs::remove_file(socket_path);
 
@@ -127,23 +127,25 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
         let db = db.clone();
         let start = start_time;
         let blocky = blocky.clone();
+        let wan = wan_iface.clone();
+        let lan = lan_iface.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_client(stream, db, start, blocky).await {
+            if let Err(e) = handle_client(stream, db, start, blocky, wan, lan).await {
                 warn!(error = %e, "client error");
             }
         });
     }
 }
 
-async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>) -> Result<()> {
+async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
 
     while reader.read_line(&mut line).await? > 0 {
         let response = match serde_json::from_str::<Request>(&line) {
-            Ok(req) => handle_request(req, &db, start_time, &blocky),
+            Ok(req) => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface),
             Err(e) => Response::err(&format!("Invalid JSON: {}", e)),
         };
 
@@ -156,7 +158,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
     Ok(())
 }
 
-fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: &Arc<Mutex<BlockyManager>>) -> Response {
+fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: &Arc<Mutex<BlockyManager>>, wan_iface: &str, lan_iface: &str) -> Response {
     // Validate MAC early if provided (before any DB lookups)
     if let Some(ref mac) = req.mac {
         if let Err(e) = nftables::validate_mac(mac) {
@@ -570,6 +572,133 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             let db = db.lock().unwrap();
             if let Err(e) = db.remove_dhcp_reservation(&mac) {
                 return Response::err(&format!("failed to remove reservation: {}", e));
+            }
+            Response::ok()
+        }
+        "get_config" => {
+            let Some(key) = req.key else { return Response::err("key required"); };
+            match key.as_str() {
+                "admin_password_hash" | "session_secret" | "wg_private_key" =>
+                    return Response::err("access denied"),
+                _ => {}
+            }
+            let db = db.lock().unwrap();
+            match db.get_config(&key) {
+                Ok(val) => {
+                    let mut resp = Response::ok();
+                    resp.config_value = val;
+                    resp
+                }
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
+        "set_config" => {
+            let Some(key) = req.key else { return Response::err("key required"); };
+            let Some(value) = req.value else { return Response::err("value required"); };
+            let db = db.lock().unwrap();
+            match db.set_config(&key, &value) {
+                Ok(()) => Response::ok(),
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
+        "list_port_forwards" => {
+            let db = db.lock().unwrap();
+            match db.list_port_forwards() {
+                Ok(forwards) => {
+                    let dmz = db.get_config("dmz_host_ip").ok().flatten().unwrap_or_default();
+                    let mut resp = Response::ok();
+                    resp.port_forwards = Some(forwards);
+                    resp.dmz_ip = Some(dmz);
+                    resp
+                }
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
+        "add_port_forward" => {
+            let Some(protocol) = req.protocol else { return Response::err("protocol required"); };
+            let Some(ext_start) = req.external_port_start else { return Response::err("external_port_start required"); };
+            let Some(ext_end) = req.external_port_end else { return Response::err("external_port_end required"); };
+            let Some(internal_ip) = req.internal_ip else { return Response::err("internal_ip required"); };
+            let Some(int_port) = req.internal_port else { return Response::err("internal_port required"); };
+            let desc = req.description.as_deref().unwrap_or("");
+            match protocol.as_str() {
+                "tcp" | "udp" | "both" => {}
+                _ => return Response::err("protocol must be tcp, udp, or both"),
+            }
+            if ext_start == 0 || ext_end == 0 || int_port == 0 {
+                return Response::err("ports must be 1-65535");
+            }
+            if ext_end < ext_start {
+                return Response::err("external_port_end must be >= external_port_start");
+            }
+            if let Err(e) = nftables::validate_ip_pub(&internal_ip) {
+                return Response::err(&e.to_string());
+            }
+            let db = db.lock().unwrap();
+            match db.add_port_forward(&protocol, ext_start, ext_end, &internal_ip, int_port, desc) {
+                Ok(_id) => {
+                    let forwards = db.list_enabled_port_forwards().unwrap_or_default();
+                    let dmz = db.get_config("dmz_host_ip").ok().flatten().unwrap_or_default();
+                    let dmz_ref = if dmz.is_empty() { None } else { Some(dmz.as_str()) };
+                    if let Err(e) = nftables::apply_port_forwards(wan_iface, lan_iface, &forwards, dmz_ref) {
+                        return Response::err(&format!("failed to apply rules: {}", e));
+                    }
+                    Response::ok()
+                }
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
+        "remove_port_forward" => {
+            let Some(id) = req.id else { return Response::err("id required"); };
+            let db = db.lock().unwrap();
+            if let Err(e) = db.remove_port_forward(id) {
+                return Response::err(&e.to_string());
+            }
+            let forwards = db.list_enabled_port_forwards().unwrap_or_default();
+            let dmz = db.get_config("dmz_host_ip").ok().flatten().unwrap_or_default();
+            let dmz_ref = if dmz.is_empty() { None } else { Some(dmz.as_str()) };
+            if let Err(e) = nftables::apply_port_forwards(wan_iface, lan_iface, &forwards, dmz_ref) {
+                return Response::err(&format!("failed to apply rules: {}", e));
+            }
+            Response::ok()
+        }
+        "set_port_forward_enabled" => {
+            let Some(id) = req.id else { return Response::err("id required"); };
+            let Some(enabled) = req.enabled else { return Response::err("enabled required"); };
+            let db = db.lock().unwrap();
+            if let Err(e) = db.set_port_forward_enabled(id, enabled) {
+                return Response::err(&e.to_string());
+            }
+            let forwards = db.list_enabled_port_forwards().unwrap_or_default();
+            let dmz = db.get_config("dmz_host_ip").ok().flatten().unwrap_or_default();
+            let dmz_ref = if dmz.is_empty() { None } else { Some(dmz.as_str()) };
+            if let Err(e) = nftables::apply_port_forwards(wan_iface, lan_iface, &forwards, dmz_ref) {
+                return Response::err(&format!("failed to apply rules: {}", e));
+            }
+            Response::ok()
+        }
+        "get_dmz" => {
+            let db = db.lock().unwrap();
+            let dmz = db.get_config("dmz_host_ip").ok().flatten().unwrap_or_default();
+            let mut resp = Response::ok();
+            resp.dmz_ip = Some(dmz);
+            resp
+        }
+        "set_dmz" => {
+            let Some(ip) = req.internal_ip else { return Response::err("internal_ip required (empty string to clear)"); };
+            if !ip.is_empty() {
+                if let Err(e) = nftables::validate_ip_pub(&ip) {
+                    return Response::err(&e.to_string());
+                }
+            }
+            let db = db.lock().unwrap();
+            if let Err(e) = db.set_config("dmz_host_ip", &ip) {
+                return Response::err(&e.to_string());
+            }
+            let forwards = db.list_enabled_port_forwards().unwrap_or_default();
+            let dmz_ref = if ip.is_empty() { None } else { Some(ip.as_str()) };
+            if let Err(e) = nftables::apply_port_forwards(wan_iface, lan_iface, &forwards, dmz_ref) {
+                return Response::err(&format!("failed to apply rules: {}", e));
             }
             Response::ok()
         }
