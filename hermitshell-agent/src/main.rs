@@ -2,6 +2,7 @@ mod blocky;
 mod db;
 mod nftables;
 mod socket;
+mod wireguard;
 
 use hermitshell_common::subnet;
 

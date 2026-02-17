@@ -23,6 +23,11 @@ fn validate_group(group: &str) -> Result<()> {
     Ok(())
 }
 
+/// Public wrapper for IP validation, used by wireguard.rs.
+pub fn validate_ip_pub(ip: &str) -> Result<()> {
+    validate_ip(ip)
+}
+
 pub fn apply_base_rules(wan_iface: &str, lan_iface: &str) -> Result<()> {
     let rules = format!(r#"#!/usr/sbin/nft -f
 flush ruleset
