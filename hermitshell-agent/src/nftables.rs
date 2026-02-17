@@ -23,12 +23,33 @@ fn validate_group(group: &str) -> Result<()> {
     Ok(())
 }
 
+/// Validate a MAC address: exactly "XX:XX:XX:XX:XX:XX" with lowercase hex.
+pub fn validate_mac(mac: &str) -> Result<()> {
+    let parts: Vec<&str> = mac.split(':').collect();
+    if parts.len() != 6 || !parts.iter().all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit())) {
+        anyhow::bail!("invalid MAC address: {}", mac);
+    }
+    Ok(())
+}
+
+/// Validate a network interface name: alphanumeric, hyphens, underscores, dots; max 15 chars.
+pub fn validate_iface(name: &str) -> Result<()> {
+    if name.is_empty() || name.len() > 15
+        || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+    {
+        anyhow::bail!("invalid interface name: {}", name);
+    }
+    Ok(())
+}
+
 /// Public wrapper for IP validation, used by wireguard.rs.
 pub fn validate_ip_pub(ip: &str) -> Result<()> {
     validate_ip(ip)
 }
 
 pub fn apply_base_rules(wan_iface: &str, lan_iface: &str) -> Result<()> {
+    validate_iface(wan_iface)?;
+    validate_iface(lan_iface)?;
     let rules = format!(r#"#!/usr/sbin/nft -f
 flush ruleset
 
@@ -108,7 +129,7 @@ table inet traffic {{
     let temp_path = "/tmp/hermitshell-rules.nft";
     std::fs::write(temp_path, &rules)?;
 
-    let status = Command::new("nft")
+    let status = Command::new("/usr/sbin/nft")
         .args(["-f", temp_path])
         .status()?;
 
@@ -125,12 +146,12 @@ pub fn add_device_counter(ip: &str) -> Result<()> {
     let element = format!("{{ {} }}", ip);
 
     // Add to TX counter set (traffic from device)
-    let _ = Command::new("nft")
+    let _ = Command::new("/usr/sbin/nft")
         .args(["add", "element", "inet", "traffic", "tx_devices", &element])
         .status()?;
 
     // Add to RX counter set (traffic to device)
-    let _ = Command::new("nft")
+    let _ = Command::new("/usr/sbin/nft")
         .args(["add", "element", "inet", "traffic", "rx_devices", &element])
         .status()?;
 
@@ -165,10 +186,10 @@ fn parse_counter_set(output: &str) -> HashMap<String, i64> {
 
 /// Get rx/tx bytes for a specific IP
 pub fn get_device_counters(ip: &str) -> Result<(i64, i64)> {
-    let tx_output = Command::new("nft")
+    let tx_output = Command::new("/usr/sbin/nft")
         .args(["list", "set", "inet", "traffic", "tx_devices"])
         .output()?;
-    let rx_output = Command::new("nft")
+    let rx_output = Command::new("/usr/sbin/nft")
         .args(["list", "set", "inet", "traffic", "rx_devices"])
         .output()?;
 
@@ -186,7 +207,7 @@ pub fn add_device_forward_rule(ip: &str, group: &str) -> Result<()> {
     validate_group(group)?;
     let chain = format!("{}_fwd", group);
     let element = format!("{{ {} : jump {} }}", ip, chain);
-    let status = Command::new("nft")
+    let status = Command::new("/usr/sbin/nft")
         .args(["add", "element", "inet", "filter", "device_groups", &element])
         .status()?;
     if status.success() {
@@ -202,12 +223,12 @@ pub fn remove_device_forward_rule(ip: &str) -> Result<()> {
     validate_ip(ip)?;
     let element = format!("{{ {} }}", ip);
     // Ignore errors — element may not exist (e.g. already blocked)
-    let _ = Command::new("nft")
+    let _ = Command::new("/usr/sbin/nft")
         .args(["delete", "element", "inet", "filter", "device_groups", &element])
         .status();
 
     // Flush conntrack entries so established connections don't bypass the block
-    let _ = Command::new("conntrack")
+    let _ = Command::new("/usr/sbin/conntrack")
         .args(["-D", "-s", ip])
         .status();
 
@@ -218,7 +239,7 @@ pub fn remove_device_forward_rule(ip: &str) -> Result<()> {
 pub fn add_gateway_address(gateway: &str, lan_iface: &str) -> Result<()> {
     validate_ip(gateway)?;
     let addr = format!("{}/30", gateway);
-    let status = Command::new("ip")
+    let status = Command::new("/usr/sbin/ip")
         .args(["addr", "add", &addr, "dev", lan_iface])
         .status()?;
     // Ignore "already exists" errors

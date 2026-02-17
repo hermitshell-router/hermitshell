@@ -72,7 +72,7 @@ async fn main() -> Result<()> {
     let lan_iface = "eth2";
 
     // Ensure LAN interface has the base address (each device gets its own /30)
-    let status = std::process::Command::new("ip")
+    let status = std::process::Command::new("/usr/sbin/ip")
         .args(["addr", "add", LAN_ADDR, "dev", lan_iface])
         .status();
     match status {
@@ -97,7 +97,7 @@ async fn main() -> Result<()> {
                 if let Some(info) = subnet::compute_subnet(sid) {
                     // Re-add gateway address
                     let addr_cidr = format!("{}/30", info.gateway);
-                    let _ = std::process::Command::new("ip")
+                    let _ = std::process::Command::new("/usr/sbin/ip")
                         .args(["addr", "add", &addr_cidr, "dev", lan_iface])
                         .status();
                     // Re-add nftables counter

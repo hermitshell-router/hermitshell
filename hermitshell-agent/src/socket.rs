@@ -131,6 +131,12 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
 }
 
 fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: &Arc<Mutex<BlockyManager>>) -> Response {
+    // Validate MAC early if provided (before any DB lookups)
+    if let Some(ref mac) = req.mac {
+        if let Err(e) = nftables::validate_mac(mac) {
+            return Response::err(&e.to_string());
+        }
+    }
     match req.method.as_str() {
         "list_devices" => {
             let db = db.lock().unwrap();
@@ -552,6 +558,12 @@ async fn handle_dhcp_client(stream: UnixStream, db: Arc<Mutex<Db>>, lan_iface: S
 }
 
 fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Response {
+    // Validate MAC early if provided
+    if let Some(ref mac) = req.mac {
+        if let Err(e) = nftables::validate_mac(mac) {
+            return Response::err(&e.to_string());
+        }
+    }
     match req.method.as_str() {
         "dhcp_discover" => {
             let Some(mac) = req.mac else {
