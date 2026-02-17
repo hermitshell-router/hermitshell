@@ -206,10 +206,18 @@ fn build_response(request: &Message, msg_type: MessageType, yiaddr: Ipv4Addr) ->
 
 /// Handle DHCPDISCOVER: IPC to agent for subnet allocation, respond with DHCPOFFER.
 fn handle_discover(request: &Message, mac: &str) -> Result<Message> {
-    let resp = agent_request(&serde_json::json!({
+    let hostname = match request.opts().get(dhcproto::v4::OptionCode::Hostname) {
+        Some(DhcpOption::Hostname(h)) => Some(h.clone()),
+        _ => None,
+    };
+    let mut req = serde_json::json!({
         "method": "dhcp_discover",
         "mac": mac,
-    }))?;
+    });
+    if let Some(ref h) = hostname {
+        req["hostname"] = serde_json::Value::String(h.clone());
+    }
+    let resp = agent_request(&req)?;
 
     if resp.get("ok") != Some(&serde_json::Value::Bool(true)) {
         let err = resp.get("error").and_then(|e| e.as_str()).unwrap_or("unknown error");
@@ -261,10 +269,18 @@ fn handle_discover(request: &Message, mac: &str) -> Result<Message> {
 /// Handle DHCPREQUEST: verify requested IP, respond with DHCPACK, fire-and-forget provision.
 fn handle_request(request: &Message, mac: &str) -> Result<Option<Message>> {
     // Look up device via IPC (same as discover — returns existing assignment)
-    let resp = agent_request(&serde_json::json!({
+    let hostname = match request.opts().get(dhcproto::v4::OptionCode::Hostname) {
+        Some(DhcpOption::Hostname(h)) => Some(h.clone()),
+        _ => None,
+    };
+    let mut req = serde_json::json!({
         "method": "dhcp_discover",
         "mac": mac,
-    }))?;
+    });
+    if let Some(ref h) = hostname {
+        req["hostname"] = serde_json::Value::String(h.clone());
+    }
+    let resp = agent_request(&req)?;
 
     if resp.get("ok") != Some(&serde_json::Value::Bool(true)) {
         let err = resp.get("error").and_then(|e| e.as_str()).unwrap_or("unknown error");

@@ -10,6 +10,13 @@ use crate::db::Db;
 use crate::nftables;
 use hermitshell_common::subnet;
 
+fn sanitize_hostname(raw: &str) -> String {
+    raw.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '.' || *c == '_')
+        .take(63)
+        .collect()
+}
+
 #[derive(Debug, Deserialize)]
 struct Request {
     method: String,
@@ -19,6 +26,16 @@ struct Request {
     subnet_id: Option<i64>,
     name: Option<String>,
     public_key: Option<String>,
+    hostname: Option<String>,
+    id: Option<i64>,
+    protocol: Option<String>,
+    external_port_start: Option<u16>,
+    external_port_end: Option<u16>,
+    internal_ip: Option<String>,
+    internal_port: Option<u16>,
+    description: Option<String>,
+    key: Option<String>,
+    value: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -42,6 +59,14 @@ struct Response {
     is_new: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     wireguard: Option<WireguardInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dhcp_reservations: Option<Vec<crate::db::DhcpReservation>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    port_forwards: Option<Vec<crate::db::PortForward>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dmz_ip: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config_value: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -70,10 +95,10 @@ struct WgPeerInfo {
 
 impl Response {
     fn ok() -> Self {
-        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ip: None, is_new: None, wireguard: None }
+        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ip: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None }
     }
     fn err(msg: &str) -> Self {
-        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ip: None, is_new: None, wireguard: None }
+        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ip: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None }
     }
 }
 
@@ -504,6 +529,50 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             }
             Response::ok()
         }
+        "list_dhcp_reservations" => {
+            let db = db.lock().unwrap();
+            match db.list_dhcp_reservations() {
+                Ok(reservations) => {
+                    let mut resp = Response::ok();
+                    resp.dhcp_reservations = Some(reservations);
+                    resp
+                }
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
+        "set_dhcp_reservation" => {
+            let Some(mac) = req.mac else {
+                return Response::err("mac required");
+            };
+            let db = db.lock().unwrap();
+            let subnet_id = match req.subnet_id {
+                Some(sid) => sid,
+                None => {
+                    match db.get_device(&mac) {
+                        Ok(Some(dev)) if dev.subnet_id.is_some() => dev.subnet_id.unwrap(),
+                        Ok(_) => return Response::err("device has no subnet assignment; provide subnet_id"),
+                        Err(e) => return Response::err(&e.to_string()),
+                    }
+                }
+            };
+            if subnet::compute_subnet(subnet_id).is_none() {
+                return Response::err("subnet_id out of range");
+            }
+            if let Err(e) = db.set_dhcp_reservation(&mac, subnet_id) {
+                return Response::err(&format!("failed to set reservation: {}", e));
+            }
+            Response::ok()
+        }
+        "remove_dhcp_reservation" => {
+            let Some(mac) = req.mac else {
+                return Response::err("mac required");
+            };
+            let db = db.lock().unwrap();
+            if let Err(e) = db.remove_dhcp_reservation(&mac) {
+                return Response::err(&format!("failed to remove reservation: {}", e));
+            }
+            Response::ok()
+        }
         _ => Response::err("unknown method"),
     }
 }
@@ -572,9 +641,20 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
             };
             let db = db.lock().unwrap();
 
+            // Store hostname if provided
+            if let Some(ref hostname) = req.hostname {
+                let clean = sanitize_hostname(hostname);
+                if !clean.is_empty() {
+                    let _ = db.set_device_hostname(&mac, &clean);
+                }
+            }
+
+            // Check reservation first
+            let reserved_sid = db.get_dhcp_reservation(&mac).ok().flatten().map(|r| r.subnet_id);
+
             match db.get_device(&mac) {
                 Ok(Some(dev)) if dev.subnet_id.is_some() => {
-                    let sid = dev.subnet_id.unwrap();
+                    let sid = reserved_sid.unwrap_or_else(|| dev.subnet_id.unwrap());
                     let Some(info) = subnet::compute_subnet(sid) else {
                         return Response::err("subnet_id out of range");
                     };
@@ -585,9 +665,12 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
                     resp
                 }
                 Ok(_) => {
-                    let sid = match db.allocate_subnet_id() {
-                        Ok(s) => s,
-                        Err(e) => return Response::err(&e.to_string()),
+                    let sid = match reserved_sid {
+                        Some(sid) => sid,
+                        None => match db.allocate_subnet_id() {
+                            Ok(s) => s,
+                            Err(e) => return Response::err(&e.to_string()),
+                        },
                     };
                     let Some(info) = subnet::compute_subnet(sid) else {
                         return Response::err("subnet address space exhausted");
