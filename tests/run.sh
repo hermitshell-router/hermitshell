@@ -15,7 +15,20 @@ echo
 # Deploy fresh binaries to router and restart agent
 echo "Deploying to router..."
 vagrant rsync router
-vagrant ssh router -c "sudo bash -c 'killall hermitshell-agent hermitshell-dhcp blocky 2>/dev/null; sleep 1; rm -f /run/hermitshell/*.sock; nohup /opt/hermitshell/hermitshell-agent > /var/log/hermitshell-agent.log 2>&1 &'" 2>/dev/null || true
+vagrant ssh router -c "sudo bash -c '
+    pkill -f hermitshell-agent 2>/dev/null || true
+    pkill -f hermitshell-dhcp 2>/dev/null || true
+    killall blocky 2>/dev/null || true
+    sleep 1
+    rm -f /run/hermitshell/*.sock
+    cp /opt/hermitshell/hermitshell-agent.service /etc/systemd/system/ 2>/dev/null || true
+    if command -v systemctl &>/dev/null; then
+        systemctl daemon-reload
+        systemctl restart hermitshell-agent
+    else
+        nohup /opt/hermitshell/hermitshell-agent > /var/log/hermitshell-agent.log 2>&1 &
+    fi
+'" 2>/dev/null || true
 sleep 5
 vagrant ssh router -c "sudo chmod 666 /run/hermitshell/agent.sock" 2>/dev/null || true
 

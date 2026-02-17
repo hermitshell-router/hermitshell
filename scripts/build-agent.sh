@@ -28,6 +28,8 @@ else
     echo "Blocky already cached: $BLOCKY_BIN"
 fi
 
+cp systemd/hermitshell-agent.service target/release/
+
 # Build container if docker is available
 if command -v docker &> /dev/null; then
     ./scripts/build-container.sh

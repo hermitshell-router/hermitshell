@@ -1,0 +1,15 @@
+[Unit]
+Description=HermitShell Web UI Container
+After=hermitshell-agent.service
+Requires=hermitshell-agent.service
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f hermitshell-ui
+ExecStart=/usr/bin/docker run --name hermitshell-ui --network host -v /run/hermitshell:/run/hermitshell -v /data/hermitshell:/data/hermitshell:ro hermitshell:latest
+ExecStop=/usr/bin/docker stop hermitshell-ui
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

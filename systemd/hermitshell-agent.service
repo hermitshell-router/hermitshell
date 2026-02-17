@@ -1,0 +1,21 @@
+[Unit]
+Description=HermitShell Router Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/hermitshell/hermitshell-agent
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hermitshell-agent
+Environment=RUST_LOG=info
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/data/hermitshell /run/hermitshell /tmp
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
