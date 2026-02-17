@@ -113,3 +113,109 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** No audit trail for who performed actions. No way to revoke access for one user without rotating the shared secret.
 
 **Proper fix:** Add per-user accounts if multi-admin is ever needed. For single-admin, this is acceptable for the threat model.
+
+---
+
+## Input Validation
+
+## 12. import_config bypasses all validation
+
+**What:** The `import_config` handler (`socket.rs:740-800`) imports devices, port forwards, and DHCP reservations from a JSON blob. Unlike the individual `add_port_forward`, `set_device_group`, and `dhcp_discover` handlers, import skips all validation: no IP validation on port forward targets, no group name whitelist, no hostname sanitization, no port range checks.
+
+**Why:** The import was written as a bulk insert to restore backups. Validation was assumed to have been applied when the data was originally created.
+
+**Risk:** A crafted config file can inject invalid IPs into port forwarding rules (potential nftables injection), invalid group names (breaking firewall rules), or unsanitized hostnames (XSS if the web UI doesn't escape them). Since `export_config` output is trusted, the main risk is a user importing a hand-edited or malicious JSON file.
+
+**Proper fix:** Apply the same validation used by individual handlers: `validate_ip` for port forward IPs, group name whitelist check, `sanitize_hostname()` for hostnames, and port range validation (`ext_end >= ext_start`, ports > 0).
+
+## 13. SQL injection pattern in VACUUM INTO
+
+**What:** `db.rs:vacuum_into()` uses `format!("VACUUM INTO '{}'", path)` to build the SQL query. The path is string-interpolated directly into SQL.
+
+**Why:** SQLite doesn't support parameterized queries for `VACUUM INTO`. The path is currently hardcoded to `/data/hermitshell/hermitshell-backup.db` in the calling code.
+
+**Risk:** If the function is ever exposed to user-controlled input, a path containing `'` could break out of the SQL string. Currently safe because the caller uses a hardcoded path.
+
+**Proper fix:** Add path validation in `vacuum_into()`: reject paths containing `'`, or whitelist only alphanumeric, `/`, `-`, `_`, `.` characters.
+
+## 14. Port forwarding description field is unbounded
+
+**What:** The `description` field in `add_port_forward` has no length limit. Stored in SQLite and rendered in the web UI.
+
+**Why:** Not validated — it's a free-text label.
+
+**Risk:** A very large description could cause performance issues in the DB and UI. If Leptos doesn't escape output properly, it could be an XSS vector (though Leptos escapes by default).
+
+**Proper fix:** Truncate to a reasonable limit (e.g., 256 characters) in the `add_port_forward` handler.
+
+---
+
+## Container and Service Hardening
+
+## 15. Docker container runs as root
+
+**What:** The Dockerfile has no `USER` directive. The web UI process runs as root (UID 0) inside the container.
+
+**Why:** Simplicity. The container needs to bind ports 80 and 443 (privileged ports) and access the agent socket.
+
+**Risk:** If the web UI is compromised, the attacker has root inside the container. With `--network host`, this means full network access on the host.
+
+**Proper fix:** Add a non-root user, use `setcap cap_net_bind_service` on the binary to allow privileged port binding, and ensure the socket is readable by the container user.
+
+## 16. Systemd service missing hardening directives
+
+**What:** `hermitshell-agent.service` has `ProtectHome=yes`, `ProtectSystem=strict`, and `PrivateTmp=yes`, but is missing several hardening options.
+
+**Why:** Basic hardening was applied; exhaustive hardening was not prioritized.
+
+**Risk:** The agent runs as root with more privileges than necessary. A compromised agent could access devices, change kernel parameters, or pivot to other services.
+
+**Proper fix:** Add: `NoNewPrivileges=yes`, `PrivateDevices=yes`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK`, `RestrictNamespaces=yes`, `LockPersonality=yes`, `MemoryDenyWriteExecute=yes`. Note: `AF_NETLINK` is needed for nftables and `ip` commands.
+
+---
+
+## Temporary Files and Permissions
+
+## 17. WireGuard private key left in /tmp on error
+
+**What:** `wireguard.rs` writes the WG private key to `/tmp/hermitshell-wg-key`, runs `wg set`, then deletes it. If `wg set` fails (the `?` operator returns early), the key file is never deleted.
+
+**Why:** No cleanup-on-error pattern was implemented.
+
+**Risk:** The WireGuard private key sits in `/tmp` unencrypted until the next successful call or reboot. With `PrivateTmp=yes` in systemd, it's in a private namespace, but still readable by the agent process.
+
+**Proper fix:** Restructure to always clean up: capture the result, delete the file, then propagate the error. Or use a `Drop` guard pattern.
+
+## 18. Backup file created with default permissions
+
+**What:** `VACUUM INTO` creates the backup file with the process umask (likely 0644). The backup contains the full database including device MACs, IPs, and network topology.
+
+**Why:** SQLite's `VACUUM INTO` doesn't support setting file permissions.
+
+**Risk:** Other processes on the system can read the backup. Low risk given the agent runs as root and `/data/hermitshell/` should be root-owned.
+
+**Proper fix:** `chmod 0600` the backup file after creation.
+
+---
+
+## Rate Limiting and Resource Exhaustion
+
+## 19. No connection limiting on the agent Unix socket
+
+**What:** The agent socket server spawns a new tokio task per connection with no limit. There is no rate limiting or connection cap.
+
+**Why:** Not implemented. The socket is access-controlled by filesystem permissions.
+
+**Risk:** A process with socket access can open thousands of connections, exhausting memory. In the test environment where the socket is `chmod 666`, any user can do this.
+
+**Proper fix:** Add a connection semaphore or counter. Reject new connections above a threshold (e.g., 100 concurrent).
+
+## 20. No password maximum length
+
+**What:** The setup form checks `password.len() < 8` but has no upper bound. Argon2 will happily hash a multi-megabyte password.
+
+**Why:** Oversight.
+
+**Risk:** An attacker can POST a very large password to the setup or login endpoint, causing high CPU usage from Argon2 hashing. This is a denial-of-service vector.
+
+**Proper fix:** Add `|| form.password.len() > 128` to the validation check.
