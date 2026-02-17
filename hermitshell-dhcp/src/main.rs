@@ -8,12 +8,20 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::os::unix::net::UnixStream;
 use std::time::Instant;
+use tracing::{debug, error, info, warn};
 
 const SERVER_IP: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 1);
 const LEASE_TIME: u32 = 3600; // 1 hour
 const AGENT_SOCKET: &str = "/run/hermitshell/dhcp.sock";
 
 fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info".into()),
+        )
+        .init();
+
     let lan_iface = std::env::args()
         .nth(1)
         .context("usage: hermitshell-dhcp <lan_iface>")?;
@@ -39,7 +47,7 @@ fn main() -> Result<()> {
 
     let udp: UdpSocket = sock.into();
 
-    println!("hermitshell-dhcp listening on 0.0.0.0:67 ({})", lan_iface);
+    info!(iface = %lan_iface, "hermitshell-dhcp listening on 0.0.0.0:67");
 
     let mut buf = [0u8; 1500];
     let mut discover_times: HashMap<String, Instant> = HashMap::new();
@@ -48,7 +56,7 @@ fn main() -> Result<()> {
         let (len, _addr) = match udp.recv_from(&mut buf) {
             Ok((len, addr)) => (len, addr),
             Err(e) => {
-                eprintln!("DHCP recv error: {}", e);
+                error!(error = %e, "DHCP recv error");
                 continue;
             }
         };
@@ -58,7 +66,7 @@ fn main() -> Result<()> {
         let msg = match Message::decode(&mut dhcproto::decoder::Decoder::new(&data)) {
             Ok(m) => m,
             Err(e) => {
-                eprintln!("DHCP decode error: {}", e);
+                warn!(error = %e, "DHCP decode error");
                 continue;
             }
         };
@@ -70,14 +78,14 @@ fn main() -> Result<()> {
         let mac = format_mac(msg.chaddr());
 
         if !is_valid_mac(msg.chaddr()) {
-            eprintln!("DHCP packet from invalid MAC {}, dropping", mac);
+            warn!(mac = %mac, "DHCP packet from invalid MAC, dropping");
             continue;
         }
 
         let msg_type = match msg.opts().get(dhcproto::v4::OptionCode::MessageType) {
             Some(DhcpOption::MessageType(mt)) => *mt,
             _ => {
-                eprintln!("DHCP packet from {} missing message type", mac);
+                warn!(mac = %mac, "DHCP packet missing message type");
                 continue;
             }
         };
@@ -86,33 +94,33 @@ fn main() -> Result<()> {
             MessageType::Discover => {
                 if let Some(last) = discover_times.get(&mac) {
                     if last.elapsed().as_secs() < 10 {
-                        eprintln!("DHCPDISCOVER from {} rate-limited", mac);
+                        warn!(mac = %mac, "DHCPDISCOVER rate-limited");
                         continue;
                     }
                 }
                 discover_times.insert(mac.clone(), Instant::now());
-                println!("DHCPDISCOVER from {}", mac);
+                info!(mac = %mac, "DHCPDISCOVER");
                 match handle_discover(&msg, &mac) {
                     Ok(resp) => resp,
                     Err(e) => {
-                        eprintln!("Error handling DISCOVER from {}: {}", mac, e);
+                        error!(mac = %mac, error = %e, "error handling DISCOVER");
                         continue;
                     }
                 }
             }
             MessageType::Request => {
-                println!("DHCPREQUEST from {}", mac);
+                info!(mac = %mac, "DHCPREQUEST");
                 match handle_request(&msg, &mac) {
                     Ok(Some(resp)) => resp,
                     Ok(None) => continue,
                     Err(e) => {
-                        eprintln!("Error handling REQUEST from {}: {}", mac, e);
+                        error!(mac = %mac, error = %e, "error handling REQUEST");
                         continue;
                     }
                 }
             }
             other => {
-                println!("DHCP {:?} from {} (ignored)", other, mac);
+                debug!(mac = %mac, msg_type = ?other, "DHCP message ignored");
                 continue;
             }
         };
@@ -121,13 +129,13 @@ fn main() -> Result<()> {
         let mut enc_buf = Vec::new();
         let mut encoder = dhcproto::encoder::Encoder::new(&mut enc_buf);
         if let Err(e) = response.encode(&mut encoder) {
-            eprintln!("DHCP encode error: {}", e);
+            error!(error = %e, "DHCP encode error");
             continue;
         }
 
         let dest = SocketAddrV4::new(Ipv4Addr::BROADCAST, 68);
         if let Err(e) = udp.send_to(&enc_buf, dest) {
-            eprintln!("DHCP send error: {}", e);
+            error!(error = %e, "DHCP send error");
         }
     }
 }
@@ -222,9 +230,9 @@ fn handle_discover(request: &Message, mac: &str) -> Result<Message> {
     let device_ip: Ipv4Addr = device_ip_str.parse()?;
 
     if is_new {
-        println!("  New device {}, allocated subnet {} -> {}", mac, sid, device_ip_str);
+        info!(mac = %mac, subnet_id = sid, ip = %device_ip_str, "new device allocated");
     } else {
-        println!("  Known device {}, offering existing {}", mac, device_ip_str);
+        info!(mac = %mac, ip = %device_ip_str, "known device, offering existing");
     }
 
     let mut msg = build_response(request, MessageType::Offer, device_ip);
@@ -260,7 +268,7 @@ fn handle_request(request: &Message, mac: &str) -> Result<Option<Message>> {
 
     if resp.get("ok") != Some(&serde_json::Value::Bool(true)) {
         let err = resp.get("error").and_then(|e| e.as_str()).unwrap_or("unknown error");
-        eprintln!("  DHCPREQUEST from {} but agent lookup failed: {}", mac, err);
+        error!(mac = %mac, error = %err, "DHCPREQUEST agent lookup failed");
         return Ok(None);
     }
 
@@ -283,9 +291,9 @@ fn handle_request(request: &Message, mac: &str) -> Result<Option<Message>> {
 
     let client_ip = requested_ip.unwrap_or(ciaddr);
     if client_ip != assigned_ip && client_ip != Ipv4Addr::UNSPECIFIED {
-        eprintln!(
-            "  DHCPREQUEST from {} requested {} but assigned {}, sending NAK",
-            mac, client_ip, assigned_ip
+        warn!(
+            mac = %mac, requested = %client_ip, assigned = %assigned_ip,
+            "DHCPREQUEST IP mismatch, sending NAK"
         );
         let mut nak = Message::default();
         nak.set_opcode(Opcode::BootReply);
@@ -318,9 +326,9 @@ fn handle_request(request: &Message, mac: &str) -> Result<Option<Message>> {
     );
     msg.opts_mut().insert(DhcpOption::Router(vec![gw]));
 
-    println!(
-        "  DHCPACK {} -> {}, provisioning gateway {}",
-        mac, info.device_ip, info.gateway
+    info!(
+        mac = %mac, ip = %info.device_ip, gateway = %info.gateway,
+        "DHCPACK, provisioning"
     );
 
     // Fire-and-forget: provision nftables rules via agent
@@ -329,7 +337,7 @@ fn handle_request(request: &Message, mac: &str) -> Result<Option<Message>> {
         "mac": mac,
         "subnet_id": sid,
     })) {
-        eprintln!("  Failed to provision {}: {}", mac, e);
+        error!(mac = %mac, error = %e, "failed to provision");
     }
 
     Ok(Some(msg))

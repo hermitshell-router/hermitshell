@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, Command};
+use tracing::{debug, info};
 
 pub struct BlockyManager {
     upstream_dns: Vec<String>,
@@ -65,7 +66,7 @@ log:
 
         let path = format!("{}/config.yml", self.config_dir);
         std::fs::write(&path, config)?;
-        println!("Wrote blocky config to {}", path);
+        debug!(path = %path, "wrote blocky config");
 
         // Ensure the custom blocklist file exists (empty = no extra blocking)
         if !std::path::Path::new(&custom_blocklist).exists() {
@@ -89,7 +90,7 @@ log:
             .spawn()
             .context("failed to spawn blocky")?;
 
-        println!("Started blocky (pid {})", child.id());
+        info!(pid = child.id(), "started blocky");
         self.child = Some(child);
         Ok(())
     }
@@ -98,7 +99,7 @@ log:
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
             let _ = child.wait();
-            println!("Stopped blocky");
+            info!("stopped blocky");
         }
     }
 

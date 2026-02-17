@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tracing::{error, info, warn};
 
 use crate::blocky::BlockyManager;
 use crate::db::Db;
@@ -94,7 +95,7 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
         std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660))?;
     }
 
-    println!("Socket server listening on {}", socket_path);
+    info!(path = socket_path, "socket server listening");
 
     loop {
         let (stream, _) = listener.accept().await?;
@@ -104,7 +105,7 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
 
         tokio::spawn(async move {
             if let Err(e) = handle_client(stream, db, start, blocky).await {
-                eprintln!("Client error: {}", e);
+                warn!(error = %e, "client error");
             }
         });
     }
@@ -522,7 +523,7 @@ pub async fn run_dhcp_socket(socket_path: &str, db: Arc<Mutex<Db>>, lan_iface: S
         std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660))?;
     }
 
-    println!("DHCP IPC socket listening on {}", socket_path);
+    info!(path = socket_path, "DHCP IPC socket listening");
 
     loop {
         let (stream, _) = listener.accept().await?;
@@ -531,7 +532,7 @@ pub async fn run_dhcp_socket(socket_path: &str, db: Arc<Mutex<Db>>, lan_iface: S
 
         tokio::spawn(async move {
             if let Err(e) = handle_dhcp_client(stream, db, lan_iface).await {
-                eprintln!("DHCP IPC client error: {}", e);
+                warn!(error = %e, "DHCP IPC client error");
             }
         });
     }
@@ -614,16 +615,16 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
                 return Response::err("invalid subnet_id");
             };
 
-            println!("DHCP provision {} -> {}, gateway {}", mac, info.device_ip, info.gateway);
+            info!(mac = %mac, ip = %info.device_ip, gateway = %info.gateway, "DHCP provision");
 
             if let Err(e) = nftables::add_gateway_address(&info.gateway, lan_iface) {
-                eprintln!("  Failed to add gateway address {}: {}", info.gateway, e);
+                error!(gateway = %info.gateway, error = %e, "failed to add gateway address");
             }
             if let Err(e) = nftables::add_device_counter(&info.device_ip) {
-                eprintln!("  Failed to add counter for {}: {}", info.device_ip, e);
+                error!(ip = %info.device_ip, error = %e, "failed to add device counter");
             }
             if let Err(e) = nftables::add_device_forward_rule(&info.device_ip, "quarantine") {
-                eprintln!("  Failed to add forward rule for {}: {}", info.device_ip, e);
+                error!(ip = %info.device_ip, error = %e, "failed to add forward rule");
             }
 
             Response::ok()

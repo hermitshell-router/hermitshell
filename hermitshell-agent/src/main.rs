@@ -9,6 +9,7 @@ use hermitshell_common::subnet;
 use anyhow::Result;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, Mutex};
+use tracing::{debug, error, info, warn};
 
 /// Read nameservers from WAN DHCP lease, then /etc/resolv.conf, falling back to public DNS.
 fn read_upstream_dns(wan_iface: &str) -> Vec<Ipv4Addr> {
@@ -65,7 +66,14 @@ const LAN_ADDR: &str = "10.0.0.1/32";
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("hermitshell-agent starting...");
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info".into()),
+        )
+        .init();
+
+    info!("hermitshell-agent starting");
     let start_time = std::time::Instant::now();
 
     let wan_iface = "eth1";
@@ -77,8 +85,8 @@ async fn main() -> Result<()> {
         .status();
     match status {
         Ok(s) if s.success() || s.code() == Some(2) => {} // 2 = already exists
-        Ok(s) => eprintln!("Warning: ip addr add {} dev {} exited {:?}", LAN_ADDR, lan_iface, s.code()),
-        Err(e) => eprintln!("Warning: failed to add LAN address: {}", e),
+        Ok(s) => warn!(addr = LAN_ADDR, iface = lan_iface, code = ?s.code(), "ip addr add exited unexpectedly"),
+        Err(e) => warn!(error = %e, "failed to add LAN address"),
     }
 
     // Apply base nftables rules
@@ -86,7 +94,7 @@ async fn main() -> Result<()> {
 
     // Open database
     let db = Arc::new(Mutex::new(db::Db::open(DB_PATH)?));
-    println!("Database opened at {}", DB_PATH);
+    info!(path = DB_PATH, "database opened");
 
     // Restore state for previously assigned devices
     {
@@ -104,7 +112,7 @@ async fn main() -> Result<()> {
                     let _ = nftables::add_device_counter(ip);
                     // Re-add nftables forward rule
                     let _ = nftables::add_device_forward_rule(ip, &dev.device_group);
-                    println!("Restored device {} -> {} (subnet {}, group {})", dev.mac, ip, sid, dev.device_group);
+                    info!(mac = %dev.mac, ip = %ip, subnet_id = sid, group = %dev.device_group, "device restored");
                 }
             }
         }
@@ -124,7 +132,7 @@ async fn main() -> Result<()> {
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(51820);
                 if let Err(e) = wireguard::create_interface(&private_key, listen_port) {
-                    eprintln!("Failed to restore wg0: {}", e);
+                    error!(error = %e, "failed to restore wg0");
                 } else {
                     let _ = wireguard::open_listen_port(listen_port);
                     let peers = db_guard.list_wg_peers().unwrap_or_default();
@@ -134,7 +142,7 @@ async fn main() -> Result<()> {
                             let _ = wireguard::add_peer(&peer.public_key, &info.device_ip);
                             let _ = nftables::add_device_counter(&info.device_ip);
                             let _ = nftables::add_device_forward_rule(&info.device_ip, &peer.device_group);
-                            println!("Restored WireGuard peer {} -> {}", peer.name, info.device_ip);
+                            info!(peer = %peer.name, ip = %info.device_ip, "wireguard peer restored");
                         }
                     }
                 }
@@ -144,7 +152,7 @@ async fn main() -> Result<()> {
 
     // Start blocky DNS server
     let upstream_dns = read_upstream_dns(wan_iface);
-    println!("Upstream DNS: {:?}", upstream_dns);
+    info!(servers = ?upstream_dns, "upstream DNS");
 
     let blocky_mgr = {
         let dns_strings: Vec<String> = upstream_dns.iter().map(|ip| ip.to_string()).collect();
@@ -155,7 +163,7 @@ async fn main() -> Result<()> {
             "/opt/hermitshell/blocky".to_string(),
         );
         if let Err(e) = mgr.start() {
-            eprintln!("Failed to start blocky: {}", e);
+            error!(error = %e, "failed to start blocky");
         } else {
             // Wait for blocky to be ready
             std::thread::sleep(std::time::Duration::from_secs(2));
@@ -170,7 +178,7 @@ async fn main() -> Result<()> {
             drop(db_guard);
             if !enabled {
                 if let Err(e) = mgr.set_blocking_enabled(false) {
-                    eprintln!("Failed to disable blocking: {}", e);
+                    error!(error = %e, "failed to disable blocking");
                 }
             }
         }
@@ -182,7 +190,7 @@ async fn main() -> Result<()> {
     let blocky_clone = blocky_mgr.clone();
     tokio::spawn(async move {
         if let Err(e) = socket::run_server(SOCKET_PATH, db_clone, start_time, blocky_clone).await {
-            eprintln!("Socket server error: {}", e);
+            error!(error = %e, "socket server error");
         }
     });
 
@@ -192,7 +200,7 @@ async fn main() -> Result<()> {
     let lan_iface_dhcp = lan_iface.to_string();
     tokio::spawn(async move {
         if let Err(e) = socket::run_dhcp_socket(DHCP_SOCKET_PATH, db_dhcp, lan_iface_dhcp).await {
-            eprintln!("DHCP socket error: {}", e);
+            error!(error = %e, "DHCP socket error");
         }
     });
 
@@ -207,7 +215,7 @@ async fn main() -> Result<()> {
     // Main polling loop: update traffic counters for assigned devices
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(POLL_INTERVAL_SECS));
 
-    println!("Agent initialized, entering main loop");
+    info!("agent initialized, entering main loop");
 
     loop {
         interval.tick().await;
@@ -216,7 +224,7 @@ async fn main() -> Result<()> {
         let devices = match db_guard.list_assigned_devices() {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("Failed to list devices: {}", e);
+                error!(error = %e, "failed to list devices");
                 continue;
             }
         };
@@ -226,10 +234,10 @@ async fn main() -> Result<()> {
                 match nftables::get_device_counters(ip) {
                     Ok((rx, tx)) => {
                         if let Err(e) = db_guard.update_counters(ip, rx, tx) {
-                            eprintln!("Failed to update counters: {}", e);
+                            error!(ip = %ip, error = %e, "failed to update counters");
                         }
                     }
-                    Err(e) => eprintln!("Failed to get counters for {}: {}", ip, e),
+                    Err(e) => debug!(ip = %ip, error = %e, "failed to get counters"),
                 }
             }
         }

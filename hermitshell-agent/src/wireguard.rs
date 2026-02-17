@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::process::Command;
+use tracing::{debug, info};
 
 /// Validate WireGuard public key: base64-encoded, exactly 44 characters, decodes to 32 bytes.
 fn validate_pubkey(key: &str) -> Result<()> {
@@ -77,7 +78,7 @@ pub fn create_interface(private_key: &str, listen_port: u16) -> Result<()> {
         anyhow::bail!("failed to bring up wg0");
     }
 
-    println!("WireGuard interface wg0 created on port {}", listen_port);
+    info!(port = listen_port, "wireguard interface wg0 created");
     Ok(())
 }
 
@@ -86,7 +87,7 @@ pub fn destroy_interface() -> Result<()> {
     let _ = Command::new("/usr/sbin/ip")
         .args(["link", "del", "wg0"])
         .status();
-    println!("WireGuard interface wg0 removed");
+    info!("wireguard interface wg0 removed");
     Ok(())
 }
 
@@ -108,7 +109,7 @@ pub fn add_peer(public_key: &str, device_ip: &str) -> Result<()> {
         .args(["route", "add", &allowed_ips, "dev", "wg0"])
         .status();
 
-    println!("Added WireGuard peer {} -> {}", public_key, device_ip);
+    debug!(public_key = %public_key, ip = %device_ip, "added wireguard peer");
     Ok(())
 }
 
@@ -125,7 +126,7 @@ pub fn remove_peer(public_key: &str, device_ip: &str) -> Result<()> {
         .args(["route", "del", &route, "dev", "wg0"])
         .status();
 
-    println!("Removed WireGuard peer {}", public_key);
+    debug!(public_key = %public_key, "removed wireguard peer");
     Ok(())
 }
 

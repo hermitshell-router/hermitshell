@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::process::Command;
+use tracing::{debug, info};
 
 const VALID_GROUPS: &[&str] = &["quarantine", "trusted", "iot", "guest", "servers", "blocked"];
 
@@ -134,7 +135,7 @@ table inet traffic {{
         .status()?;
 
     if status.success() {
-        println!("Applied nftables rules");
+        info!("applied nftables rules");
         Ok(())
     } else {
         anyhow::bail!("Failed to apply nftables rules")
@@ -211,7 +212,7 @@ pub fn add_device_forward_rule(ip: &str, group: &str) -> Result<()> {
         .args(["add", "element", "inet", "filter", "device_groups", &element])
         .status()?;
     if status.success() {
-        println!("Added device_groups element: {} -> {}", ip, chain);
+        debug!(ip = %ip, chain = %chain, "added device_groups element");
         Ok(())
     } else {
         anyhow::bail!("Failed to add device_groups element for {}", ip)
@@ -244,7 +245,7 @@ pub fn add_gateway_address(gateway: &str, lan_iface: &str) -> Result<()> {
         .status()?;
     // Ignore "already exists" errors
     if status.success() {
-        println!("Added gateway address {} on {}", addr, lan_iface);
+        debug!(addr = %addr, iface = lan_iface, "added gateway address");
     }
     Ok(())
 }
