@@ -15,6 +15,8 @@ pub struct Response {
     pub device: Option<Device>,
     pub status: Option<Status>,
     pub ad_blocking_enabled: Option<bool>,
+    pub wireguard: Option<crate::types::WireguardInfo>,
+    pub device_ip: Option<String>,
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
@@ -79,6 +81,25 @@ pub fn get_ad_blocking() -> Result<bool, String> {
 
 pub fn set_ad_blocking(enabled: bool) -> Result<(), String> {
     ok_or_err(send(json!({"method": "set_ad_blocking", "enabled": enabled}))?)?;
+    Ok(())
+}
+
+pub fn get_wireguard() -> Result<crate::types::WireguardInfo, String> {
+    let resp = ok_or_err(send(json!({"method": "get_wireguard"}))?)?;
+    resp.wireguard.ok_or_else(|| "No wireguard info in response".to_string())
+}
+
+pub fn set_wireguard_enabled(enabled: bool) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "set_wireguard_enabled", "enabled": enabled}))?)?;
+    Ok(())
+}
+
+pub fn add_wg_peer(name: &str, public_key: &str, group: &str) -> Result<Response, String> {
+    ok_or_err(send(json!({"method": "add_wg_peer", "name": name, "public_key": public_key, "group": group}))?)
+}
+
+pub fn remove_wg_peer(public_key: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "remove_wg_peer", "public_key": public_key}))?)?;
     Ok(())
 }
 
