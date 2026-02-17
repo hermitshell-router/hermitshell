@@ -2,7 +2,7 @@
 set -e
 
 apt-get update
-apt-get install -y dnsutils
+apt-get install -y dnsutils wireguard-tools
 
 # eth1 = LAN (gets IP from router via DHCP)
 

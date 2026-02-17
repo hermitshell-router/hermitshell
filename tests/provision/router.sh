@@ -2,7 +2,7 @@
 set -e
 
 apt-get update
-apt-get install -y nftables docker.io socat conntrack curl dnsutils
+apt-get install -y nftables docker.io socat conntrack curl dnsutils wireguard-tools
 usermod -aG docker vagrant
 
 # eth1 = WAN (gets IP from wan-vm via DHCP)
