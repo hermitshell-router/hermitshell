@@ -40,6 +40,22 @@ CREATE TABLE IF NOT EXISTS wg_peers (
     enabled INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS port_forwards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    protocol TEXT NOT NULL DEFAULT 'both',
+    external_port_start INTEGER NOT NULL,
+    external_port_end INTEGER NOT NULL,
+    internal_ip TEXT NOT NULL,
+    internal_port INTEGER NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    description TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS dhcp_reservations (
+    mac TEXT PRIMARY KEY,
+    subnet_id INTEGER NOT NULL UNIQUE
+);
 "#;
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,6 +79,24 @@ pub struct WgPeer {
     pub device_group: String,
     pub enabled: bool,
     pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PortForward {
+    pub id: i64,
+    pub protocol: String,
+    pub external_port_start: u16,
+    pub external_port_end: u16,
+    pub internal_ip: String,
+    pub internal_port: u16,
+    pub enabled: bool,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DhcpReservation {
+    pub mac: String,
+    pub subnet_id: i64,
 }
 
 pub struct Db {
@@ -283,6 +317,127 @@ impl Db {
             "UPDATE wg_peers SET device_group = ?1 WHERE public_key = ?2",
             (group, public_key),
         )?;
+        Ok(())
+    }
+
+    // Port forwarding methods
+
+    pub fn list_port_forwards(&self) -> Result<Vec<PortForward>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, protocol, external_port_start, external_port_end, internal_ip, internal_port, enabled, description FROM port_forwards"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(PortForward {
+                id: row.get(0)?,
+                protocol: row.get(1)?,
+                external_port_start: row.get(2)?,
+                external_port_end: row.get(3)?,
+                internal_ip: row.get(4)?,
+                internal_port: row.get(5)?,
+                enabled: row.get::<_, i64>(6)? != 0,
+                description: row.get(7)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn add_port_forward(
+        &self, protocol: &str, ext_start: u16, ext_end: u16,
+        internal_ip: &str, internal_port: u16, description: &str,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO port_forwards (protocol, external_port_start, external_port_end, internal_ip, internal_port, description) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            (protocol, ext_start, ext_end, internal_ip, internal_port, description),
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn remove_port_forward(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM port_forwards WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn set_port_forward_enabled(&self, id: i64, enabled: bool) -> Result<()> {
+        self.conn.execute(
+            "UPDATE port_forwards SET enabled = ?1 WHERE id = ?2",
+            (if enabled { 1 } else { 0 }, id),
+        )?;
+        Ok(())
+    }
+
+    pub fn list_enabled_port_forwards(&self) -> Result<Vec<PortForward>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, protocol, external_port_start, external_port_end, internal_ip, internal_port, enabled, description FROM port_forwards WHERE enabled = 1"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(PortForward {
+                id: row.get(0)?,
+                protocol: row.get(1)?,
+                external_port_start: row.get(2)?,
+                external_port_end: row.get(3)?,
+                internal_ip: row.get(4)?,
+                internal_port: row.get(5)?,
+                enabled: row.get::<_, i64>(6)? != 0,
+                description: row.get(7)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    // DHCP reservation methods
+
+    pub fn list_dhcp_reservations(&self) -> Result<Vec<DhcpReservation>> {
+        let mut stmt = self.conn.prepare("SELECT mac, subnet_id FROM dhcp_reservations")?;
+        let rows = stmt.query_map([], |row| {
+            Ok(DhcpReservation {
+                mac: row.get(0)?,
+                subnet_id: row.get(1)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn get_dhcp_reservation(&self, mac: &str) -> Result<Option<DhcpReservation>> {
+        let mut stmt = self.conn.prepare("SELECT mac, subnet_id FROM dhcp_reservations WHERE mac = ?1")?;
+        let mut rows = stmt.query([mac])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(DhcpReservation { mac: row.get(0)?, subnet_id: row.get(1)? }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn set_dhcp_reservation(&self, mac: &str, subnet_id: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO dhcp_reservations (mac, subnet_id) VALUES (?1, ?2) ON CONFLICT(mac) DO UPDATE SET subnet_id = ?2",
+            (mac, subnet_id),
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_dhcp_reservation(&self, mac: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM dhcp_reservations WHERE mac = ?1", [mac])?;
+        Ok(())
+    }
+
+    pub fn set_device_hostname(&self, mac: &str, hostname: &str) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+        self.conn.execute(
+            "UPDATE devices SET hostname = ?1, last_seen = ?2 WHERE mac = ?3",
+            (hostname, now, mac),
+        )?;
+        Ok(())
+    }
+
+    pub fn conn_exec(&self, sql: &str) -> Result<()> {
+        self.conn.execute_batch(sql)?;
+        Ok(())
+    }
+
+    pub fn vacuum_into(&self, path: &str) -> Result<()> {
+        self.conn.execute(&format!("VACUUM INTO '{}'", path), [])?;
         Ok(())
     }
 }
