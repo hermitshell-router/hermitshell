@@ -219,3 +219,79 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** An attacker can POST a very large password to the setup or login endpoint, causing high CPU usage from Argon2 hashing. This is a denial-of-service vector.
 
 **Proper fix:** Add `|| form.password.len() > 128` to the validation check.
+
+---
+
+## Untrusted Network Input
+
+## 21. DHCP hostname from LAN clients is not length-bounded at the network layer
+
+**What:** The DHCP server (`hermitshell-dhcp/src/main.rs:209`) accepts the raw hostname from DHCP Option 12 without any length or character check, then sends it verbatim over IPC to the agent. The agent's `sanitize_hostname()` (`socket.rs:13`) strips invalid characters and truncates to 63 chars, but the full unsanitized string crosses the DHCP→agent IPC boundary first.
+
+**Why:** Validation was deferred to the agent side. The dhcproto library parses the option into a String without length enforcement.
+
+**Risk:** A malicious DHCP client can send an arbitrarily large hostname (up to the 1500-byte UDP packet limit). This wastes IPC bandwidth and causes unnecessary allocations. The actual DB storage is safe because `sanitize_hostname()` truncates, but log messages may include the raw value before sanitization.
+
+**Proper fix:** Truncate and validate in the DHCP handler before sending to the agent: reject hostnames > 255 bytes or containing non-printable characters.
+
+## 22. DHCP discover_times HashMap grows without bound
+
+**What:** The DHCP server (`hermitshell-dhcp/src/main.rs:53`) uses `HashMap<String, Instant>` to rate-limit DHCPDISCOVER messages (10-second cooldown per MAC). Entries are never evicted — every unique MAC that sends a DISCOVER is stored forever.
+
+**Why:** Simplicity. Rate limiting was added but eviction was not.
+
+**Risk:** An attacker on the LAN can send DHCPDISCOVER packets with spoofed MAC addresses (different source MAC each time). Each unique MAC adds a HashMap entry. Over hours/days, this exhausts the DHCP server's memory. The MAC validation (`is_valid_mac`) filters broadcast and multicast MACs, but there are ~140 trillion valid unicast MACs.
+
+**Proper fix:** Periodically evict entries older than 60 seconds, or cap the HashMap size and evict the oldest entry when full. A simple approach: every 1000 packets, remove entries where `elapsed() > 60s`.
+
+## 23. DHCP server accepts packets from any source on the LAN interface
+
+**What:** The DHCP server binds to `0.0.0.0:67` on the LAN interface and processes all valid DHCP packets. There's no source IP or subnet validation — any device that can send a UDP packet to port 67 on the LAN interface gets a subnet allocation.
+
+**Why:** This is how DHCP works — clients don't have IPs yet when they send DISCOVER, so you can't filter by source IP. The LAN interface binding provides the boundary.
+
+**Risk:** This is expected DHCP behavior, but it means any device physically connected to the LAN (or bridged to it) can claim subnets. A rogue device can exhaust the subnet pool by requesting allocations with many spoofed MACs. The agent allocates /30 subnets from 10.0.0.0/16, giving ~16,000 possible subnets.
+
+**Proper fix:** Add a maximum device limit in the agent's `dhcp_discover` handler. When the device count exceeds a threshold (e.g., 1000), reject new allocations. Consider alerting the admin.
+
+## 24. set_config allows overwriting critical keys without restriction
+
+**What:** The `set_config` IPC method (`socket.rs:590`) accepts any key/value pair and writes it to the config table. This includes `admin_password_hash` (overwrite the admin password), `session_secret` (invalidate all sessions or set a known secret), `wg_private_key` (replace the WireGuard key), and `tls_cert_pem`/`tls_key_pem` (replace the TLS certificate).
+
+**Why:** The web UI needs to write some config values (password hash during setup, session secret, TLS cert on first run). No write restriction was implemented.
+
+**Risk:** Any process with socket access can reset the admin password, set a known session secret (forging auth cookies), or replace the TLS certificate with an attacker-controlled one. This is the same access level as issue #1, but for writes — the combination means full takeover via the socket.
+
+**Mitigating factor:** Same as #1 — socket is `0660 root:root` in production.
+
+**Proper fix:** Write-protect critical keys: `admin_password_hash` should only be writable via a dedicated `setup` or `change_password` IPC method. `wg_private_key` should be agent-internal. `session_secret` should be auto-generated and never externally writable.
+
+## 25. Port forwarding can shadow management services
+
+**What:** A user can create port forwards for ports 22 (SSH), 80/443 (web UI), 53 (DNS), or 67 (DHCP). The DNAT rules are applied to the WAN interface, but there's no check against forwarding ports that the router itself uses.
+
+**Why:** Not validated. The nftables rules operate on WAN-inbound traffic, so LAN management access is unaffected, but WAN-side management is impacted.
+
+**Risk:** Forwarding WAN port 22 to an internal host means the admin can no longer SSH to the router from the WAN (if SSH were WAN-accessible). Forwarding port 53 could redirect external DNS queries. Low severity because WAN management access is already limited by the input chain.
+
+**Proper fix:** Reject port forwards for ports in a reserved set: `{22, 53, 67, 68, 80, 443, 51820}`. Or warn the user in the web UI.
+
+## 26. Web UI form handlers silently discard errors
+
+**What:** All web UI form handlers (`main.rs:180-198`) use `let _ = client::...()` to discard IPC errors. The user is always redirected regardless of whether the action succeeded.
+
+**Why:** The web UI was built as a thin wrapper. Error display would require flash messages or query parameters.
+
+**Risk:** A user adds a port forward, gets redirected to the port forwarding page, and sees the forward in the list (because the DB write succeeded) but the nftables rules failed to apply. The forward appears active but doesn't work. Worse, the `handle_setup` handler at `main.rs:117` doesn't discard — if `set_config` fails for the password hash, the user thinks setup worked but no password was saved.
+
+**Proper fix:** Check return values from IPC calls. On error, redirect to an error page or append `?error=...` to the redirect URL.
+
+## 27. No validation on WireGuard peer name or public key format
+
+**What:** The `add_wg_peer` handler (`socket.rs`) accepts a `name` and `public_key` for WireGuard peers. The public key is passed directly to the `wg set` command. The name is stored in the DB without sanitization.
+
+**Why:** The `wg` command validates the public key format (base64, 44 chars). The name is only used for display.
+
+**Risk:** An invalid public key causes `wg set` to fail, which is handled. But the name could be very long or contain special characters. If used in log messages, it could cause log injection. Leptos escapes display output, so XSS via the web UI is unlikely.
+
+**Proper fix:** Validate the public key format (44-char base64 string) and sanitize the name (alphanumeric + hyphens, max 64 chars) before storage.
