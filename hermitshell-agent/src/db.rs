@@ -31,6 +31,15 @@ CREATE TABLE IF NOT EXISTS config (
 
 INSERT OR IGNORE INTO config (key, value) VALUES ('next_subnet_id', '0');
 INSERT OR IGNORE INTO config (key, value) VALUES ('ad_blocking_enabled', 'true');
+
+CREATE TABLE IF NOT EXISTS wg_peers (
+    public_key TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    subnet_id INTEGER NOT NULL,
+    device_group TEXT NOT NULL DEFAULT 'quarantine',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL
+);
 "#;
 
 #[derive(Debug, Clone, Serialize)]
@@ -44,6 +53,16 @@ pub struct Device {
     pub tx_bytes: i64,
     pub device_group: String,
     pub subnet_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WgPeer {
+    pub public_key: String,
+    pub name: String,
+    pub subnet_id: i64,
+    pub device_group: String,
+    pub enabled: bool,
+    pub created_at: i64,
 }
 
 pub struct Db {
@@ -204,5 +223,66 @@ impl Db {
             })
         })?;
         Ok(devices.filter_map(|d| d.ok()).collect())
+    }
+
+    pub fn insert_wg_peer(&self, public_key: &str, name: &str, subnet_id: i64, group: &str) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+        self.conn.execute(
+            "INSERT INTO wg_peers (public_key, name, subnet_id, device_group, enabled, created_at)
+             VALUES (?1, ?2, ?3, ?4, 1, ?5)",
+            (public_key, name, subnet_id, group, now),
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_wg_peer(&self, public_key: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM wg_peers WHERE public_key = ?1", [public_key])?;
+        Ok(())
+    }
+
+    pub fn get_wg_peer(&self, public_key: &str) -> Result<Option<WgPeer>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT public_key, name, subnet_id, device_group, enabled, created_at FROM wg_peers WHERE public_key = ?1"
+        )?;
+        let mut rows = stmt.query([public_key])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(WgPeer {
+                public_key: row.get(0)?,
+                name: row.get(1)?,
+                subnet_id: row.get(2)?,
+                device_group: row.get(3)?,
+                enabled: row.get::<_, i64>(4)? != 0,
+                created_at: row.get(5)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn list_wg_peers(&self) -> Result<Vec<WgPeer>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT public_key, name, subnet_id, device_group, enabled, created_at FROM wg_peers"
+        )?;
+        let peers = stmt.query_map([], |row| {
+            Ok(WgPeer {
+                public_key: row.get(0)?,
+                name: row.get(1)?,
+                subnet_id: row.get(2)?,
+                device_group: row.get(3)?,
+                enabled: row.get::<_, i64>(4)? != 0,
+                created_at: row.get(5)?,
+            })
+        })?;
+        Ok(peers.filter_map(|p| p.ok()).collect())
+    }
+
+    pub fn set_wg_peer_group(&self, public_key: &str, group: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE wg_peers SET device_group = ?1 WHERE public_key = ?2",
+            (group, public_key),
+        )?;
+        Ok(())
     }
 }
