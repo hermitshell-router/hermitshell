@@ -9,6 +9,7 @@ COPY hermitshell-dhcp/ ./hermitshell-dhcp/
 COPY hermitshell-ui/ ./hermitshell-ui/
 
 # Build only the hermitshell crate
+ENV LEPTOS_OUTPUT_NAME="hermitshell"
 RUN cargo build --release -p hermitshell
 
 FROM debian:bookworm-slim
@@ -19,4 +20,6 @@ COPY --from=builder /app/target/release/hermitshell /usr/local/bin/
 
 EXPOSE 3000
 
+ENV LEPTOS_OUTPUT_NAME="hermitshell"
+ENV LEPTOS_SITE_ADDR="0.0.0.0:3000"
 CMD ["hermitshell"]

@@ -17,4 +17,5 @@ hermitshell-ui = { path = "../hermitshell-ui" }
 workspace = true
 
 [package.metadata.leptos]
+output-name = "hermitshell"
 site-addr = "0.0.0.0:3000"

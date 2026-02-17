@@ -18,6 +18,10 @@ vagrant rsync router
 vagrant ssh router -c "sudo bash -c 'killall hermitshell-agent hermitshell-dhcp blocky 2>/dev/null; sleep 1; rm -f /run/hermitshell/*.sock; nohup /opt/hermitshell/hermitshell-agent > /var/log/hermitshell-agent.log 2>&1 &'" 2>/dev/null || true
 sleep 5
 vagrant ssh router -c "sudo chmod 666 /run/hermitshell/agent.sock" 2>/dev/null || true
+
+# Reload web UI container if image tar exists
+vagrant ssh router -c "sudo bash -c 'if [ -f /opt/hermitshell/hermitshell-container.tar ]; then docker load -i /opt/hermitshell/hermitshell-container.tar; docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --network host -v /run/hermitshell/agent.sock:/run/hermitshell/agent.sock hermitshell:latest; fi'" 2>/dev/null || true
+sleep 2
 echo
 
 # Check VMs are running

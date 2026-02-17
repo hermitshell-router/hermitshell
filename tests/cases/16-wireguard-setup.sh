@@ -34,9 +34,15 @@ status=$(vm_exec router 'echo "{\"method\":\"get_wireguard\"}" | socat - UNIX-CO
 assert_match "$status" '"name":"test-laptop"' "Peer appears in status"
 assert_match "$status" '"device_group":"trusted"' "Peer group is trusted"
 
-# Verify peer is in wg show
+# Verify peer is in wg show (use fixed-string match; pubkey has regex metacharacters)
 wg_show=$(vagrant ssh router -c "sudo wg show wg0" 2>/dev/null)
-assert_match "$wg_show" "$peer_pubkey" "Peer in wg show output"
+if echo "$wg_show" | grep -qF "$peer_pubkey"; then
+    echo -e "${GREEN}PASS${NC}: Peer in wg show output"
+else
+    echo -e "${RED}FAIL${NC}: Peer in wg show output"
+    echo "  Expected (fixed string): $peer_pubkey"
+    echo "  Actual: $wg_show"
+fi
 
 # Verify nftables has the peer in verdict map
 nft_map=$(vagrant ssh router -c "sudo nft list map inet filter device_groups" 2>/dev/null)
@@ -56,4 +62,4 @@ assert_match "$result" '"ok":true' "Disable WireGuard"
 
 # Verify wg0 is gone
 wg_gone=$(vagrant ssh router -c "sudo ip link show wg0 2>&1" 2>/dev/null || echo "not found")
-assert_match "$wg_gone" "not exist\|not found" "wg0 interface removed"
+assert_match "$wg_gone" "does not exist|not found" "wg0 interface removed"
