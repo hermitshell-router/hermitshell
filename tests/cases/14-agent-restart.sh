@@ -14,7 +14,6 @@ vagrant ssh router -c "sudo bash -c '
         pkill -f hermitshell-dhcp || true
     fi
 '" 2>/dev/null || true
-sleep 1
 
 # Verify they're dead
 agent_dead() {

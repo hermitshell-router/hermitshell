@@ -103,6 +103,19 @@ log:
         }
     }
 
+    pub fn wait_for_ready(&self, timeout_secs: u64) -> bool {
+        let start = std::time::Instant::now();
+        let interval = std::time::Duration::from_millis(200);
+        let timeout = std::time::Duration::from_secs(timeout_secs);
+        while start.elapsed() < timeout {
+            if http_request("127.0.0.1:4000", "/api/blocking/status").is_ok() {
+                return true;
+            }
+            std::thread::sleep(interval);
+        }
+        false
+    }
+
     pub fn set_blocking_enabled(&self, enabled: bool) -> Result<()> {
         let path = if enabled {
             "/api/blocking/enable"

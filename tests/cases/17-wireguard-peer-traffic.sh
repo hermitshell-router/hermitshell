@@ -35,8 +35,11 @@ vagrant ssh lan -c "sudo bash -c '
     ip route add 192.168.100.0/24 dev wg-test 2>/dev/null || true
 '" 2>/dev/null || true
 
-# Wait for tunnel to establish
-sleep 2
+# Wait for tunnel to establish (poll for handshake)
+tunnel_up() {
+    vm_exec lan "wg show wg-test latest-handshakes" | grep -q '[1-9]'
+}
+wait_for 10 "WireGuard tunnel established" tunnel_up
 
 # Test: ping router through tunnel
 assert_success "Ping router via WireGuard tunnel" \

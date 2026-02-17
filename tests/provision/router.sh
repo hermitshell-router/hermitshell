@@ -70,7 +70,8 @@ echo "0.0.0.0 ads.test.hermitshell" > /data/hermitshell/blocky/custom-blocklist.
 # Run hermitshell-agent as daemon (nohup prevents SIGHUP on session close)
 if [ -f /opt/hermitshell/hermitshell-agent ]; then
     setsid /opt/hermitshell/hermitshell-agent > /var/log/hermitshell-agent.log 2>&1 &
-    sleep 5
+    # Wait for agent socket to appear
+    for i in $(seq 1 30); do test -S /run/hermitshell/agent.sock && break; done
     # Relax socket permissions for test access
     chmod 666 /run/hermitshell/agent.sock 2>/dev/null || true
 else

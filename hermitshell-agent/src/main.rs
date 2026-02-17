@@ -180,8 +180,9 @@ async fn main() -> Result<()> {
         if let Err(e) = mgr.start() {
             error!(error = %e, "failed to start blocky");
         } else {
-            // Wait for blocky to be ready
-            std::thread::sleep(std::time::Duration::from_secs(2));
+            if !mgr.wait_for_ready(10) {
+                error!("blocky did not become ready within 10s");
+            }
             // Check ad_blocking_enabled setting
             let db_guard = db.lock().unwrap();
             let enabled = db_guard

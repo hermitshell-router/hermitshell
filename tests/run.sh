@@ -19,7 +19,7 @@ vagrant ssh router -c "sudo bash -c '
     pkill -f hermitshell-agent 2>/dev/null || true
     pkill -f hermitshell-dhcp 2>/dev/null || true
     killall blocky 2>/dev/null || true
-    sleep 1
+    for i in $(seq 1 10); do pgrep -f hermitshell-agent >/dev/null || break; done
     rm -f /run/hermitshell/*.sock
     cp /opt/hermitshell/hermitshell-agent.service /etc/systemd/system/ 2>/dev/null || true
     if command -v systemctl &>/dev/null; then
@@ -29,12 +29,18 @@ vagrant ssh router -c "sudo bash -c '
         nohup /opt/hermitshell/hermitshell-agent > /var/log/hermitshell-agent.log 2>&1 &
     fi
 '" 2>/dev/null || true
-sleep 5
+# Wait for agent socket to appear
+for i in $(seq 1 30); do
+    vagrant ssh router -c "test -S /run/hermitshell/agent.sock" 2>/dev/null && break
+done
 vagrant ssh router -c "sudo chmod 666 /run/hermitshell/agent.sock" 2>/dev/null || true
 
 # Reload web UI container if image tar exists
 vagrant ssh router -c "sudo bash -c 'if [ -f /opt/hermitshell/hermitshell-container.tar ]; then docker load -i /opt/hermitshell/hermitshell-container.tar; docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --network host -v /run/hermitshell/agent.sock:/run/hermitshell/agent.sock hermitshell:latest; fi'" 2>/dev/null || true
-sleep 2
+# Wait for container to be running
+for i in $(seq 1 15); do
+    vagrant ssh router -c "docker inspect -f '{{.State.Running}}' hermitshell 2>/dev/null" 2>/dev/null | grep -q true && break
+done
 echo
 
 # Check VMs are running

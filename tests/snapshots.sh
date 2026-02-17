@@ -10,8 +10,12 @@ vagrant destroy -f 2>/dev/null || true
 # Bring up all VMs
 vagrant up
 
-# Wait for provisioning to settle
-sleep 5
+# Wait for all VMs to be running
+for vm in wan router lan; do
+    for i in $(seq 1 30); do
+        vagrant status "$vm" --machine-readable 2>/dev/null | grep -q "state,running" && break
+    done
+done
 
 # Take snapshots
 for vm in wan router lan; do
