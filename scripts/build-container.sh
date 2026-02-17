@@ -2,6 +2,11 @@
 set -e
 cd "$(dirname "$0")/.."
 
-docker build -t hermitshell:latest -f hermitshell/Dockerfile .
+# Copy pre-built musl binary to Docker context
+cp target/release/hermitshell hermitshell/hermitshell
+
+docker build -t hermitshell:latest hermitshell/
+
+rm -f hermitshell/hermitshell
 
 echo "Container built: hermitshell:latest"

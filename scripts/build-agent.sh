@@ -5,15 +5,17 @@ set -e
 [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
 
 # Build with musl for static linking (portable across Linux distros)
-cargo build --release -p hermitshell-agent -p hermitshell-dhcp --target x86_64-unknown-linux-musl
+LEPTOS_OUTPUT_NAME=hermitshell cargo build --release -p hermitshell-agent -p hermitshell-dhcp -p hermitshell --target x86_64-unknown-linux-musl
 
 # Copy to release dir for convenience
 mkdir -p target/release
 cp target/x86_64-unknown-linux-musl/release/hermitshell-agent target/release/
 cp target/x86_64-unknown-linux-musl/release/hermitshell-dhcp target/release/
+cp target/x86_64-unknown-linux-musl/release/hermitshell target/release/
 
 echo "Agent built: target/release/hermitshell-agent (statically linked)"
 echo "DHCP built: target/release/hermitshell-dhcp (statically linked)"
+echo "Web UI built: target/release/hermitshell (statically linked)"
 
 # Download blocky binary (cached)
 BLOCKY_VERSION="v0.24"

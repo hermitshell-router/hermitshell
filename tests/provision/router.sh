@@ -88,6 +88,6 @@ if [ -f /opt/hermitshell/hermitshell-container.tar ]; then
     docker run -d \
         --name hermitshell \
         --network host \
-        -v /run/hermitshell/agent.sock:/run/hermitshell/agent.sock \
+        -v /run/hermitshell:/run/hermitshell \
         hermitshell:latest
 fi

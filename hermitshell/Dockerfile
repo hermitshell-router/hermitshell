@@ -1,22 +1,8 @@
-FROM rust:latest AS builder
+FROM alpine:latest
 
-WORKDIR /app
-COPY Cargo.toml ./
-COPY hermitshell/ ./hermitshell/
-COPY hermitshell-agent/ ./hermitshell-agent/
-COPY hermitshell-common/ ./hermitshell-common/
-COPY hermitshell-dhcp/ ./hermitshell-dhcp/
-COPY hermitshell-ui/ ./hermitshell-ui/
+RUN apk add --no-cache ca-certificates
 
-# Build only the hermitshell crate
-ENV LEPTOS_OUTPUT_NAME="hermitshell"
-RUN cargo build --release -p hermitshell
-
-FROM debian:bookworm-slim
-
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-
-COPY --from=builder /app/target/release/hermitshell /usr/local/bin/
+COPY hermitshell /usr/local/bin/
 
 EXPOSE 80 443
 

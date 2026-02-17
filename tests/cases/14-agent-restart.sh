@@ -6,30 +6,16 @@ before=$(vm_exec router 'echo "{\"method\":\"list_devices\"}" | socat - UNIX-CON
 assert_match "$before" '"ok":true' "list_devices before restart"
 
 # Kill the agent and DHCP process (need sudo to signal root processes)
-vagrant ssh router -c "sudo bash -c '
-    if command -v systemctl &>/dev/null && systemctl is-active hermitshell-agent &>/dev/null; then
-        systemctl stop hermitshell-agent
-    else
-        pkill -f hermitshell-agent || true
-        pkill -f hermitshell-dhcp || true
-    fi
-'" 2>/dev/null || true
+vagrant ssh router -c "sudo systemctl stop hermitshell-agent 2>/dev/null; sudo killall hermitshell-age hermitshell-dhc blocky 2>/dev/null; true" 2>/dev/null || true
 
 # Verify they're dead
 agent_dead() {
-    ! vm_exec router "pgrep -f hermitshell-agent" | grep -q '[0-9]'
+    ! vm_exec router "pgrep -x hermitshell-age" | grep -q '[0-9]'
 }
 wait_for 5 "Agent process stopped" agent_dead
 
-# Restart agent (need sudo + nohup to survive ssh disconnect)
-vagrant ssh router -c "sudo bash -c '
-    rm -f /run/hermitshell/*.sock
-    if command -v systemctl &>/dev/null; then
-        systemctl restart hermitshell-agent
-    else
-        nohup /opt/hermitshell/hermitshell-agent > /var/log/hermitshell-agent.log 2>&1 &
-    fi
-'" 2>/dev/null || true
+# Restart agent
+vagrant ssh router -c "sudo rm -f /run/hermitshell/*.sock && sudo systemctl restart hermitshell-agent" 2>/dev/null || true
 
 # Wait for socket to come back
 socket_ready() {
@@ -57,7 +43,7 @@ assert_match "$blocky_pid" "^[0-9]+" "Blocky process running after restart"
 
 # Verify DHCP process is running
 dhcp_running() {
-    vm_exec router "pgrep -f hermitshell-dhcp" | grep -q '[0-9]'
+    vm_exec router "pgrep -x hermitshell-dhc" | grep -q '[0-9]'
 }
 wait_for 10 "DHCP process running after restart" dhcp_running
 

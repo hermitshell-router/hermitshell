@@ -7,11 +7,11 @@ assert_success "Web UI container running" \
 
 # HTTPS should respond (may redirect to /setup or /login since no password set yet)
 response=$(vm_exec router "curl -s -k -o /dev/null -w '%{http_code}' https://localhost/")
-assert_match "$response" "200\|30[0-9]" "HTTPS responds"
+assert_match "$response" "200|30[0-9]" "HTTPS responds"
 
 # HTTP should redirect to HTTPS
 response=$(vm_exec router "curl -s -o /dev/null -w '%{http_code}' http://localhost/" 2>/dev/null || echo "000")
-assert_match "$response" "30[0-9]\|000" "HTTP redirects or refused"
+assert_match "$response" "30[0-9]|000" "HTTP redirects or refused"
 
 # Setup: set password first
 vm_exec router "curl -s -k -X POST -d 'password=testpass123&confirm=testpass123' https://localhost/api/setup" >/dev/null 2>&1

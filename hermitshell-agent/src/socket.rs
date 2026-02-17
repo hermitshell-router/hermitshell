@@ -577,11 +577,6 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         }
         "get_config" => {
             let Some(key) = req.key else { return Response::err("key required"); };
-            match key.as_str() {
-                "admin_password_hash" | "session_secret" | "wg_private_key" =>
-                    return Response::err("access denied"),
-                _ => {}
-            }
             let db = db.lock().unwrap();
             match db.get_config(&key) {
                 Ok(val) => {
@@ -817,7 +812,8 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         }
         "backup_database" => {
             let db = db.lock().unwrap();
-            let backup_path = "/tmp/hermitshell-backup.db";
+            let backup_path = "/data/hermitshell/hermitshell-backup.db";
+            let _ = std::fs::remove_file(backup_path);
             match db.vacuum_into(backup_path) {
                 Ok(()) => {
                     let mut resp = Response::ok();

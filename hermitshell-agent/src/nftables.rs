@@ -63,11 +63,12 @@ table inet filter {{
         type filter hook input priority 0; policy drop;
         ct state established,related accept
         iifname "lo" accept
+        tcp dport 22 accept
         iifname "{lan_iface}" tcp dport {{ 80, 443 }} accept
         iifname "{lan_iface}" udp dport 67 accept
         iifname "{lan_iface}" tcp dport 53 accept
         iifname "{lan_iface}" udp dport 53 accept
-        iifname "{wan_iface}" icmp type echo-request accept
+        icmp type echo-request accept
     }}
     chain forward {{
         type filter hook forward priority 0; policy drop;
@@ -99,6 +100,8 @@ table inet filter {{
     }}
     chain blocked_fwd {{
         drop
+    }}
+    chain port_fwd {{
     }}
 }}
 
@@ -350,21 +353,26 @@ pub fn apply_port_forwards(
         }
     }
 
-    // Rebuild the nat prerouting chain
-    let nft_script = format!(r#"#!/usr/sbin/nft -f
-flush chain ip nat prerouting
-table ip nat {{
-    chain prerouting {{
-        type nat hook prerouting priority -100;
-{prerouting_rules}    }}
-}}
+    // Rebuild the nat prerouting chain (flush and re-add rules)
+    let mut nft_commands = Vec::new();
+    nft_commands.push("flush chain ip nat prerouting".to_string());
+    for line in prerouting_rules.lines() {
+        let rule = line.trim();
+        if !rule.is_empty() {
+            nft_commands.push(format!("add rule ip nat prerouting {}", rule));
+        }
+    }
 
-delete chain inet filter port_fwd 2>/dev/null
-table inet filter {{
-    chain port_fwd {{
-{forward_rules}    }}
-}}
-"#);
+    // Delete and recreate port_fwd chain
+    nft_commands.push("flush chain inet filter port_fwd".to_string());
+    for line in forward_rules.lines() {
+        let rule = line.trim();
+        if !rule.is_empty() {
+            nft_commands.push(format!("add rule inet filter port_fwd {}", rule));
+        }
+    }
+
+    let nft_script = nft_commands.join("\n") + "\n";
 
     let temp_path = "/tmp/hermitshell-portfwd.nft";
     std::fs::write(temp_path, &nft_script)?;
