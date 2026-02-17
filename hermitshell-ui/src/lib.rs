@@ -13,6 +13,7 @@ use pages::dns::Dns;
 use pages::groups::Groups;
 use pages::settings::Settings;
 use pages::traffic::Traffic;
+use pages::wireguard::Wireguard;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -26,6 +27,7 @@ pub fn App() -> impl IntoView {
                     <Route path="/groups" view=Groups />
                     <Route path="/traffic" view=Traffic />
                     <Route path="/dns" view=Dns />
+                    <Route path="/wireguard" view=Wireguard />
                     <Route path="/settings" view=Settings />
                 </Routes>
             </main>

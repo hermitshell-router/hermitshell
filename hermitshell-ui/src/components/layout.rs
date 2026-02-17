@@ -12,6 +12,7 @@ pub fn Layout(
         ("Groups", "/groups"),
         ("Traffic", "/traffic"),
         ("DNS", "/dns"),
+        ("WireGuard", "/wireguard"),
         ("Settings", "/settings"),
     ];
 
