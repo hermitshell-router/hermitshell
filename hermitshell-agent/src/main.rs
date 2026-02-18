@@ -1,6 +1,7 @@
 mod blocky;
 mod conntrack;
 mod db;
+mod dns_log;
 mod log_export;
 mod nftables;
 mod socket;
@@ -207,6 +208,12 @@ async fn main() -> Result<()> {
     conntrack::enable_accounting();
     let (log_tx, _log_rx) = tokio::sync::mpsc::unbounded_channel::<log_export::LogEvent>();
     let _conntrack_child = conntrack::start(db.clone(), log_tx.clone());
+
+    let db_dns = db.clone();
+    let log_tx_dns = log_tx.clone();
+    tokio::spawn(async move {
+        dns_log::start(db_dns, log_tx_dns).await;
+    });
 
     // Spawn socket server
     let db_clone = db.clone();

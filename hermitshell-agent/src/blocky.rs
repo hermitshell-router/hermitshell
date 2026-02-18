@@ -30,6 +30,7 @@ impl BlockyManager {
 
     pub fn write_config(&self) -> Result<()> {
         std::fs::create_dir_all(&self.config_dir)?;
+        std::fs::create_dir_all(&format!("{}/logs", self.config_dir))?;
 
         let servers: String = self
             .upstream_dns
@@ -39,6 +40,7 @@ impl BlockyManager {
             .join("\n");
 
         let custom_blocklist = format!("{}/custom-blocklist.txt", self.config_dir);
+        let log_dir = format!("{}/logs", self.config_dir);
 
         let config = format!(
             r#"upstreams:
@@ -58,10 +60,21 @@ ports:
   http: 127.0.0.1:4000
 log:
   level: warn
+queryLog:
+  type: csv-client
+  target: {log_dir}
+  logRetentionDays: 1
+  creationAttempts: 1
+  creationCooldown: 5s
+  fields:
+    - questionName
+    - questionType
+    - responseCode
 "#,
             servers = servers,
             custom_blocklist = custom_blocklist,
             listen = self.listen_addr,
+            log_dir = log_dir,
         );
 
         let path = format!("{}/config.yml", self.config_dir);
