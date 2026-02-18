@@ -1,6 +1,6 @@
 use anyhow::Result;
 use std::collections::HashMap;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::process::Command;
 use tracing::{debug, info};
 
@@ -43,6 +43,16 @@ pub fn validate_iface(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Validate that an IPv6 string is a valid ULA address (fd00::/8).
+pub fn validate_ipv6_ula(ip: &str) -> Result<()> {
+    let addr: Ipv6Addr = ip.parse().map_err(|_| anyhow::anyhow!("invalid IPv6: {}", ip))?;
+    let octets = addr.octets();
+    if octets[0] != 0xfd {
+        anyhow::bail!("IPv6 {} not in fd00::/8 ULA range", ip);
+    }
+    Ok(())
+}
+
 /// Public wrapper for IP validation, used by wireguard.rs.
 pub fn validate_ip_pub(ip: &str) -> Result<()> {
     validate_ip(ip)
@@ -55,8 +65,12 @@ pub fn apply_base_rules(wan_iface: &str, lan_iface: &str) -> Result<()> {
 flush ruleset
 
 table inet filter {{
-    map device_groups {{
+    map device_groups_v4 {{
         type ipv4_addr : verdict;
+    }}
+
+    map device_groups_v6 {{
+        type ipv6_addr : verdict;
     }}
 
     chain input {{
@@ -68,12 +82,17 @@ table inet filter {{
         iifname "{lan_iface}" udp dport 67 accept
         iifname "{lan_iface}" tcp dport 53 accept
         iifname "{lan_iface}" udp dport 53 accept
+        iifname "{lan_iface}" udp dport {{ 546, 547 }} accept
         icmp type echo-request accept
+        icmpv6 type {{ echo-request, nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert }} accept
     }}
     chain forward {{
         type filter hook forward priority 0; policy drop;
         ct state established,related accept
-        ip saddr vmap @device_groups
+        ip saddr vmap @device_groups_v4
+        ip6 saddr vmap @device_groups_v6
+        icmpv6 type {{ nd-neighbor-solicit, nd-neighbor-advert }} accept
+        ip6 saddr fe80::/10 icmpv6 type nd-router-advert drop
     }}
     chain output {{
         type filter hook output priority 0; policy accept;
@@ -128,11 +147,23 @@ table inet traffic {{
         flags dynamic
         counter
     }}
+    set tx_devices_v6 {{
+        type ipv6_addr
+        flags dynamic
+        counter
+    }}
+    set rx_devices_v6 {{
+        type ipv6_addr
+        flags dynamic
+        counter
+    }}
 
     chain count_lan {{
         type filter hook forward priority -10; policy accept;
         ip saddr @tx_devices
         ip daddr @rx_devices
+        ip6 saddr @tx_devices_v6
+        ip6 daddr @rx_devices_v6
     }}
 }}
 "#);
@@ -164,6 +195,21 @@ pub fn add_device_counter(ip: &str) -> Result<()> {
     // Add to RX counter set (traffic to device)
     let _ = Command::new("/usr/sbin/nft")
         .args(["add", "element", "inet", "traffic", "rx_devices", &element])
+        .status()?;
+
+    Ok(())
+}
+
+pub fn add_device_counter_v6(ip: &str) -> Result<()> {
+    validate_ipv6_ula(ip)?;
+    let element = format!("{{ {} }}", ip);
+
+    let _ = Command::new("/usr/sbin/nft")
+        .args(["add", "element", "inet", "traffic", "tx_devices_v6", &element])
+        .status()?;
+
+    let _ = Command::new("/usr/sbin/nft")
+        .args(["add", "element", "inet", "traffic", "rx_devices_v6", &element])
         .status()?;
 
     Ok(())
@@ -212,30 +258,47 @@ pub fn get_device_counters(ip: &str) -> Result<(i64, i64)> {
     Ok((rx, tx))
 }
 
-/// Add device to verdict map: ip -> jump {group}_fwd
+/// Add device to IPv4 verdict map: ip -> jump {group}_fwd
 pub fn add_device_forward_rule(ip: &str, group: &str) -> Result<()> {
     validate_ip(ip)?;
     validate_group(group)?;
     let chain = format!("{}_fwd", group);
     let element = format!("{{ {} : jump {} }}", ip, chain);
     let status = Command::new("/usr/sbin/nft")
-        .args(["add", "element", "inet", "filter", "device_groups", &element])
+        .args(["add", "element", "inet", "filter", "device_groups_v4", &element])
         .status()?;
     if status.success() {
-        debug!(ip = %ip, chain = %chain, "added device_groups element");
+        debug!(ip = %ip, chain = %chain, "added device_groups_v4 element");
         Ok(())
     } else {
-        anyhow::bail!("Failed to add device_groups element for {}", ip)
+        anyhow::bail!("Failed to add device_groups_v4 element for {}", ip)
     }
 }
 
-/// Remove device from verdict map and flush conntrack entries.
+/// Add device to IPv6 verdict map: ip -> jump {group}_fwd
+pub fn add_device_forward_rule_v6(ip: &str, group: &str) -> Result<()> {
+    validate_ipv6_ula(ip)?;
+    validate_group(group)?;
+    let chain = format!("{}_fwd", group);
+    let element = format!("{{ {} : jump {} }}", ip, chain);
+    let status = Command::new("/usr/sbin/nft")
+        .args(["add", "element", "inet", "filter", "device_groups_v6", &element])
+        .status()?;
+    if status.success() {
+        debug!(ip = %ip, chain = %chain, "added device_groups_v6 element");
+        Ok(())
+    } else {
+        anyhow::bail!("Failed to add device_groups_v6 element for {}", ip)
+    }
+}
+
+/// Remove device from IPv4 verdict map and flush conntrack entries.
 pub fn remove_device_forward_rule(ip: &str) -> Result<()> {
     validate_ip(ip)?;
     let element = format!("{{ {} }}", ip);
-    // Ignore errors — element may not exist (e.g. already blocked)
+    // Ignore errors -- element may not exist (e.g. already blocked)
     let _ = Command::new("/usr/sbin/nft")
-        .args(["delete", "element", "inet", "filter", "device_groups", &element])
+        .args(["delete", "element", "inet", "filter", "device_groups_v4", &element])
         .status();
 
     // Flush conntrack entries so established connections don't bypass the block
@@ -246,17 +309,41 @@ pub fn remove_device_forward_rule(ip: &str) -> Result<()> {
     Ok(())
 }
 
-/// Add /30 gateway address to LAN interface
-pub fn add_gateway_address(gateway: &str, lan_iface: &str) -> Result<()> {
-    validate_ip(gateway)?;
-    let addr = format!("{}/30", gateway);
-    let status = Command::new("/usr/sbin/ip")
-        .args(["addr", "add", &addr, "dev", lan_iface])
-        .status()?;
-    // Ignore "already exists" errors
-    if status.success() {
-        debug!(addr = %addr, iface = lan_iface, "added gateway address");
-    }
+/// Remove device from IPv6 verdict map.
+pub fn remove_device_forward_rule_v6(ip: &str) -> Result<()> {
+    validate_ipv6_ula(ip)?;
+    let element = format!("{{ {} }}", ip);
+    let _ = Command::new("/usr/sbin/nft")
+        .args(["delete", "element", "inet", "filter", "device_groups_v6", &element])
+        .status();
+
+    Ok(())
+}
+
+/// Add /32 host route to LAN interface for a device
+pub fn add_device_route(device_ip: &str, lan_iface: &str) -> Result<()> {
+    validate_ip(device_ip)?;
+    validate_iface(lan_iface)?;
+    let route = format!("{}/32", device_ip);
+    let _ = Command::new("/usr/sbin/ip")
+        .args(["route", "add", &route, "dev", lan_iface])
+        .status();
+    debug!(route = %route, iface = lan_iface, "added device route");
+    Ok(())
+}
+
+/// Add /128 host route and NDP proxy for a device on LAN interface
+pub fn add_device_route_v6(device_ipv6: &str, lan_iface: &str) -> Result<()> {
+    validate_ipv6_ula(device_ipv6)?;
+    validate_iface(lan_iface)?;
+    let route = format!("{}/128", device_ipv6);
+    let _ = Command::new("/usr/sbin/ip")
+        .args(["-6", "route", "add", &route, "dev", lan_iface])
+        .status();
+    let _ = Command::new("/usr/sbin/ip")
+        .args(["-6", "neigh", "add", "proxy", device_ipv6, "dev", lan_iface])
+        .status();
+    debug!(route = %route, iface = lan_iface, "added device v6 route");
     Ok(())
 }
 

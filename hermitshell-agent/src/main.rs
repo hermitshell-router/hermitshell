@@ -66,6 +66,7 @@ const DB_PATH: &str = "/data/hermitshell/db/hermitshell.db";
 const SOCKET_PATH: &str = "/run/hermitshell/agent.sock";
 const POLL_INTERVAL_SECS: u64 = 10;
 const LAN_ADDR: &str = "10.0.0.1/32";
+const LAN_ADDR_V6: &str = "fd00::1/128";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -98,7 +99,7 @@ async fn main() -> Result<()> {
     let wan_iface = "eth1";
     let lan_iface = "eth2";
 
-    // Ensure LAN interface has the base address (each device gets its own /30)
+    // Ensure LAN interface has the base IPv4 address
     let status = std::process::Command::new("/usr/sbin/ip")
         .args(["addr", "add", LAN_ADDR, "dev", lan_iface])
         .status();
@@ -106,6 +107,16 @@ async fn main() -> Result<()> {
         Ok(s) if s.success() || s.code() == Some(2) => {} // 2 = already exists
         Ok(s) => warn!(addr = LAN_ADDR, iface = lan_iface, code = ?s.code(), "ip addr add exited unexpectedly"),
         Err(e) => warn!(error = %e, "failed to add LAN address"),
+    }
+
+    // Ensure LAN interface has the base IPv6 ULA address
+    let status_v6 = std::process::Command::new("/usr/sbin/ip")
+        .args(["-6", "addr", "add", LAN_ADDR_V6, "dev", lan_iface])
+        .status();
+    match status_v6 {
+        Ok(s) if s.success() || s.code() == Some(2) => {}
+        Ok(s) => warn!(addr = LAN_ADDR_V6, iface = lan_iface, code = ?s.code(), "ip -6 addr add exited unexpectedly"),
+        Err(e) => warn!(error = %e, "failed to add LAN v6 address"),
     }
 
     // Apply base nftables rules
@@ -120,17 +131,19 @@ async fn main() -> Result<()> {
         let db_guard = db.lock().unwrap();
         let assigned = db_guard.list_assigned_devices()?;
         for dev in &assigned {
-            if let (Some(ip), Some(sid)) = (&dev.ip, dev.subnet_id) {
+            if let (Some(ip), Some(sid)) = (&dev.ipv4, dev.subnet_id) {
                 if let Some(info) = subnet::compute_subnet(sid) {
-                    // Re-add gateway address
-                    let addr_cidr = format!("{}/30", info.gateway);
-                    let _ = std::process::Command::new("/usr/sbin/ip")
-                        .args(["addr", "add", &addr_cidr, "dev", lan_iface])
-                        .status();
+                    // Re-add /32 device route
+                    let _ = nftables::add_device_route(ip, lan_iface);
                     // Re-add nftables counter
                     let _ = nftables::add_device_counter(ip);
                     // Re-add nftables forward rule
                     let _ = nftables::add_device_forward_rule(ip, &dev.device_group);
+                    // Re-add IPv6 route, counter, forward rule
+                    let ipv6 = info.device_ipv6_ula.to_string();
+                    let _ = nftables::add_device_route_v6(&ipv6, lan_iface);
+                    let _ = nftables::add_device_counter_v6(&ipv6);
+                    let _ = nftables::add_device_forward_rule_v6(&ipv6, &dev.device_group);
                     info!(mac = %dev.mac, ip = %ip, subnet_id = sid, group = %dev.device_group, "device restored");
                 }
             }
@@ -173,10 +186,14 @@ async fn main() -> Result<()> {
                     for peer in &peers {
                         if !peer.enabled { continue; }
                         if let Some(info) = subnet::compute_subnet(peer.subnet_id) {
-                            let _ = wireguard::add_peer(&peer.public_key, &info.device_ip);
-                            let _ = nftables::add_device_counter(&info.device_ip);
-                            let _ = nftables::add_device_forward_rule(&info.device_ip, &peer.device_group);
-                            info!(peer = %peer.name, ip = %info.device_ip, "wireguard peer restored");
+                            let ipv4 = info.device_ipv4.to_string();
+                            let ipv6 = info.device_ipv6_ula.to_string();
+                            let _ = wireguard::add_peer(&peer.public_key, &ipv4, &ipv6);
+                            let _ = nftables::add_device_counter(&ipv4);
+                            let _ = nftables::add_device_counter_v6(&ipv6);
+                            let _ = nftables::add_device_forward_rule(&ipv4, &peer.device_group);
+                            let _ = nftables::add_device_forward_rule_v6(&ipv6, &peer.device_group);
+                            info!(peer = %peer.name, ipv4 = %ipv4, ipv6 = %ipv6, "wireguard peer restored");
                         }
                     }
                 }
@@ -297,7 +314,7 @@ async fn main() -> Result<()> {
         };
 
         for dev in &devices {
-            if let Some(ref ip) = dev.ip {
+            if let Some(ref ip) = dev.ipv4 {
                 match nftables::get_device_counters(ip) {
                     Ok((rx, tx)) => {
                         if let Err(e) = db_guard.update_counters(ip, rx, tx) {

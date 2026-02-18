@@ -56,7 +56,9 @@ struct Response {
     #[serde(skip_serializing_if = "Option::is_none")]
     subnet_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    device_ip: Option<String>,
+    device_ipv4: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_ipv6_ula: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     is_new: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -96,17 +98,18 @@ struct WireguardInfo {
 struct WgPeerInfo {
     public_key: String,
     name: String,
-    ip: String,
+    ipv4: String,
+    ipv6_ula: String,
     device_group: String,
     enabled: bool,
 }
 
 impl Response {
     fn ok() -> Self {
-        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ip: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None }
+        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None }
     }
     fn err(msg: &str) -> Self {
-        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ip: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None }
+        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None }
     }
 }
 
@@ -240,16 +243,19 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             let Some(info) = subnet::compute_subnet(subnet_id) else {
                 return Response::err("invalid subnet_id");
             };
-            let ip = &info.device_ip;
-            if let Err(e) = nftables::remove_device_forward_rule(ip) {
+            let ipv4 = info.device_ipv4.to_string();
+            let ipv6 = info.device_ipv6_ula.to_string();
+            if let Err(e) = nftables::remove_device_forward_rule(&ipv4) {
                 return Response::err(&format!("failed to remove old rule: {}", e));
             }
+            let _ = nftables::remove_device_forward_rule_v6(&ipv6);
             if let Err(e) = db.set_device_group(&mac, &group) {
                 return Response::err(&format!("failed to update group: {}", e));
             }
-            if let Err(e) = nftables::add_device_forward_rule(ip, &group) {
+            if let Err(e) = nftables::add_device_forward_rule(&ipv4, &group) {
                 return Response::err(&format!("failed to add new rule: {}", e));
             }
+            let _ = nftables::add_device_forward_rule_v6(&ipv6, &group);
             match db.get_device(&mac) {
                 Ok(Some(device)) => {
                     let mut resp = Response::ok();
@@ -270,13 +276,17 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 Ok(None) => return Response::err("device not found"),
                 Err(e) => return Response::err(&e.to_string()),
             };
-            if let Some(ref ip) = device.ip {
+            if let Some(ref ip) = device.ipv4 {
                 if let Err(e) = nftables::remove_device_forward_rule(ip) {
                     return Response::err(&format!("failed to remove forward rule: {}", e));
                 }
                 if let Err(e) = nftables::add_device_forward_rule(ip, "blocked") {
                     return Response::err(&format!("failed to add blocked rule: {}", e));
                 }
+            }
+            if let Some(ref ipv6) = device.ipv6_ula {
+                let _ = nftables::remove_device_forward_rule_v6(ipv6);
+                let _ = nftables::add_device_forward_rule_v6(ipv6, "blocked");
             }
             if let Err(e) = db.block_device(&mac) {
                 return Response::err(&format!("failed to block device: {}", e));
@@ -296,13 +306,17 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             if let Err(e) = db.unblock_device(&mac) {
                 return Response::err(&format!("failed to unblock device: {}", e));
             }
-            if let Some(ref ip) = device.ip {
+            if let Some(ref ip) = device.ipv4 {
                 if let Err(e) = nftables::remove_device_forward_rule(ip) {
                     return Response::err(&format!("failed to remove blocked rule: {}", e));
                 }
                 if let Err(e) = nftables::add_device_forward_rule(ip, "quarantine") {
                     return Response::err(&format!("failed to add forward rule: {}", e));
                 }
+            }
+            if let Some(ref ipv6) = device.ipv6_ula {
+                let _ = nftables::remove_device_forward_rule_v6(ipv6);
+                let _ = nftables::add_device_forward_rule_v6(ipv6, "quarantine");
             }
             Response::ok()
         }
@@ -358,7 +372,8 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 Some(WgPeerInfo {
                     public_key: p.public_key.clone(),
                     name: p.name.clone(),
-                    ip: info.device_ip,
+                    ipv4: info.device_ipv4.to_string(),
+                    ipv6_ula: info.device_ipv6_ula.to_string(),
                     device_group: p.device_group.clone(),
                     enabled: p.enabled,
                 })
@@ -405,9 +420,13 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 for peer in &peers {
                     if !peer.enabled { continue; }
                     if let Some(info) = subnet::compute_subnet(peer.subnet_id) {
-                        let _ = crate::wireguard::add_peer(&peer.public_key, &info.device_ip);
-                        let _ = nftables::add_device_counter(&info.device_ip);
-                        let _ = nftables::add_device_forward_rule(&info.device_ip, &peer.device_group);
+                        let ipv4 = info.device_ipv4.to_string();
+                        let ipv6 = info.device_ipv6_ula.to_string();
+                        let _ = crate::wireguard::add_peer(&peer.public_key, &ipv4, &ipv6);
+                        let _ = nftables::add_device_counter(&ipv4);
+                        let _ = nftables::add_device_counter_v6(&ipv6);
+                        let _ = nftables::add_device_forward_rule(&ipv4, &peer.device_group);
+                        let _ = nftables::add_device_forward_rule_v6(&ipv6, &peer.device_group);
                     }
                 }
                 if let Err(e) = db.set_config("wg_enabled", "true") {
@@ -417,8 +436,11 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 let peers = db.list_wg_peers().unwrap_or_default();
                 for peer in &peers {
                     if let Some(info) = subnet::compute_subnet(peer.subnet_id) {
-                        let _ = nftables::remove_device_forward_rule(&info.device_ip);
-                        let _ = crate::wireguard::remove_peer(&peer.public_key, &info.device_ip);
+                        let ipv4 = info.device_ipv4.to_string();
+                        let ipv6 = info.device_ipv6_ula.to_string();
+                        let _ = nftables::remove_device_forward_rule(&ipv4);
+                        let _ = nftables::remove_device_forward_rule_v6(&ipv6);
+                        let _ = crate::wireguard::remove_peer(&peer.public_key, &ipv4, &ipv6);
                     }
                 }
                 let _ = crate::wireguard::close_listen_port();
@@ -459,15 +481,19 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             let Some(info) = subnet::compute_subnet(subnet_id) else {
                 return Response::err("subnet address space exhausted");
             };
-            if let Err(e) = crate::wireguard::add_peer(&public_key, &info.device_ip) {
+            let ipv4 = info.device_ipv4.to_string();
+            let ipv6 = info.device_ipv6_ula.to_string();
+            if let Err(e) = crate::wireguard::add_peer(&public_key, &ipv4, &ipv6) {
                 return Response::err(&format!("failed to add peer: {}", e));
             }
-            if let Err(e) = nftables::add_device_counter(&info.device_ip) {
+            if let Err(e) = nftables::add_device_counter(&ipv4) {
                 return Response::err(&format!("failed to add counter: {}", e));
             }
-            if let Err(e) = nftables::add_device_forward_rule(&info.device_ip, group) {
+            let _ = nftables::add_device_counter_v6(&ipv6);
+            if let Err(e) = nftables::add_device_forward_rule(&ipv4, group) {
                 return Response::err(&format!("failed to add forward rule: {}", e));
             }
+            let _ = nftables::add_device_forward_rule_v6(&ipv6, group);
             if let Err(e) = db.insert_wg_peer(&public_key, &name, subnet_id, group) {
                 return Response::err(&format!("failed to save peer: {}", e));
             }
@@ -480,7 +506,8 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(51820);
             let mut resp = Response::ok();
-            resp.device_ip = Some(info.device_ip);
+            resp.device_ipv4 = Some(ipv4);
+            resp.device_ipv6_ula = Some(ipv6);
             resp.wireguard = Some(WireguardInfo {
                 enabled: true,
                 public_key: Some(server_pubkey),
@@ -500,8 +527,11 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 Err(e) => return Response::err(&e.to_string()),
             };
             if let Some(info) = subnet::compute_subnet(peer.subnet_id) {
-                let _ = nftables::remove_device_forward_rule(&info.device_ip);
-                let _ = crate::wireguard::remove_peer(&public_key, &info.device_ip);
+                let ipv4 = info.device_ipv4.to_string();
+                let ipv6 = info.device_ipv6_ula.to_string();
+                let _ = nftables::remove_device_forward_rule(&ipv4);
+                let _ = nftables::remove_device_forward_rule_v6(&ipv6);
+                let _ = crate::wireguard::remove_peer(&public_key, &ipv4, &ipv6);
             }
             if let Err(e) = db.remove_wg_peer(&public_key) {
                 return Response::err(&format!("failed to remove peer: {}", e));
@@ -528,15 +558,19 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             let Some(info) = subnet::compute_subnet(peer.subnet_id) else {
                 return Response::err("invalid subnet_id");
             };
-            if let Err(e) = nftables::remove_device_forward_rule(&info.device_ip) {
+            let ipv4 = info.device_ipv4.to_string();
+            let ipv6 = info.device_ipv6_ula.to_string();
+            if let Err(e) = nftables::remove_device_forward_rule(&ipv4) {
                 return Response::err(&format!("failed to remove old rule: {}", e));
             }
+            let _ = nftables::remove_device_forward_rule_v6(&ipv6);
             if let Err(e) = db.set_wg_peer_group(&public_key, &group) {
                 return Response::err(&format!("failed to update group: {}", e));
             }
-            if let Err(e) = nftables::add_device_forward_rule(&info.device_ip, &group) {
+            if let Err(e) = nftables::add_device_forward_rule(&ipv4, &group) {
                 return Response::err(&format!("failed to add new rule: {}", e));
             }
+            let _ = nftables::add_device_forward_rule_v6(&ipv6, &group);
             Response::ok()
         }
         "list_dhcp_reservations" => {
@@ -979,7 +1013,8 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
                     };
                     let mut resp = Response::ok();
                     resp.subnet_id = Some(sid);
-                    resp.device_ip = Some(info.device_ip);
+                    resp.device_ipv4 = Some(info.device_ipv4.to_string());
+                    resp.device_ipv6_ula = Some(info.device_ipv6_ula.to_string());
                     resp.is_new = Some(false);
                     resp
                 }
@@ -994,12 +1029,15 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
                     let Some(info) = subnet::compute_subnet(sid) else {
                         return Response::err("subnet address space exhausted");
                     };
-                    if let Err(e) = db.insert_new_device(&mac, sid, &info.device_ip) {
+                    let ipv4 = info.device_ipv4.to_string();
+                    let ipv6 = info.device_ipv6_ula.to_string();
+                    if let Err(e) = db.insert_new_device(&mac, sid, &ipv4, &ipv6) {
                         return Response::err(&e.to_string());
                     }
                     let mut resp = Response::ok();
                     resp.subnet_id = Some(sid);
-                    resp.device_ip = Some(info.device_ip);
+                    resp.device_ipv4 = Some(ipv4);
+                    resp.device_ipv6_ula = Some(ipv6);
                     resp.is_new = Some(true);
                     resp
                 }
@@ -1017,17 +1055,25 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
                 return Response::err("invalid subnet_id");
             };
 
-            info!(mac = %mac, ip = %info.device_ip, gateway = %info.gateway, "DHCP provision");
+            let ipv4 = info.device_ipv4.to_string();
+            let ipv6 = info.device_ipv6_ula.to_string();
 
-            if let Err(e) = nftables::add_gateway_address(&info.gateway, lan_iface) {
-                error!(gateway = %info.gateway, error = %e, "failed to add gateway address");
+            info!(mac = %mac, ipv4 = %ipv4, ipv6 = %ipv6, "DHCP provision");
+
+            if let Err(e) = nftables::add_device_route(&ipv4, lan_iface) {
+                error!(ip = %ipv4, error = %e, "failed to add device route");
             }
-            if let Err(e) = nftables::add_device_counter(&info.device_ip) {
-                error!(ip = %info.device_ip, error = %e, "failed to add device counter");
+            if let Err(e) = nftables::add_device_route_v6(&ipv6, lan_iface) {
+                error!(ip = %ipv6, error = %e, "failed to add device v6 route");
             }
-            if let Err(e) = nftables::add_device_forward_rule(&info.device_ip, "quarantine") {
-                error!(ip = %info.device_ip, error = %e, "failed to add forward rule");
+            if let Err(e) = nftables::add_device_counter(&ipv4) {
+                error!(ip = %ipv4, error = %e, "failed to add device counter");
             }
+            let _ = nftables::add_device_counter_v6(&ipv6);
+            if let Err(e) = nftables::add_device_forward_rule(&ipv4, "quarantine") {
+                error!(ip = %ipv4, error = %e, "failed to add forward rule");
+            }
+            let _ = nftables::add_device_forward_rule_v6(&ipv6, "quarantine");
 
             Response::ok()
         }

@@ -2,19 +2,20 @@ use anyhow::Result;
 use rusqlite::Connection;
 use serde::Serialize;
 
-/// Hard limit from 10.0.0.0/8 address space: 4,194,240 /30 subnets.
+/// Hard limit from 10.0.0.0/8 address space: 16,580,355 /32 addresses.
 /// Practical bottlenecks before hitting this:
 /// - Counter polling: main loop dumps full nft sets per device every 10s.
 ///   Fix: single dump parsed once, or nft get element for individual lookups.
 /// - Restart restore: list_assigned_devices is a full table scan, each device
-///   re-adds a gateway IP + verdict map element + counter set element.
-/// - ARP table: thousands of /30 gateway IPs on one interface.
-const MAX_DEVICES: i64 = 4_194_240;
+///   re-adds a /32 route + verdict map element + counter set element.
+const MAX_DEVICES: i64 = 16_580_355;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS devices (
     mac TEXT PRIMARY KEY,
-    ip TEXT,
+    ipv4 TEXT,
+    ipv6_ula TEXT,
+    ipv6_global TEXT,
     hostname TEXT,
     first_seen INTEGER NOT NULL,
     last_seen INTEGER NOT NULL,
@@ -81,7 +82,9 @@ CREATE TABLE IF NOT EXISTS dns_logs (
 #[derive(Debug, Clone, Serialize)]
 pub struct Device {
     pub mac: String,
-    pub ip: Option<String>,
+    pub ipv4: Option<String>,
+    pub ipv6_ula: Option<String>,
+    pub ipv6_global: Option<String>,
     pub hostname: Option<String>,
     pub first_seen: i64,
     pub last_seen: i64,
@@ -155,7 +158,7 @@ impl Db {
 
     pub fn update_counters(&self, ip: &str, rx_bytes: i64, tx_bytes: i64) -> Result<()> {
         self.conn.execute(
-            "UPDATE devices SET rx_bytes = ?1, tx_bytes = ?2 WHERE ip = ?3",
+            "UPDATE devices SET rx_bytes = ?1, tx_bytes = ?2 WHERE ipv4 = ?3",
             (rx_bytes, tx_bytes, ip),
         )?;
         Ok(())
@@ -163,19 +166,21 @@ impl Db {
 
     pub fn list_devices(&self) -> Result<Vec<Device>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ip, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id FROM devices"
+            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id FROM devices"
         )?;
         let devices = stmt.query_map([], |row| {
             Ok(Device {
                 mac: row.get(0)?,
-                ip: row.get(1)?,
-                hostname: row.get(2)?,
-                first_seen: row.get(3)?,
-                last_seen: row.get(4)?,
-                rx_bytes: row.get(5)?,
-                tx_bytes: row.get(6)?,
-                device_group: row.get(7)?,
-                subnet_id: row.get(8)?,
+                ipv4: row.get(1)?,
+                ipv6_ula: row.get(2)?,
+                ipv6_global: row.get(3)?,
+                hostname: row.get(4)?,
+                first_seen: row.get(5)?,
+                last_seen: row.get(6)?,
+                rx_bytes: row.get(7)?,
+                tx_bytes: row.get(8)?,
+                device_group: row.get(9)?,
+                subnet_id: row.get(10)?,
             })
         })?;
         Ok(devices.filter_map(|d| d.ok()).collect())
@@ -183,20 +188,22 @@ impl Db {
 
     pub fn get_device(&self, mac: &str) -> Result<Option<Device>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ip, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id FROM devices WHERE mac = ?1"
+            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id FROM devices WHERE mac = ?1"
         )?;
         let mut rows = stmt.query([mac])?;
         if let Some(row) = rows.next()? {
             Ok(Some(Device {
                 mac: row.get(0)?,
-                ip: row.get(1)?,
-                hostname: row.get(2)?,
-                first_seen: row.get(3)?,
-                last_seen: row.get(4)?,
-                rx_bytes: row.get(5)?,
-                tx_bytes: row.get(6)?,
-                device_group: row.get(7)?,
-                subnet_id: row.get(8)?,
+                ipv4: row.get(1)?,
+                ipv6_ula: row.get(2)?,
+                ipv6_global: row.get(3)?,
+                hostname: row.get(4)?,
+                first_seen: row.get(5)?,
+                last_seen: row.get(6)?,
+                rx_bytes: row.get(7)?,
+                tx_bytes: row.get(8)?,
+                device_group: row.get(9)?,
+                subnet_id: row.get(10)?,
             }))
         } else {
             Ok(None)
@@ -222,14 +229,14 @@ impl Db {
     }
 
     /// Insert new device with subnet assignment (called from DHCP server on first DISCOVER)
-    pub fn insert_new_device(&self, mac: &str, subnet_id: i64, ip: &str) -> Result<()> {
+    pub fn insert_new_device(&self, mac: &str, subnet_id: i64, ip: &str, ipv6_ula: &str) -> Result<()> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs() as i64;
         self.conn.execute(
-            "INSERT OR IGNORE INTO devices (mac, ip, first_seen, last_seen, device_group, subnet_id)
-             VALUES (?1, ?2, ?3, ?3, 'quarantine', ?4)",
-            (mac, ip, now, subnet_id),
+            "INSERT OR IGNORE INTO devices (mac, ipv4, ipv6_ula, first_seen, last_seen, device_group, subnet_id)
+             VALUES (?1, ?2, ?3, ?4, ?4, 'quarantine', ?5)",
+            (mac, ip, ipv6_ula, now, subnet_id),
         )?;
         Ok(())
     }
@@ -283,19 +290,21 @@ impl Db {
     /// List all devices that have subnet_id set (for state restoration on startup)
     pub fn list_assigned_devices(&self) -> Result<Vec<Device>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ip, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id FROM devices WHERE subnet_id IS NOT NULL"
+            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id FROM devices WHERE subnet_id IS NOT NULL"
         )?;
         let devices = stmt.query_map([], |row| {
             Ok(Device {
                 mac: row.get(0)?,
-                ip: row.get(1)?,
-                hostname: row.get(2)?,
-                first_seen: row.get(3)?,
-                last_seen: row.get(4)?,
-                rx_bytes: row.get(5)?,
-                tx_bytes: row.get(6)?,
-                device_group: row.get(7)?,
-                subnet_id: row.get(8)?,
+                ipv4: row.get(1)?,
+                ipv6_ula: row.get(2)?,
+                ipv6_global: row.get(3)?,
+                hostname: row.get(4)?,
+                first_seen: row.get(5)?,
+                last_seen: row.get(6)?,
+                rx_bytes: row.get(7)?,
+                tx_bytes: row.get(8)?,
+                device_group: row.get(9)?,
+                subnet_id: row.get(10)?,
             })
         })?;
         Ok(devices.filter_map(|d| d.ok()).collect())

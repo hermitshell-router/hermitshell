@@ -65,9 +65,14 @@ pub fn create_interface(private_key: &str, listen_port: u16) -> Result<()> {
         anyhow::bail!("wg set failed");
     }
 
-    // Assign router address
+    // Assign router IPv4 address
     let _ = Command::new("/usr/sbin/ip")
         .args(["addr", "add", "10.0.0.1/32", "dev", "wg0"])
+        .status();
+
+    // Assign router IPv6 ULA address
+    let _ = Command::new("/usr/sbin/ip")
+        .args(["-6", "addr", "add", "fd00::1/128", "dev", "wg0"])
         .status();
 
     // Bring up
@@ -91,12 +96,13 @@ pub fn destroy_interface() -> Result<()> {
     Ok(())
 }
 
-/// Add a peer to the wg0 interface.
-pub fn add_peer(public_key: &str, device_ip: &str) -> Result<()> {
+/// Add a peer to the wg0 interface with dual-stack allowed-ips.
+pub fn add_peer(public_key: &str, device_ipv4: &str, device_ipv6_ula: &str) -> Result<()> {
     validate_pubkey(public_key)?;
-    crate::nftables::validate_ip_pub(device_ip)?;
+    crate::nftables::validate_ip_pub(device_ipv4)?;
+    crate::nftables::validate_ipv6_ula(device_ipv6_ula)?;
 
-    let allowed_ips = format!("{}/32", device_ip);
+    let allowed_ips = format!("{}/32,{}/128", device_ipv4, device_ipv6_ula);
     let status = Command::new("/usr/bin/wg")
         .args(["set", "wg0", "peer", public_key, "allowed-ips", &allowed_ips])
         .status()?;
@@ -104,26 +110,38 @@ pub fn add_peer(public_key: &str, device_ip: &str) -> Result<()> {
         anyhow::bail!("failed to add WireGuard peer {}", public_key);
     }
 
-    // Add route so kernel sends traffic for this IP through wg0
+    // Add IPv4 route so kernel sends traffic for this IP through wg0
+    let route_v4 = format!("{}/32", device_ipv4);
     let _ = Command::new("/usr/sbin/ip")
-        .args(["route", "add", &allowed_ips, "dev", "wg0"])
+        .args(["route", "add", &route_v4, "dev", "wg0"])
         .status();
 
-    debug!(public_key = %public_key, ip = %device_ip, "added wireguard peer");
+    // Add IPv6 route
+    let route_v6 = format!("{}/128", device_ipv6_ula);
+    let _ = Command::new("/usr/sbin/ip")
+        .args(["-6", "route", "add", &route_v6, "dev", "wg0"])
+        .status();
+
+    debug!(public_key = %public_key, ipv4 = %device_ipv4, ipv6 = %device_ipv6_ula, "added wireguard peer");
     Ok(())
 }
 
-/// Remove a peer from the wg0 interface.
-pub fn remove_peer(public_key: &str, device_ip: &str) -> Result<()> {
+/// Remove a peer from the wg0 interface and clean up routes.
+pub fn remove_peer(public_key: &str, device_ipv4: &str, device_ipv6_ula: &str) -> Result<()> {
     validate_pubkey(public_key)?;
 
     let _ = Command::new("/usr/bin/wg")
         .args(["set", "wg0", "peer", public_key, "remove"])
         .status();
 
-    let route = format!("{}/32", device_ip);
+    let route_v4 = format!("{}/32", device_ipv4);
     let _ = Command::new("/usr/sbin/ip")
-        .args(["route", "del", &route, "dev", "wg0"])
+        .args(["route", "del", &route_v4, "dev", "wg0"])
+        .status();
+
+    let route_v6 = format!("{}/128", device_ipv6_ula);
+    let _ = Command::new("/usr/sbin/ip")
+        .args(["-6", "route", "del", &route_v6, "dev", "wg0"])
         .status();
 
     debug!(public_key = %public_key, "removed wireguard peer");
