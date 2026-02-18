@@ -20,8 +20,11 @@ auto eth2
 iface eth2 inet manual
 EOF
 
-# Enable IP forwarding
-echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-forward.conf
+# Enable IP forwarding (IPv4 and IPv6)
+cat > /etc/sysctl.d/99-forward.conf <<EOF
+net.ipv4.ip_forward=1
+net.ipv6.conf.all.forwarding=1
+EOF
 sysctl -p /etc/sysctl.d/99-forward.conf
 
 # Basic nftables for NAT (fallback)

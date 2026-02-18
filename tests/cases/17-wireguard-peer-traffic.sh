@@ -17,7 +17,7 @@ peer_pubkey=$(vagrant ssh lan -c "echo '$peer_privkey' | wg pubkey" 2>/dev/null 
 # Add peer as trusted (full access)
 result=$(vm_exec router "echo '{\"method\":\"add_wg_peer\",\"name\":\"tunnel-test\",\"public_key\":\"$peer_pubkey\",\"group\":\"trusted\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock")
 assert_match "$result" '"ok":true' "Add tunnel test peer"
-peer_ip=$(echo "$result" | grep -oP '"device_ip":"[^"]+' | cut -d'"' -f4)
+peer_ip=$(echo "$result" | grep -oP '"device_ipv4":"[^"]+' | cut -d'"' -f4)
 
 # Get the router's LAN IP for WireGuard endpoint
 # In test env, lan-vm connects to router via LAN network

@@ -23,10 +23,10 @@ assert_match "$peer_pubkey" "^[A-Za-z0-9+/]" "Generated peer public key"
 # Add peer
 result=$(vm_exec router "echo '{\"method\":\"add_wg_peer\",\"name\":\"test-laptop\",\"public_key\":\"$peer_pubkey\",\"group\":\"trusted\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock")
 assert_match "$result" '"ok":true' "Add WireGuard peer"
-assert_match "$result" '"device_ip":"10\.' "Peer got IP address"
+assert_match "$result" '"device_ipv4":"10\.' "Peer got IP address"
 
 # Extract peer IP from response
-peer_ip=$(echo "$result" | grep -oP '"device_ip":"[^"]+' | cut -d'"' -f4)
+peer_ip=$(echo "$result" | grep -oP '"device_ipv4":"[^"]+' | cut -d'"' -f4)
 assert_match "$peer_ip" "^10\." "Parsed peer IP"
 
 # Verify peer appears in status
@@ -45,7 +45,7 @@ else
 fi
 
 # Verify nftables has the peer in verdict map
-nft_map=$(vagrant ssh router -c "sudo nft list map inet filter device_groups" 2>/dev/null)
+nft_map=$(vagrant ssh router -c "sudo nft list map inet filter device_groups_v4" 2>/dev/null)
 assert_match "$nft_map" "$peer_ip" "Peer IP in verdict map"
 
 # Remove peer
