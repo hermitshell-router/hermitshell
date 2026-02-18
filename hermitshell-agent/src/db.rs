@@ -56,6 +56,26 @@ CREATE TABLE IF NOT EXISTS dhcp_reservations (
     mac TEXT PRIMARY KEY,
     subnet_id INTEGER NOT NULL UNIQUE
 );
+
+CREATE TABLE IF NOT EXISTS connection_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_ip TEXT NOT NULL,
+    dest_ip TEXT NOT NULL,
+    dest_port INTEGER NOT NULL,
+    protocol TEXT NOT NULL,
+    bytes_sent INTEGER NOT NULL DEFAULT 0,
+    bytes_recv INTEGER NOT NULL DEFAULT 0,
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS dns_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_ip TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    query_type TEXT NOT NULL,
+    ts INTEGER NOT NULL
+);
 "#;
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,6 +117,28 @@ pub struct PortForward {
 pub struct DhcpReservation {
     pub mac: String,
     pub subnet_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ConnectionLog {
+    pub id: i64,
+    pub device_ip: String,
+    pub dest_ip: String,
+    pub dest_port: i64,
+    pub protocol: String,
+    pub bytes_sent: i64,
+    pub bytes_recv: i64,
+    pub started_at: i64,
+    pub ended_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DnsLogEntry {
+    pub id: i64,
+    pub device_ip: String,
+    pub domain: String,
+    pub query_type: String,
+    pub ts: i64,
 }
 
 pub struct Db {
@@ -439,5 +481,111 @@ impl Db {
     pub fn vacuum_into(&self, path: &str) -> Result<()> {
         self.conn.execute(&format!("VACUUM INTO '{}'", path), [])?;
         Ok(())
+    }
+
+    // Connection log methods
+
+    pub fn insert_connection(&self, device_ip: &str, dest_ip: &str, dest_port: i64, protocol: &str, started_at: i64) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO connection_logs (device_ip, dest_ip, dest_port, protocol, started_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            (device_ip, dest_ip, dest_port, protocol, started_at),
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn update_connection_end(&self, device_ip: &str, dest_ip: &str, dest_port: i64, protocol: &str, bytes_sent: i64, bytes_recv: i64, ended_at: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE connection_logs SET bytes_sent = ?5, bytes_recv = ?6, ended_at = ?7
+             WHERE rowid = (SELECT rowid FROM connection_logs WHERE device_ip = ?1 AND dest_ip = ?2 AND dest_port = ?3 AND protocol = ?4 AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1)",
+            (device_ip, dest_ip, dest_port, protocol, bytes_sent, bytes_recv, ended_at),
+        )?;
+        Ok(())
+    }
+
+    pub fn list_connection_logs(&self, device_ip: Option<&str>, limit: i64, offset: i64) -> Result<Vec<ConnectionLog>> {
+        if let Some(ip) = device_ip {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, device_ip, dest_ip, dest_port, protocol, bytes_sent, bytes_recv, started_at, ended_at
+                 FROM connection_logs WHERE device_ip = ?1 ORDER BY started_at DESC LIMIT ?2 OFFSET ?3"
+            )?;
+            let rows = stmt.query_map(rusqlite::params![ip, limit, offset], |row| {
+                Ok(ConnectionLog {
+                    id: row.get(0)?, device_ip: row.get(1)?, dest_ip: row.get(2)?,
+                    dest_port: row.get(3)?, protocol: row.get(4)?, bytes_sent: row.get(5)?,
+                    bytes_recv: row.get(6)?, started_at: row.get(7)?, ended_at: row.get(8)?,
+                })
+            })?;
+            Ok(rows.filter_map(|r| r.ok()).collect())
+        } else {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, device_ip, dest_ip, dest_port, protocol, bytes_sent, bytes_recv, started_at, ended_at
+                 FROM connection_logs ORDER BY started_at DESC LIMIT ?1 OFFSET ?2"
+            )?;
+            let rows = stmt.query_map(rusqlite::params![limit, offset], |row| {
+                Ok(ConnectionLog {
+                    id: row.get(0)?, device_ip: row.get(1)?, dest_ip: row.get(2)?,
+                    dest_port: row.get(3)?, protocol: row.get(4)?, bytes_sent: row.get(5)?,
+                    bytes_recv: row.get(6)?, started_at: row.get(7)?, ended_at: row.get(8)?,
+                })
+            })?;
+            Ok(rows.filter_map(|r| r.ok()).collect())
+        }
+    }
+
+    // DNS log methods
+
+    pub fn insert_dns_log(&self, device_ip: &str, domain: &str, query_type: &str, ts: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO dns_logs (device_ip, domain, query_type, ts) VALUES (?1, ?2, ?3, ?4)",
+            (device_ip, domain, query_type, ts),
+        )?;
+        Ok(())
+    }
+
+    pub fn list_dns_logs(&self, device_ip: Option<&str>, limit: i64, offset: i64) -> Result<Vec<DnsLogEntry>> {
+        if let Some(ip) = device_ip {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, device_ip, domain, query_type, ts FROM dns_logs WHERE device_ip = ?1 ORDER BY ts DESC LIMIT ?2 OFFSET ?3"
+            )?;
+            let rows = stmt.query_map(rusqlite::params![ip, limit, offset], |row| {
+                Ok(DnsLogEntry {
+                    id: row.get(0)?, device_ip: row.get(1)?, domain: row.get(2)?,
+                    query_type: row.get(3)?, ts: row.get(4)?,
+                })
+            })?;
+            Ok(rows.filter_map(|r| r.ok()).collect())
+        } else {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, device_ip, domain, query_type, ts FROM dns_logs ORDER BY ts DESC LIMIT ?1 OFFSET ?2"
+            )?;
+            let rows = stmt.query_map(rusqlite::params![limit, offset], |row| {
+                Ok(DnsLogEntry {
+                    id: row.get(0)?, device_ip: row.get(1)?, domain: row.get(2)?,
+                    query_type: row.get(3)?, ts: row.get(4)?,
+                })
+            })?;
+            Ok(rows.filter_map(|r| r.ok()).collect())
+        }
+    }
+
+    // Log rotation
+
+    pub fn rotate_logs(&self, retention_secs: i64) -> Result<(usize, usize)> {
+        let cutoff = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64 - retention_secs;
+        let conn_deleted = self.conn.execute(
+            "DELETE FROM connection_logs WHERE ended_at IS NOT NULL AND ended_at < ?1",
+            [cutoff],
+        )?;
+        let conn_stale = self.conn.execute(
+            "DELETE FROM connection_logs WHERE ended_at IS NULL AND started_at < ?1",
+            [cutoff],
+        )?;
+        let dns_deleted = self.conn.execute(
+            "DELETE FROM dns_logs WHERE ts < ?1",
+            [cutoff],
+        )?;
+        Ok((conn_deleted + conn_stale, dns_deleted))
     }
 }
