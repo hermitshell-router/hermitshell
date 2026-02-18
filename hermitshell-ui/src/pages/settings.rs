@@ -13,6 +13,10 @@ pub fn Settings() -> impl IntoView {
         || (),
         |_| async { client::list_dhcp_reservations() },
     );
+    let log_config = create_resource(
+        || (),
+        |_| async { client::get_log_config() },
+    );
 
     view! {
         <Layout title="Settings" active_page="settings">
@@ -96,6 +100,62 @@ pub fn Settings() -> impl IntoView {
                                         }).collect_view()}
                                     </tbody>
                                 </table>
+                            </div>
+                        }.into_view()
+                    }
+                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_view(),
+                })}
+            </Suspense>
+
+            <Suspense fallback=move || view! { <p>"Loading log config..."</p> }>
+                {move || log_config.get().map(|result| match result {
+                    Ok(config) => {
+                        let log_format = config.get("log_format").and_then(|v| v.as_str()).unwrap_or("text").to_string();
+                        let syslog_target = config.get("syslog_target").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let webhook_url = config.get("webhook_url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let retention = config.get("log_retention_days").and_then(|v| v.as_str()).unwrap_or("7").to_string();
+
+                        view! {
+                            <div class="settings-section">
+                                <h3>"Log Export"</h3>
+                                <form method="post" action="/api/set-log-config">
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Log Format"</span>
+                                        <span class="settings-value">
+                                            <select name="log_format">
+                                                <option value="text" selected={log_format == "text"}>"Text"</option>
+                                                <option value="json" selected={log_format == "json"}>"JSON"</option>
+                                            </select>
+                                        </span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Syslog Target"</span>
+                                        <span class="settings-value">
+                                            <input type="text" name="syslog_target" placeholder="udp://192.168.1.100:514" value={syslog_target} />
+                                        </span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Webhook URL"</span>
+                                        <span class="settings-value">
+                                            <input type="text" name="webhook_url" placeholder="https://splunk:8088/services/collector" value={webhook_url} />
+                                        </span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Webhook Secret"</span>
+                                        <span class="settings-value">
+                                            <input type="password" name="webhook_secret" placeholder="Bearer token" />
+                                        </span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Log Retention (days)"</span>
+                                        <span class="settings-value">
+                                            <input type="number" name="log_retention_days" min="1" max="365" value={retention} />
+                                        </span>
+                                    </div>
+                                    <div class="actions-bar">
+                                        <button type="submit" class="btn btn-primary btn-sm">"Save Log Settings"</button>
+                                    </div>
+                                </form>
                             </div>
                         }.into_view()
                     }

@@ -197,6 +197,27 @@ async fn handle_remove_reservation(Form(form): Form<ReservationForm>) -> impl In
     axum::response::Redirect::to("/settings")
 }
 
+#[derive(Deserialize)]
+struct LogConfigForm {
+    log_format: String,
+    syslog_target: String,
+    webhook_url: String,
+    webhook_secret: String,
+    log_retention_days: String,
+}
+
+async fn handle_set_log_config(Form(form): Form<LogConfigForm>) -> impl IntoResponse {
+    let config = serde_json::json!({
+        "log_format": form.log_format,
+        "syslog_target": form.syslog_target,
+        "webhook_url": form.webhook_url,
+        "webhook_secret": form.webhook_secret,
+        "log_retention_days": form.log_retention_days,
+    });
+    let _ = client::set_log_config(&config);
+    axum::response::Redirect::to("/settings")
+}
+
 async fn handle_backup_config() -> impl IntoResponse {
     match client::export_config() {
         Ok(data) => (
@@ -267,6 +288,7 @@ async fn main() {
         .route("/api/set-reservation", axum::routing::post(handle_set_reservation))
         .route("/api/remove-reservation", axum::routing::post(handle_remove_reservation))
         .route("/api/backup/config", axum::routing::get(handle_backup_config))
+        .route("/api/set-log-config", axum::routing::post(handle_set_log_config))
         .leptos_routes(&leptos_options, routes, App)
         .layer(axum::middleware::from_fn(auth_middleware))
         .with_state(leptos_options);

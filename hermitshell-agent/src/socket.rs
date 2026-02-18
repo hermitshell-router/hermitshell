@@ -712,7 +712,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             let forwards = db.list_port_forwards().unwrap_or_default();
             let peers = db.list_wg_peers().unwrap_or_default();
 
-            let config_keys = ["ad_blocking_enabled", "wg_listen_port", "dmz_host_ip"];
+            let config_keys = ["ad_blocking_enabled", "wg_listen_port", "dmz_host_ip", "log_format", "syslog_target", "webhook_url", "log_retention_days"];
             let mut config_map = serde_json::Map::new();
             for key in &config_keys {
                 if let Ok(Some(val)) = db.get_config(key) {
@@ -799,7 +799,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             if let Some(config) = parsed.get("config").and_then(|v| v.as_object()) {
                 for (key, val) in config {
                     match key.as_str() {
-                        "ad_blocking_enabled" | "wg_listen_port" | "dmz_host_ip" => {
+                        "ad_blocking_enabled" | "wg_listen_port" | "dmz_host_ip" | "log_format" | "syslog_target" | "webhook_url" | "log_retention_days" => {
                             if let Some(v) = val.as_str() {
                                 let _ = db.set_config(key, v);
                             }

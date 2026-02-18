@@ -118,6 +118,72 @@ pub fn DeviceDetail() -> impl IntoView {
                                     <button type="submit" class="btn btn-sm">"Reserve IP"</button>
                                 </form>
                             </div>
+
+                            {
+                                let device_ip = d.ip.clone();
+
+                                let conn_logs = device_ip.as_ref()
+                                    .map(|ip| client::list_connection_logs(Some(ip), 50).unwrap_or_default())
+                                    .unwrap_or_default();
+
+                                let dns_logs = device_ip.as_ref()
+                                    .map(|ip| client::list_dns_logs(Some(ip), 50).unwrap_or_default())
+                                    .unwrap_or_default();
+
+                                view! {
+                                    <h2 class="section-header">"Recent Connections"</h2>
+                                    {if conn_logs.is_empty() {
+                                        view! { <p class="muted">"No connections recorded."</p> }.into_view()
+                                    } else {
+                                        view! {
+                                            <table class="data-table">
+                                                <thead><tr>
+                                                    <th>"Destination"</th><th>"Port"</th><th>"Protocol"</th>
+                                                    <th>"Sent"</th><th>"Received"</th><th>"Time"</th>
+                                                </tr></thead>
+                                                <tbody>
+                                                    {conn_logs.iter().map(|log| {
+                                                        view! {
+                                                            <tr>
+                                                                <td>{log.dest_ip.clone()}</td>
+                                                                <td>{log.dest_port}</td>
+                                                                <td>{log.protocol.clone()}</td>
+                                                                <td>{format_bytes(log.bytes_sent)}</td>
+                                                                <td>{format_bytes(log.bytes_recv)}</td>
+                                                                <td>{format_timestamp(log.started_at)}</td>
+                                                            </tr>
+                                                        }
+                                                    }).collect_view()}
+                                                </tbody>
+                                            </table>
+                                        }.into_view()
+                                    }}
+
+                                    <h2 class="section-header">"Recent DNS Queries"</h2>
+                                    {if dns_logs.is_empty() {
+                                        view! { <p class="muted">"No DNS queries recorded."</p> }.into_view()
+                                    } else {
+                                        view! {
+                                            <table class="data-table">
+                                                <thead><tr>
+                                                    <th>"Domain"</th><th>"Type"</th><th>"Time"</th>
+                                                </tr></thead>
+                                                <tbody>
+                                                    {dns_logs.iter().map(|log| {
+                                                        view! {
+                                                            <tr>
+                                                                <td>{log.domain.clone()}</td>
+                                                                <td>{log.query_type.clone()}</td>
+                                                                <td>{format_timestamp(log.ts)}</td>
+                                                            </tr>
+                                                        }
+                                                    }).collect_view()}
+                                                </tbody>
+                                            </table>
+                                        }.into_view()
+                                    }}
+                                }
+                            }
                         }.into_view()
                     }
                     Err(e) => view! { <p>"Error: " {e}</p> }.into_view(),
