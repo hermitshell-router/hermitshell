@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use dhcproto::v4::{DhcpOption, Message, MessageType, Opcode};
 use dhcproto::{Decodable, Encodable};
-use hermitshell_common::subnet;
+use ipnet::Ipv4Net;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -198,7 +198,7 @@ fn build_response(request: &Message, msg_type: MessageType, yiaddr: Ipv4Addr) ->
     resp.opts_mut()
         .insert(DhcpOption::AddressLeaseTime(LEASE_TIME));
     resp.opts_mut()
-        .insert(DhcpOption::SubnetMask(Ipv4Addr::new(255, 255, 255, 252)));
+        .insert(DhcpOption::SubnetMask(Ipv4Addr::new(255, 255, 255, 255)));
     resp.opts_mut()
         .insert(DhcpOption::Router(vec![SERVER_IP]));
     resp
@@ -224,21 +224,17 @@ fn handle_discover(request: &Message, mac: &str) -> Result<Message> {
         anyhow::bail!("agent dhcp_discover failed: {}", err);
     }
 
-    let sid = resp.get("subnet_id")
-        .and_then(|v| v.as_i64())
-        .context("missing subnet_id in response")?;
-    let device_ip_str = resp.get("device_ip")
+    let device_ip_str = resp.get("device_ipv4")
         .and_then(|v| v.as_str())
-        .context("missing device_ip in response")?;
+        .context("missing device_ipv4 in response")?;
     let is_new = resp.get("is_new")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let info = subnet::compute_subnet(sid).context("subnet_id out of range")?;
     let device_ip: Ipv4Addr = device_ip_str.parse()?;
 
     if is_new {
-        info!(mac = %mac, subnet_id = sid, ip = %device_ip_str, "new device allocated");
+        info!(mac = %mac, ip = %device_ip_str, "new device allocated");
     } else {
         info!(mac = %mac, ip = %device_ip_str, "known device, offering existing");
     }
@@ -248,20 +244,13 @@ fn handle_discover(request: &Message, mac: &str) -> Result<Message> {
     msg.opts_mut()
         .insert(DhcpOption::DomainNameServer(vec![SERVER_IP]));
 
-    msg.opts_mut().insert(DhcpOption::SubnetMask(Ipv4Addr::new(
-        info.netmask_octets[0],
-        info.netmask_octets[1],
-        info.netmask_octets[2],
-        info.netmask_octets[3],
-    )));
-
-    let gw = Ipv4Addr::new(
-        info.gateway_octets[0],
-        info.gateway_octets[1],
-        info.gateway_octets[2],
-        info.gateway_octets[3],
-    );
-    msg.opts_mut().insert(DhcpOption::Router(vec![gw]));
+    // Option 121: classless static routes for /32 point-to-point addressing
+    msg.opts_mut().insert(DhcpOption::ClasslessStaticRoute(vec![
+        // On-link route to gateway: 10.0.0.1/32 via 0.0.0.0
+        (Ipv4Net::new(SERVER_IP, 32).unwrap(), Ipv4Addr::UNSPECIFIED),
+        // Default route: 0.0.0.0/0 via 10.0.0.1
+        (Ipv4Net::new(Ipv4Addr::UNSPECIFIED, 0).unwrap(), SERVER_IP),
+    ]));
 
     Ok(msg)
 }
@@ -291,11 +280,10 @@ fn handle_request(request: &Message, mac: &str) -> Result<Option<Message>> {
     let sid = resp.get("subnet_id")
         .and_then(|v| v.as_i64())
         .context("missing subnet_id in response")?;
-    let device_ip_str = resp.get("device_ip")
+    let device_ip_str = resp.get("device_ipv4")
         .and_then(|v| v.as_str())
-        .context("missing device_ip in response")?;
+        .context("missing device_ipv4 in response")?;
 
-    let info = subnet::compute_subnet(sid).context("subnet_id out of range")?;
     let assigned_ip: Ipv4Addr = device_ip_str.parse()?;
 
     // Verify requested IP matches (from option 50 or ciaddr)
@@ -327,23 +315,16 @@ fn handle_request(request: &Message, mac: &str) -> Result<Option<Message>> {
     msg.opts_mut()
         .insert(DhcpOption::DomainNameServer(vec![SERVER_IP]));
 
-    msg.opts_mut().insert(DhcpOption::SubnetMask(Ipv4Addr::new(
-        info.netmask_octets[0],
-        info.netmask_octets[1],
-        info.netmask_octets[2],
-        info.netmask_octets[3],
-    )));
-
-    let gw = Ipv4Addr::new(
-        info.gateway_octets[0],
-        info.gateway_octets[1],
-        info.gateway_octets[2],
-        info.gateway_octets[3],
-    );
-    msg.opts_mut().insert(DhcpOption::Router(vec![gw]));
+    // Option 121: classless static routes for /32 point-to-point addressing
+    msg.opts_mut().insert(DhcpOption::ClasslessStaticRoute(vec![
+        // On-link route to gateway: 10.0.0.1/32 via 0.0.0.0
+        (Ipv4Net::new(SERVER_IP, 32).unwrap(), Ipv4Addr::UNSPECIFIED),
+        // Default route: 0.0.0.0/0 via 10.0.0.1
+        (Ipv4Net::new(Ipv4Addr::UNSPECIFIED, 0).unwrap(), SERVER_IP),
+    ]));
 
     info!(
-        mac = %mac, ip = %info.device_ip, gateway = %info.gateway,
+        mac = %mac, ip = %assigned_ip,
         "DHCPACK, provisioning"
     );
 
