@@ -69,12 +69,28 @@ const LAN_ADDR: &str = "10.0.0.1/32";
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
-        )
-        .init();
+    let use_json = db::Db::open(DB_PATH)
+        .ok()
+        .and_then(|d| d.get_config("log_format").ok().flatten())
+        .map(|v| v == "json")
+        .unwrap_or(false);
+
+    if use_json {
+        tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "info".into()),
+            )
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "info".into()),
+            )
+            .init();
+    }
 
     info!("hermitshell-agent starting");
     let start_time = std::time::Instant::now();
@@ -206,13 +222,18 @@ async fn main() -> Result<()> {
 
     // Start conntrack event listener
     conntrack::enable_accounting();
-    let (log_tx, _log_rx) = tokio::sync::mpsc::unbounded_channel::<log_export::LogEvent>();
+    let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<log_export::LogEvent>();
     let _conntrack_child = conntrack::start(db.clone(), log_tx.clone());
 
     let db_dns = db.clone();
     let log_tx_dns = log_tx.clone();
     tokio::spawn(async move {
         dns_log::start(db_dns, log_tx_dns).await;
+    });
+
+    let db_export = db.clone();
+    tokio::spawn(async move {
+        log_export::start(db_export, log_rx).await;
     });
 
     // Spawn socket server
