@@ -36,6 +36,8 @@ struct Request {
     description: Option<String>,
     key: Option<String>,
     value: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -67,6 +69,12 @@ struct Response {
     dmz_ip: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     config_value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    connection_logs: Option<Vec<crate::db::ConnectionLog>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dns_logs: Option<Vec<crate::db::DnsLogEntry>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    log_config: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -95,10 +103,10 @@ struct WgPeerInfo {
 
 impl Response {
     fn ok() -> Self {
-        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ip: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None }
+        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ip: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None }
     }
     fn err(msg: &str) -> Self {
-        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ip: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None }
+        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ip: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None }
     }
 }
 
@@ -822,6 +830,67 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 }
                 Err(e) => Response::err(&format!("backup failed: {}", e)),
             }
+        }
+        "list_connection_logs" => {
+            let limit = req.limit.unwrap_or(100).min(1000);
+            let offset = req.offset.unwrap_or(0);
+            let device_ip = req.internal_ip.as_deref();
+            let db = db.lock().unwrap();
+            match db.list_connection_logs(device_ip, limit, offset) {
+                Ok(logs) => {
+                    let mut resp = Response::ok();
+                    resp.connection_logs = Some(logs);
+                    resp
+                }
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
+        "list_dns_logs" => {
+            let limit = req.limit.unwrap_or(100).min(1000);
+            let offset = req.offset.unwrap_or(0);
+            let device_ip = req.internal_ip.as_deref();
+            let db = db.lock().unwrap();
+            match db.list_dns_logs(device_ip, limit, offset) {
+                Ok(logs) => {
+                    let mut resp = Response::ok();
+                    resp.dns_logs = Some(logs);
+                    resp
+                }
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
+        "get_log_config" => {
+            let db = db.lock().unwrap();
+            let config = serde_json::json!({
+                "log_format": db.get_config("log_format").ok().flatten().unwrap_or_else(|| "text".to_string()),
+                "syslog_target": db.get_config("syslog_target").ok().flatten().unwrap_or_default(),
+                "webhook_url": db.get_config("webhook_url").ok().flatten().unwrap_or_default(),
+                "log_retention_days": db.get_config("log_retention_days").ok().flatten().unwrap_or_else(|| "7".to_string()),
+            });
+            let mut resp = Response::ok();
+            resp.log_config = Some(config);
+            resp
+        }
+        "set_log_config" => {
+            let Some(value) = req.value else {
+                return Response::err("value required (JSON object)");
+            };
+            let parsed: serde_json::Value = match serde_json::from_str(&value) {
+                Ok(v) => v,
+                Err(e) => return Response::err(&format!("invalid JSON: {}", e)),
+            };
+            let db = db.lock().unwrap();
+            let allowed_keys = ["log_format", "syslog_target", "webhook_url", "webhook_secret", "log_retention_days"];
+            if let Some(obj) = parsed.as_object() {
+                for (key, val) in obj {
+                    if allowed_keys.contains(&key.as_str()) {
+                        if let Some(v) = val.as_str() {
+                            let _ = db.set_config(key, v);
+                        }
+                    }
+                }
+            }
+            Response::ok()
         }
         _ => Response::err("unknown method"),
     }

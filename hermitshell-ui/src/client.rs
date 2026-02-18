@@ -7,6 +7,28 @@ use crate::types::{Device, Status};
 
 const SOCKET_PATH: &str = "/run/hermitshell/agent.sock";
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConnectionLog {
+    pub id: i64,
+    pub device_ip: String,
+    pub dest_ip: String,
+    pub dest_port: i64,
+    pub protocol: String,
+    pub bytes_sent: i64,
+    pub bytes_recv: i64,
+    pub started_at: i64,
+    pub ended_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DnsLogEntry {
+    pub id: i64,
+    pub device_ip: String,
+    pub domain: String,
+    pub query_type: String,
+    pub ts: i64,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Response {
     pub ok: bool,
@@ -21,6 +43,9 @@ pub struct Response {
     pub dmz_ip: Option<String>,
     pub dhcp_reservations: Option<Vec<crate::types::DhcpReservation>>,
     pub config_value: Option<String>,
+    pub connection_logs: Option<Vec<ConnectionLog>>,
+    pub dns_logs: Option<Vec<DnsLogEntry>>,
+    pub log_config: Option<serde_json::Value>,
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
@@ -169,6 +194,34 @@ pub fn export_config() -> Result<String, String> {
 
 pub fn import_config(data: &str) -> Result<(), String> {
     ok_or_err(send(json!({"method": "import_config", "value": data}))?)?;
+    Ok(())
+}
+
+pub fn list_connection_logs(device_ip: Option<&str>, limit: i64) -> Result<Vec<ConnectionLog>, String> {
+    let mut req = json!({"method": "list_connection_logs", "limit": limit});
+    if let Some(ip) = device_ip {
+        req["internal_ip"] = serde_json::Value::String(ip.to_string());
+    }
+    let resp = ok_or_err(send(req)?)?;
+    Ok(resp.connection_logs.unwrap_or_default())
+}
+
+pub fn list_dns_logs(device_ip: Option<&str>, limit: i64) -> Result<Vec<DnsLogEntry>, String> {
+    let mut req = json!({"method": "list_dns_logs", "limit": limit});
+    if let Some(ip) = device_ip {
+        req["internal_ip"] = serde_json::Value::String(ip.to_string());
+    }
+    let resp = ok_or_err(send(req)?)?;
+    Ok(resp.dns_logs.unwrap_or_default())
+}
+
+pub fn get_log_config() -> Result<serde_json::Value, String> {
+    let resp = ok_or_err(send(json!({"method": "get_log_config"}))?)?;
+    resp.log_config.ok_or_else(|| "no log config".to_string())
+}
+
+pub fn set_log_config(config: &serde_json::Value) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "set_log_config", "value": config.to_string()}))?)?;
     Ok(())
 }
 
