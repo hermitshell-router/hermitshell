@@ -249,6 +249,20 @@ async fn main() -> Result<()> {
 
     info!("agent initialized, entering main loop");
 
+    // Run log rotation once on startup
+    {
+        let db_guard = db_for_counters.lock().unwrap();
+        let retention_days: i64 = db_guard
+            .get_config("log_retention_days")
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(7);
+        let _ = db_guard.rotate_logs(retention_days * 86400);
+    }
+
+    let mut rotation_counter: u64 = 0;
+
     loop {
         interval.tick().await;
 
@@ -271,6 +285,25 @@ async fn main() -> Result<()> {
                     }
                     Err(e) => debug!(ip = %ip, error = %e, "failed to get counters"),
                 }
+            }
+        }
+
+        // Hourly log rotation (360 ticks * 10s = 1 hour)
+        rotation_counter += 1;
+        if rotation_counter % 360 == 0 {
+            let retention_days: i64 = db_guard
+                .get_config("log_retention_days")
+                .ok()
+                .flatten()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(7);
+            match db_guard.rotate_logs(retention_days * 86400) {
+                Ok((conn, dns)) => {
+                    if conn > 0 || dns > 0 {
+                        info!(connection_logs = conn, dns_logs = dns, "rotated old logs");
+                    }
+                }
+                Err(e) => error!(error = %e, "log rotation failed"),
             }
         }
     }
