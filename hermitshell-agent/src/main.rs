@@ -4,6 +4,8 @@ mod db;
 mod dns_log;
 mod log_export;
 mod nftables;
+mod pd;
+mod ra;
 mod socket;
 mod wireguard;
 
@@ -126,6 +128,21 @@ async fn main() -> Result<()> {
     let db = Arc::new(Mutex::new(db::Db::open(DB_PATH)?));
     info!(path = DB_PATH, "database opened");
 
+    // Try to obtain IPv6 prefix delegation from ISP
+    match crate::pd::request_prefix(wan_iface) {
+        Ok(Some(prefix)) => {
+            info!(prefix = %prefix, "IPv6 prefix delegated");
+            let db_guard = db.lock().unwrap();
+            let _ = db_guard.set_config("ipv6_delegated_prefix", &prefix);
+        }
+        Ok(None) => {
+            info!("no IPv6 prefix delegation, using ULA only");
+        }
+        Err(e) => {
+            warn!(error = %e, "DHCPv6-PD failed, using ULA only");
+        }
+    };
+
     // Restore state for previously assigned devices
     {
         let db_guard = db.lock().unwrap();
@@ -236,6 +253,14 @@ async fn main() -> Result<()> {
         }
         Arc::new(Mutex::new(mgr))
     };
+
+    // Start RA sender for IPv6 (tells LAN clients to use DHCPv6)
+    let lan_for_ra = lan_iface.to_string();
+    std::thread::spawn(move || {
+        if let Err(e) = crate::ra::run_ra_sender(&lan_for_ra) {
+            error!(error = %e, "RA sender error");
+        }
+    });
 
     // Start conntrack event listener
     conntrack::enable_accounting();
