@@ -53,6 +53,25 @@ pub fn validate_ipv6_ula(ip: &str) -> Result<()> {
     Ok(())
 }
 
+/// Validate that an IPv6 string is a valid global unicast address (2000::/3).
+pub fn validate_ipv6_global(ip: &str) -> Result<()> {
+    let addr: Ipv6Addr = ip.parse().map_err(|_| anyhow::anyhow!("invalid IPv6: {}", ip))?;
+    let octets = addr.octets();
+    // Global unicast: first 3 bits are 001 (2000::/3), i.e. first byte 0x20..0x3f
+    if octets[0] < 0x20 || octets[0] > 0x3f {
+        anyhow::bail!("IPv6 {} not a global unicast address (2000::/3)", ip);
+    }
+    Ok(())
+}
+
+/// Validate that a protocol string is "tcp" or "udp".
+fn validate_protocol(protocol: &str) -> Result<()> {
+    match protocol {
+        "tcp" | "udp" => Ok(()),
+        _ => anyhow::bail!("invalid protocol: {} (must be tcp or udp)", protocol),
+    }
+}
+
 /// Public wrapper for IP validation, used by wireguard.rs.
 pub fn validate_ip_pub(ip: &str) -> Result<()> {
     validate_ip(ip)
@@ -475,6 +494,72 @@ pub fn apply_port_forwards(
         .args(["add", "rule", "inet", "filter", "forward",
                "ct", "state", "new", "jump", "port_fwd"])
         .status();
+
+    Ok(())
+}
+
+/// Add an IPv6 pinhole: allow inbound traffic to a specific global IPv6 address and port range.
+pub fn add_ipv6_pinhole(ipv6_global: &str, protocol: &str, port_start: u16, port_end: u16) -> Result<()> {
+    validate_ipv6_global(ipv6_global)?;
+    validate_protocol(protocol)?;
+
+    let port_spec = if port_start == port_end {
+        format!("{}", port_start)
+    } else {
+        format!("{}-{}", port_start, port_end)
+    };
+
+    let rule = format!(
+        "ip6 daddr {} {} dport {} accept comment \"ipv6-pinhole\"",
+        ipv6_global, protocol, port_spec
+    );
+
+    let status = Command::new("/usr/sbin/nft")
+        .args(["add", "rule", "inet", "filter", "forward"])
+        .args(rule.split_whitespace().collect::<Vec<_>>())
+        .status()?;
+
+    if status.success() {
+        info!(ipv6 = %ipv6_global, proto = %protocol, ports = %port_spec, "added IPv6 pinhole");
+        Ok(())
+    } else {
+        anyhow::bail!("failed to add IPv6 pinhole rule")
+    }
+}
+
+/// Remove IPv6 pinhole rules for a specific global IPv6 address and port range.
+pub fn remove_ipv6_pinhole(ipv6_global: &str, protocol: &str, port_start: u16, port_end: u16) -> Result<()> {
+    validate_ipv6_global(ipv6_global)?;
+    validate_protocol(protocol)?;
+
+    let port_spec = if port_start == port_end {
+        format!("{}", port_start)
+    } else {
+        format!("{}-{}", port_start, port_end)
+    };
+
+    let search = format!("ip6 daddr {} {} dport {} accept", ipv6_global, protocol, port_spec);
+
+    // List rules with handles
+    let output = Command::new("/usr/sbin/nft")
+        .args(["-a", "list", "chain", "inet", "filter", "forward"])
+        .output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains(&search) {
+            // Extract handle number from "# handle N"
+            if let Some(handle) = trimmed.rsplit("# handle ").next().and_then(|s| s.trim().parse::<u64>().ok()) {
+                let status = Command::new("/usr/sbin/nft")
+                    .args(["delete", "rule", "inet", "filter", "forward", "handle", &handle.to_string()])
+                    .status()?;
+                if status.success() {
+                    info!(ipv6 = %ipv6_global, proto = %protocol, ports = %port_spec, handle = handle, "removed IPv6 pinhole");
+                }
+            }
+        }
+    }
 
     Ok(())
 }

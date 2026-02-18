@@ -29,6 +29,8 @@ struct Request {
     hostname: Option<String>,
     id: Option<i64>,
     protocol: Option<String>,
+    port_start: Option<u16>,
+    port_end: Option<u16>,
     external_port_start: Option<u16>,
     external_port_end: Option<u16>,
     internal_ip: Option<String>,
@@ -77,6 +79,8 @@ struct Response {
     dns_logs: Option<Vec<crate::db::DnsLogEntry>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     log_config: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ipv6_pinholes: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -106,10 +110,10 @@ struct WgPeerInfo {
 
 impl Response {
     fn ok() -> Self {
-        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None }
+        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None }
     }
     fn err(msg: &str) -> Self {
-        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None }
+        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None }
     }
 }
 
@@ -745,6 +749,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             let reservations = db.list_dhcp_reservations().unwrap_or_default();
             let forwards = db.list_port_forwards().unwrap_or_default();
             let peers = db.list_wg_peers().unwrap_or_default();
+            let pinholes = db.list_ipv6_pinholes().unwrap_or_default();
 
             let config_keys = ["ad_blocking_enabled", "wg_listen_port", "dmz_host_ip", "log_format", "syslog_target", "webhook_url", "log_retention_days"];
             let mut config_map = serde_json::Map::new();
@@ -768,6 +773,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 "wg_peers": peers.iter().map(|p| serde_json::json!({
                     "public_key": p.public_key, "name": p.name, "subnet_id": p.subnet_id, "device_group": p.device_group
                 })).collect::<Vec<_>>(),
+                "ipv6_pinholes": pinholes,
                 "config": config_map,
             });
 
@@ -825,6 +831,21 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                     let desc = f.get("description").and_then(|v| v.as_str()).unwrap_or("");
                     if ext_start > 0 && !internal_ip.is_empty() {
                         let _ = db.add_port_forward(protocol, ext_start, ext_end, internal_ip, int_port, desc);
+                    }
+                }
+            }
+
+            // Import IPv6 pinholes (replace all)
+            let _ = db.conn_exec("DELETE FROM ipv6_pinholes");
+            if let Some(pinholes) = parsed.get("ipv6_pinholes").and_then(|v| v.as_array()) {
+                for p in pinholes {
+                    let mac = p.get("device_mac").and_then(|v| v.as_str()).unwrap_or("");
+                    let protocol = p.get("protocol").and_then(|v| v.as_str()).unwrap_or("");
+                    let port_start = p.get("port_start").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let port_end = p.get("port_end").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let desc = p.get("description").and_then(|v| v.as_str()).unwrap_or("");
+                    if !mac.is_empty() && !protocol.is_empty() && port_start > 0 {
+                        let _ = db.add_ipv6_pinhole(mac, protocol, port_start, port_end, desc);
                     }
                 }
             }
@@ -925,6 +946,79 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 }
             }
             Response::ok()
+        }
+        "add_ipv6_pinhole" => {
+            let Some(mac) = req.mac else { return Response::err("mac required"); };
+            let Some(protocol) = req.protocol else { return Response::err("protocol required"); };
+            let Some(port_start) = req.port_start else { return Response::err("port_start required"); };
+            let Some(port_end) = req.port_end else { return Response::err("port_end required"); };
+            let desc = req.description.as_deref().unwrap_or("");
+            match protocol.as_str() {
+                "tcp" | "udp" => {}
+                _ => return Response::err("protocol must be tcp or udp"),
+            }
+            if port_start == 0 || port_end == 0 {
+                return Response::err("ports must be 1-65535");
+            }
+            if port_end < port_start {
+                return Response::err("port_end must be >= port_start");
+            }
+            let db = db.lock().unwrap();
+            let device = match db.get_device(&mac) {
+                Ok(Some(d)) => d,
+                Ok(None) => return Response::err("device not found"),
+                Err(e) => return Response::err(&e.to_string()),
+            };
+            let Some(ref ipv6_global) = device.ipv6_global else {
+                return Response::err("device has no global IPv6 address (no prefix delegation)");
+            };
+            if let Err(e) = nftables::add_ipv6_pinhole(ipv6_global, &protocol, port_start, port_end) {
+                return Response::err(&format!("failed to add nftables rule: {}", e));
+            }
+            match db.add_ipv6_pinhole(&mac, &protocol, port_start as i64, port_end as i64, desc) {
+                Ok(id) => {
+                    let mut resp = Response::ok();
+                    resp.config_value = Some(id.to_string());
+                    resp
+                }
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
+        "remove_ipv6_pinhole" => {
+            let Some(id) = req.id else { return Response::err("id required"); };
+            let db = db.lock().unwrap();
+            let pinhole = match db.get_ipv6_pinhole(id) {
+                Ok(Some(p)) => p,
+                Ok(None) => return Response::err("pinhole not found"),
+                Err(e) => return Response::err(&e.to_string()),
+            };
+            let (mac, protocol, port_start, port_end) = pinhole;
+            let device = match db.get_device(&mac) {
+                Ok(Some(d)) => d,
+                Ok(None) => return Response::err("device not found"),
+                Err(e) => return Response::err(&e.to_string()),
+            };
+            if let Some(ref ipv6_global) = device.ipv6_global {
+                if let Err(e) = nftables::remove_ipv6_pinhole(ipv6_global, &protocol, port_start as u16, port_end as u16) {
+                    return Response::err(&format!("failed to remove nftables rule: {}", e));
+                }
+            }
+            match db.remove_ipv6_pinhole(id) {
+                Ok(true) => Response::ok(),
+                Ok(false) => Response::err("pinhole not found"),
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
+        "list_ipv6_pinholes" => {
+            let db = db.lock().unwrap();
+            match db.list_ipv6_pinholes() {
+                Ok(pinholes) => {
+                    let mut resp = Response::ok();
+                    resp.ipv6_pinholes = Some(pinholes);
+                    resp
+                }
+                Err(e) => Response::err(&e.to_string()),
+            }
         }
         _ => Response::err("unknown method"),
     }

@@ -182,6 +182,29 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Restore IPv6 pinholes
+    {
+        let db_guard = db.lock().unwrap();
+        let pinholes = db_guard.list_ipv6_pinholes().unwrap_or_default();
+        let mut restored = 0;
+        for p in &pinholes {
+            let ipv6 = p.get("device_ipv6_global").and_then(|v| v.as_str()).unwrap_or("");
+            let protocol = p.get("protocol").and_then(|v| v.as_str()).unwrap_or("");
+            let port_start = p.get("port_start").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+            let port_end = p.get("port_end").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+            if !ipv6.is_empty() && !protocol.is_empty() && port_start > 0 {
+                if let Err(e) = nftables::add_ipv6_pinhole(ipv6, protocol, port_start, port_end) {
+                    error!(error = %e, ipv6 = %ipv6, "failed to restore IPv6 pinhole");
+                } else {
+                    restored += 1;
+                }
+            }
+        }
+        if restored > 0 {
+            info!(count = restored, "IPv6 pinholes restored");
+        }
+    }
+
     // Restore WireGuard state if enabled
     {
         let db_guard = db.lock().unwrap();

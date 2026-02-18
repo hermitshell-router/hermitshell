@@ -77,6 +77,16 @@ CREATE TABLE IF NOT EXISTS dns_logs (
     query_type TEXT NOT NULL,
     ts INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ipv6_pinholes (
+    id INTEGER PRIMARY KEY,
+    device_mac TEXT NOT NULL,
+    protocol TEXT NOT NULL,
+    port_start INTEGER NOT NULL,
+    port_end INTEGER NOT NULL,
+    description TEXT,
+    created_at INTEGER NOT NULL
+);
 "#;
 
 #[derive(Debug, Clone, Serialize)]
@@ -574,6 +584,67 @@ impl Db {
                 })
             })?;
             Ok(rows.filter_map(|r| r.ok()).collect())
+        }
+    }
+
+    // IPv6 pinhole methods
+
+    pub fn add_ipv6_pinhole(&self, mac: &str, protocol: &str, port_start: i64, port_end: i64, description: &str) -> Result<i64> {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        self.conn.execute(
+            "INSERT INTO ipv6_pinholes (device_mac, protocol, port_start, port_end, description, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![mac, protocol, port_start, port_end, description, ts],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn remove_ipv6_pinhole(&self, id: i64) -> Result<bool> {
+        let rows = self.conn.execute("DELETE FROM ipv6_pinholes WHERE id = ?1", [id])?;
+        Ok(rows > 0)
+    }
+
+    pub fn list_ipv6_pinholes(&self) -> Result<Vec<serde_json::Value>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT p.id, p.device_mac, p.protocol, p.port_start, p.port_end, p.description, p.created_at, d.hostname, d.ipv6_global
+             FROM ipv6_pinholes p LEFT JOIN devices d ON p.device_mac = d.mac"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, i64>(0)?,
+                "device_mac": row.get::<_, String>(1)?,
+                "protocol": row.get::<_, String>(2)?,
+                "port_start": row.get::<_, i64>(3)?,
+                "port_end": row.get::<_, i64>(4)?,
+                "description": row.get::<_, Option<String>>(5)?,
+                "created_at": row.get::<_, i64>(6)?,
+                "device_name": row.get::<_, Option<String>>(7)?,
+                "device_ipv6_global": row.get::<_, Option<String>>(8)?,
+            }))
+        })?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
+    }
+
+    pub fn get_ipv6_pinhole(&self, id: i64) -> Result<Option<(String, String, i64, i64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT device_mac, protocol, port_start, port_end FROM ipv6_pinholes WHERE id = ?1"
+        )?;
+        let mut rows = stmt.query([id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+            )))
+        } else {
+            Ok(None)
         }
     }
 
