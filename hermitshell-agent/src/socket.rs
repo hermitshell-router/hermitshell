@@ -1077,6 +1077,76 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
 
             Response::ok()
         }
+        "dhcp6_discover" => {
+            let Some(mac) = req.mac else {
+                return Response::err("mac required");
+            };
+            let db = db.lock().unwrap();
+
+            match db.get_device(&mac) {
+                Ok(Some(dev)) if dev.subnet_id.is_some() => {
+                    let sid = dev.subnet_id.unwrap();
+                    let Some(info) = subnet::compute_subnet(sid) else {
+                        return Response::err("subnet_id out of range");
+                    };
+                    let mut resp = Response::ok();
+                    resp.subnet_id = Some(sid);
+                    resp.device_ipv4 = Some(info.device_ipv4.to_string());
+                    resp.device_ipv6_ula = Some(info.device_ipv6_ula.to_string());
+                    resp.is_new = Some(false);
+                    resp
+                }
+                Ok(_) => {
+                    // Device not yet known -- allocate a new subnet_id
+                    let sid = match db.allocate_subnet_id() {
+                        Ok(s) => s,
+                        Err(e) => return Response::err(&e.to_string()),
+                    };
+                    let Some(info) = subnet::compute_subnet(sid) else {
+                        return Response::err("subnet address space exhausted");
+                    };
+                    let ipv4 = info.device_ipv4.to_string();
+                    let ipv6 = info.device_ipv6_ula.to_string();
+                    if let Err(e) = db.insert_new_device(&mac, sid, &ipv4, &ipv6) {
+                        return Response::err(&e.to_string());
+                    }
+                    let mut resp = Response::ok();
+                    resp.subnet_id = Some(sid);
+                    resp.device_ipv4 = Some(ipv4);
+                    resp.device_ipv6_ula = Some(ipv6);
+                    resp.is_new = Some(true);
+                    resp
+                }
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
+        "dhcp6_provision" => {
+            let Some(mac) = req.mac else {
+                return Response::err("mac required");
+            };
+            let Some(sid) = req.subnet_id else {
+                return Response::err("subnet_id required");
+            };
+            let Some(info) = subnet::compute_subnet(sid) else {
+                return Response::err("invalid subnet_id");
+            };
+
+            let ipv6 = info.device_ipv6_ula.to_string();
+
+            info!(mac = %mac, ipv6 = %ipv6, "DHCPv6 provision");
+
+            if let Err(e) = nftables::add_device_route_v6(&ipv6, lan_iface) {
+                error!(ip = %ipv6, error = %e, "failed to add device v6 route");
+            }
+            if let Err(e) = nftables::add_device_counter_v6(&ipv6) {
+                error!(ip = %ipv6, error = %e, "failed to add device v6 counter");
+            }
+            if let Err(e) = nftables::add_device_forward_rule_v6(&ipv6, "quarantine") {
+                error!(ip = %ipv6, error = %e, "failed to add v6 forward rule");
+            }
+
+            Response::ok()
+        }
         _ => Response::err("unknown method"),
     }
 }
