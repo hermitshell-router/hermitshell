@@ -209,7 +209,7 @@ async fn main() -> Result<()> {
         let dns_strings: Vec<String> = upstream_dns.iter().map(|ip| ip.to_string()).collect();
         let mut mgr = blocky::BlockyManager::new(
             dns_strings,
-            "10.0.0.1:53".to_string(),
+            "10.0.0.1:53,[fd00::1]:53".to_string(),
             "/data/hermitshell/blocky".to_string(),
             "/opt/hermitshell/blocky".to_string(),
         );
