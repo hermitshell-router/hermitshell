@@ -1,5 +1,7 @@
 mod blocky;
+mod conntrack;
 mod db;
+mod log_export;
 mod nftables;
 mod socket;
 mod wireguard;
@@ -200,6 +202,11 @@ async fn main() -> Result<()> {
         }
         Arc::new(Mutex::new(mgr))
     };
+
+    // Start conntrack event listener
+    conntrack::enable_accounting();
+    let (log_tx, _log_rx) = tokio::sync::mpsc::unbounded_channel::<log_export::LogEvent>();
+    let _conntrack_child = conntrack::start(db.clone(), log_tx.clone());
 
     // Spawn socket server
     let db_clone = db.clone();
