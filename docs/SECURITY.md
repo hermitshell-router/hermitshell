@@ -170,7 +170,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Risk:** The agent runs as root with more privileges than necessary. A compromised agent could access devices, change kernel parameters, or pivot to other services.
 
-**Proper fix:** Add: `NoNewPrivileges=yes`, `PrivateDevices=yes`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK`, `RestrictNamespaces=yes`, `LockPersonality=yes`, `MemoryDenyWriteExecute=yes`. Note: `AF_NETLINK` is needed for nftables and `ip` commands.
+**Proper fix:** Add: `NoNewPrivileges=yes`, `PrivateDevices=yes`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK`, `RestrictNamespaces=yes`, `LockPersonality=yes`, `MemoryDenyWriteExecute=yes`. Note: `AF_NETLINK` is needed for nftables and `ip` commands; `AF_INET6` is needed for DHCPv6 and IPv6 routing.
 
 ---
 
@@ -226,33 +226,33 @@ This document tracks security compromises made during implementation, why they w
 
 ## 21. DHCP hostname from LAN clients is not length-bounded at the network layer
 
-**What:** The DHCP server (`hermitshell-dhcp/src/main.rs:209`) accepts the raw hostname from DHCP Option 12 without any length or character check, then sends it verbatim over IPC to the agent. The agent's `sanitize_hostname()` (`socket.rs:13`) strips invalid characters and truncates to 63 chars, but the full unsanitized string crosses the DHCP→agent IPC boundary first.
+**What:** The DHCP server (`hermitshell-dhcp/src/main.rs:209`) accepts the raw hostname from DHCP Option 12 without any length or character check, then sends it verbatim over IPC to the agent. The agent's `sanitize_hostname()` (`socket.rs:13`) strips invalid characters and truncates to 63 chars, but the full unsanitized string crosses the DHCP→agent IPC boundary first. DHCPv6 does not carry hostnames the same way (there is no Option 12 equivalent), but the DHCPv6 path extracts the client MAC from the DUID, which is used for device identification instead.
 
 **Why:** Validation was deferred to the agent side. The dhcproto library parses the option into a String without length enforcement.
 
-**Risk:** A malicious DHCP client can send an arbitrarily large hostname (up to the 1500-byte UDP packet limit). This wastes IPC bandwidth and causes unnecessary allocations. The actual DB storage is safe because `sanitize_hostname()` truncates, but log messages may include the raw value before sanitization.
+**Risk:** A malicious DHCP client can send an arbitrarily large hostname (up to the 1500-byte UDP packet limit). This wastes IPC bandwidth and causes unnecessary allocations. The actual DB storage is safe because `sanitize_hostname()` truncates, but log messages may include the raw value before sanitization. The DHCPv6 path is not affected by this specific issue since it does not process hostnames, but the DUID parsing has its own validation concerns (see issue #29).
 
 **Proper fix:** Truncate and validate in the DHCP handler before sending to the agent: reject hostnames > 255 bytes or containing non-printable characters.
 
-## 22. DHCP discover_times HashMap grows without bound
+## 22. DHCP discover_times and DHCPv6 solicit_times HashMaps grow without bound
 
-**What:** The DHCP server (`hermitshell-dhcp/src/main.rs:53`) uses `HashMap<String, Instant>` to rate-limit DHCPDISCOVER messages (10-second cooldown per MAC). Entries are never evicted — every unique MAC that sends a DISCOVER is stored forever.
+**What:** The DHCP server (`hermitshell-dhcp/src/main.rs:53`) uses `HashMap<String, Instant>` to rate-limit DHCPDISCOVER messages (10-second cooldown per MAC). The DHCPv6 server uses a similar `solicit_times` HashMap to rate-limit DHCPv6 SOLICIT messages. Entries are never evicted in either map — every unique MAC that sends a DISCOVER or SOLICIT is stored forever.
 
 **Why:** Simplicity. Rate limiting was added but eviction was not.
 
-**Risk:** An attacker on the LAN can send DHCPDISCOVER packets with spoofed MAC addresses (different source MAC each time). Each unique MAC adds a HashMap entry. Over hours/days, this exhausts the DHCP server's memory. The MAC validation (`is_valid_mac`) filters broadcast and multicast MACs, but there are ~140 trillion valid unicast MACs.
+**Risk:** An attacker on the LAN can send DHCPDISCOVER or DHCPv6 SOLICIT packets with spoofed MAC addresses (different source MAC each time). Each unique MAC adds a HashMap entry. Over hours/days, this exhausts the DHCP/DHCPv6 server's memory. The MAC validation (`is_valid_mac`) filters broadcast and multicast MACs, but there are ~140 trillion valid unicast MACs.
 
-**Proper fix:** Periodically evict entries older than 60 seconds, or cap the HashMap size and evict the oldest entry when full. A simple approach: every 1000 packets, remove entries where `elapsed() > 60s`.
+**Proper fix:** Periodically evict entries older than 60 seconds, or cap the HashMap size and evict the oldest entry when full. A simple approach: every 1000 packets, remove entries where `elapsed() > 60s`. Apply the same eviction strategy to both `discover_times` and `solicit_times`.
 
-## 23. DHCP server accepts packets from any source on the LAN interface
+## 23. DHCP/DHCPv6 servers accept packets from any source on the LAN interface
 
-**What:** The DHCP server binds to `0.0.0.0:67` on the LAN interface and processes all valid DHCP packets. There's no source IP or subnet validation — any device that can send a UDP packet to port 67 on the LAN interface gets a subnet allocation.
+**What:** The DHCP server binds to `0.0.0.0:67` and the DHCPv6 server binds to `[::]:547` on the LAN interface. Both process all valid packets without source validation — any device that can send a UDP packet to port 67 (DHCP) or 547 (DHCPv6) on the LAN interface gets an address allocation.
 
-**Why:** This is how DHCP works — clients don't have IPs yet when they send DISCOVER, so you can't filter by source IP. The LAN interface binding provides the boundary.
+**Why:** This is how DHCP/DHCPv6 works — clients don't have IPs yet when they send DISCOVER/SOLICIT, so you can't filter by source IP. The LAN interface binding provides the boundary.
 
-**Risk:** This is expected DHCP behavior, but it means any device physically connected to the LAN (or bridged to it) can claim subnets. A rogue device can exhaust the subnet pool by requesting allocations with many spoofed MACs. The agent allocates /30 subnets from 10.0.0.0/16, giving ~16,000 possible subnets.
+**Risk:** This is expected DHCP/DHCPv6 behavior, but it means any device physically connected to the LAN (or bridged to it) can claim addresses. A rogue device can exhaust the address pool by requesting allocations with many spoofed MACs. The agent allocates /32 point-to-point IPv4 addresses from 10.0.0.0/16 plus /128 ULA IPv6 addresses per device, giving 16,580,355 possible device allocations (up from ~16,000 with the old /30 subnet scheme). DHCPv6 has the same MAC spoofing risk — a client can use a different DUID per request to appear as a new device each time.
 
-**Proper fix:** Add a maximum device limit in the agent's `dhcp_discover` handler. When the device count exceeds a threshold (e.g., 1000), reject new allocations. Consider alerting the admin.
+**Proper fix:** Add a maximum device limit in the agent's `dhcp_discover` handler. When the device count exceeds a threshold (e.g., 1000), reject new allocations. Apply the same limit to the DHCPv6 `dhcpv6_solicit` handler. Consider alerting the admin.
 
 ## 24. set_config allows overwriting critical keys without restriction
 
@@ -295,3 +295,47 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** An invalid public key causes `wg set` to fail, which is handled. But the name could be very long or contain special characters. If used in log messages, it could cause log injection. Leptos escapes display output, so XSS via the web UI is unlikely.
 
 **Proper fix:** Validate the public key format (44-char base64 string) and sanitize the name (alphanumeric + hyphens, max 64 chars) before storage.
+
+---
+
+## IPv6 Dual-Stack
+
+## 28. RA Guard bypass potential
+
+**What:** The nftables RA Guard rule drops ICMPv6 type 134 (Router Advertisement) from LAN devices in the forward chain. However, a malicious device could send RAs directly to link-local multicast (`ff02::1`) before nftables processes the packet if the RA reaches the LAN bridge/switch before the router.
+
+**Why:** RA Guard is implemented at L3 (nftables) rather than L2. The router only sees packets that traverse its interfaces — RAs sent between devices on the same L2 segment may never reach the router's nftables chains.
+
+**Risk:** A rogue device on the LAN can send fake Router Advertisements to other LAN devices, causing them to configure incorrect default gateways or DNS servers. This enables MITM attacks on IPv6 traffic. The nftables rule only protects against RAs that transit the router, not same-segment RAs.
+
+**Proper fix:** RA Guard at L2 (managed switch with RA Guard support) would provide better protection. Alternatively, use `ebtables` or bridge netfilter rules to filter RAs at the bridge level before they reach other LAN ports.
+
+## 29. DHCPv6 DUID-based MAC extraction assumes Ethernet
+
+**What:** The `extract_mac_from_duid()` function only handles DUID-LLT (type 1) and DUID-LL (type 3) with Ethernet hardware type. Clients using DUID-EN (type 2) or DUID-UUID (type 4) will be rejected.
+
+**Why:** This is intentional for security — the agent needs a MAC address for device tracking and per-device isolation. Without a MAC, there is no way to associate the DHCPv6 client with an existing device record or apply the correct firewall rules.
+
+**Risk:** Some clients (notably Windows with certain configurations, VMs, or IoT devices) may use DUID-EN or DUID-UUID formats. These clients will fail to obtain IPv6 addresses via DHCPv6, falling back to SLAAC only (if available) or having no IPv6 connectivity. This is a compatibility limitation rather than a security vulnerability.
+
+**Proper fix:** For DUID-EN and DUID-UUID clients, consider extracting the MAC from the DHCPv6 packet's source link-layer address option (Option 79) or the Ethernet frame's source MAC as a fallback. Log a warning when a DUID type cannot be parsed so administrators can identify affected devices.
+
+## 30. IPv6 pinholes expose devices to inbound internet traffic
+
+**What:** When an IPv6 pinhole is created, it adds a forwarding rule that accepts inbound traffic to the device's global IPv6 address on the specified port. Unlike IPv4 port forwarding (DNAT), which translates the destination address, IPv6 pinholes directly expose the device's real address to the internet.
+
+**Why:** IPv6 does not use NAT. Each device has a globally routable address, and pinholes work by selectively allowing inbound traffic through the firewall to that address.
+
+**Risk:** If the device has a vulnerability on the pinholed port, it is directly exploitable from the internet without any address translation layer. An attacker can connect directly to the device's global IPv6 address. Unlike IPv4 DNAT where the router terminates the connection and re-originates it, IPv6 pinhole traffic passes straight through to the device.
+
+**Proper fix:** Warn the user in the web UI when creating a pinhole that the device will be directly reachable from the internet on the specified port. Consider adding rate limiting or geo-IP filtering options for pinholed ports. Log all inbound connections through pinholes for audit purposes.
+
+## 31. DHCPv6-PD lease file parsing trusts dhclient output
+
+**What:** The `parse_delegated_prefix()` function reads the dhclient6 lease file and extracts the `iaprefix` value. The lease file is written by dhclient running as root, so it is treated as trusted input.
+
+**Why:** dhclient6 is a system daemon running as root that writes lease files to a root-owned directory. The content originates from the ISP's DHCPv6 server, but dhclient validates the protocol-level fields before writing them.
+
+**Risk:** If the lease file is tampered with (by an attacker with root access, or if the file permissions are misconfigured), the parsed prefix could be invalid or malicious. An attacker-controlled prefix could cause the agent to assign addresses from an unexpected range, potentially conflicting with other networks or routing traffic to attacker-controlled infrastructure. However, an attacker with root access already has full control of the system.
+
+**Proper fix:** Validate the parsed prefix format (must be a valid IPv6 prefix with a reasonable prefix length, e.g., /48 to /64). Reject prefixes that fall outside expected ULA or GUA ranges. Set the lease file permissions to `0600 root:root` and verify them before parsing.

@@ -46,11 +46,13 @@ Escape the proprietary software trap without buying new proprietary hardware.
 ### 1.2 Features
 
 - **Device discovery and approval** - New devices quarantined until approved
-- **True device isolation** - Each device gets its own /30 subnet, no special hardware needed
+- **True device isolation** - Each device gets its own /32 IPv4 + /128 IPv6 per device, full dual-stack, no special hardware needed
 - **Group-based policy** - Trusted, IoT, Guest, Servers, Quarantine with configurable inter-group rules
 - **Traffic visibility** - Per-device bandwidth, connection logs, DNS queries
-- **Privacy-focused DNS** - DNSSEC validation, DNS-over-TLS upstream, optional ad blocking
-- **Modern stack** - systemd-networkd, nftables, Unbound—no legacy iptables or dnsmasq sprawl
+- **Privacy-focused DNS** - Blocky with DNSSEC validation, DNS-over-TLS upstream, built-in ad blocking on both IPv4 and IPv6
+- **IPv6 dual-stack** - DHCPv6 stateful, ICMPv6 Router Advertisements, DHCPv6-PD for ISP prefix delegation, ULA fallback
+- **WireGuard VPN** - Dual-stack remote access with both IPv4 and IPv6 AllowedIPs
+- **Modern stack** - systemd-networkd, nftables, custom DHCP server, Blocky DNS—no legacy iptables or dnsmasq sprawl
 - **Direct configuration** - Web UI runs on the router, no external controller
 - **Standard Linux** - SSH in, poke around, `tcpdump`, export to syslog, integrate with your tools
 - **API-first** - Everything the UI does is available via REST API (enables Ansible, Terraform, scripts)
@@ -63,7 +65,7 @@ Escape the proprietary software trap without buying new proprietary hardware.
 | **Cloud account** | No | Optional but pushed | No | No | Optional |
 | **Runs on commodity HW** | Yes | No (locked to their HW) | Yes | Yes | No (their HW only) |
 | **Device-centric UI** | Yes | Network-centric | Network-centric | Network-centric | Yes |
-| **Per-device isolation** | Yes (default) | Requires VLANs | Requires VLANs | Requires VLANs | Partial |
+| **Per-device isolation** | Yes (default, dual-stack) | Requires VLANs | Requires VLANs | Requires VLANs | Partial |
 | **Works with dumb switch** | Yes | Partial | Partial | Partial | Yes |
 | **Learning curve** | Low | Medium | High | High | Low |
 | **Open source** | Yes | No | Yes | Yes | No |
@@ -99,7 +101,7 @@ It runs on any Linux host with two NICs (WAN + LAN). The web UI and API run in D
 
 | NOT Required | Why |
 |--------------|-----|
-| Managed switch | Per-device subnets work at L3, no VLAN tagging needed |
+| Managed switch | Per-device /32+/128 addressing works at L3, no VLAN tagging needed |
 | VLAN-capable WiFi AP | Isolation happens at IP layer, not WiFi layer |
 | AP client isolation | Devices are on different subnets, can't reach each other directly |
 | Multiple SSIDs | All devices can be on one SSID; they're isolated by subnet |
@@ -107,15 +109,15 @@ It runs on any Linux host with two NICs (WAN + LAN). The web UI and API run in D
 
 **Key assumption: HermitShell is the only router on your LAN.**
 
-All LAN devices must get their IP address from HermitShell. If you have another router/DHCP server on the LAN, devices may get addresses that bypass our per-device subnet model.
+All LAN devices must get their IP address from HermitShell. If you have another router/DHCP server on the LAN, devices may get addresses that bypass our per-device isolation model.
 
 **How isolation works (and why it doesn't need special hardware):**
 
-1. Each device gets a unique /30 subnet (e.g., Device A: 10.0.1.2/30, Device B: 10.0.2.2/30)
-2. Devices see only their gateway—from their perspective, they're alone on their subnet
-3. Device A wants to reach Device B → A checks "is 10.0.2.2 on my /30?" → No → sends to gateway
+1. Each device gets a unique /32 IPv4 address + /128 ULA IPv6 address (e.g., Device A: 10.0.0.3/32 + fd00::3, Device B: 10.0.0.4/32 + fd00::4)
+2. Devices see only their gateway—from their perspective, they're alone on a point-to-point link
+3. Device A wants to reach Device B → DHCP option 121 routes say "send everything via gateway" → sends to gateway
 4. HermitShell receives traffic, applies policy (allow/deny), forwards or drops
-5. Even on the same switch or WiFi AP, devices won't ARP for each other—different subnets
+5. Even on the same switch or WiFi AP, devices won't ARP for each other—point-to-point addressing
 
 This works because IP routing, not L2 switching, determines reachability. No special hardware cooperation required.
 
@@ -166,11 +168,18 @@ docker compose up -d
 │  └─────────────────────────────────────────────────────────────┘    │
 │                                                                      │
 │  ┌──────────────┐  ┌───────────────────────────┐  ┌──────────────┐  │
-│  │   nftables   │  │      systemd-networkd     │  │   systemd-   │  │
-│  │  (firewall)  │  │  (interfaces + DHCP srv)  │  │   resolved   │  │
-│  │  + counters  │  │                           │  │  (DNS + DoT) │  │
-│  │  + nflog     │  │                           │  │              │  │
+│  │   nftables   │  │      systemd-networkd     │  │    Blocky    │  │
+│  │  (firewall)  │  │     (interfaces only)     │  │ (DNS + DoT)  │  │
+│  │  + counters  │  │                           │  │  + ad block  │  │
+│  │  + nflog     │  │                           │  │  + dual-stack│  │
+│  │  + RA Guard  │  │                           │  │              │  │
 │  └──────────────┘  └───────────────────────────┘  └──────────────┘  │
+│                                                                      │
+│  ┌───────────────────────┐  ┌───────────────────────────────────┐   │
+│  │   hermitshell-dhcp    │  │      ICMPv6 RA Sender             │   │
+│  │  DHCPv4 (/32+opt121) │  │  M=1, O=1, every 30s on LAN      │   │
+│  │  DHCPv6 (/128 ULA)   │  │                                   │   │
+│  └───────────────────────┘  └───────────────────────────────────┘   │
 │                                                                      │
 ├─────────────────────────────────────────────────────────────────────┤
 │  eth0 (WAN - DHCP from ISP)                    eth1 (LAN)           │
@@ -182,21 +191,21 @@ docker compose up -d
                                     ┌─────────┴─────────┐
                                     ▼                   ▼
                               WiFi devices       Wired devices
-                           (each own /30)     (each own /30)
+                        (each own /32+/128)  (each own /32+/128)
 ```
 
-**Network topology:** Each device gets its own /30 subnet. From the device's perspective, it's alone on its network with only the gateway. This forces all traffic through HermitShell, enabling policy enforcement without requiring VLANs, managed switches, or AP cooperation.
+**Network topology:** Each device gets its own /32 IPv4 address and /128 ULA IPv6 address. From the device's perspective, it's on a point-to-point link with only the gateway. DHCP option 121 classless static routes ensure devices route all traffic through HermitShell, enabling policy enforcement without requiring VLANs, managed switches, or AP cooperation. IPv6 uses DHCPv6 stateful (not SLAAC) to match the device isolation model.
 
 ### 2.1 Components
 
 | Component | Runs On | Purpose |
 |-----------|---------|---------|
 | **hermitshell** | Docker | Web UI, REST API, device management, rule generation |
-| **hermitshell-agent** | Host | Applies configs, reads counters, streams events, DNS logging |
+| **hermitshell-agent** | Host | Applies configs, reads counters, streams events, DNS logging, RA sender, DHCPv6-PD client |
+| **hermitshell-dhcp** | Host | Custom DHCPv4 server (/32 + option 121 routes) and DHCPv6 stateful server (/128 ULA) |
 | **systemd-networkd** | Host | Interface management (addresses, routing) |
-| **dnsmasq** | Host | DHCP server (per-device subnet assignment) |
-| **systemd-resolved** | Host | DNS resolver with DoT upstream, DNSSEC, caching |
-| **nftables** | Host (kernel) | Firewall, NAT, per-device traffic counters, routing policy |
+| **Blocky** | Host | DNS resolver with DoT upstream, DNSSEC, ad blocking, dual-stack (10.0.0.1:53 + [fd00::1]:53) |
+| **nftables** | Host (kernel) | Dual-stack firewall, NAT, per-device traffic counters, RA Guard, NDP allow |
 | **conntrack** | Host (kernel) | Connection tracking for flow logs |
 | **vnstat** | Host | Interface-level bandwidth statistics |
 
@@ -206,39 +215,40 @@ HermitShell provides true device isolation without requiring VLANs, managed swit
 
 **How it works:**
 
-1. **Unique /30 subnet per device** - Each device gets its own network (e.g., 10.0.1.0/30)
-2. **Device sees only the gateway** - From the device's perspective, it's alone with 10.0.1.1 (gateway)
-3. **All traffic routes through HermitShell** - Devices can't ARP for each other (different subnets)
-4. **Policy at routing layer** - nftables decides what forwarding is allowed
+1. **Unique /32 IPv4 + /128 IPv6 per device** - Each device gets a point-to-point IPv4 address and a ULA IPv6 address (e.g., 10.0.0.3/32 + fd00::3/128)
+2. **Device sees only the gateway** - From the device's perspective, it's on a point-to-point link with only 10.0.0.1 (gateway)
+3. **All traffic routes through HermitShell** - DHCP option 121 classless static routes force all traffic via gateway; IPv6 uses DHCPv6 stateful with NDP proxy
+4. **Policy at routing layer** - nftables dual-stack verdict maps decide what forwarding is allowed
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                     Per-Device Subnet Model                          │
+│                  Per-Device Dual-Stack Isolation Model                │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                      │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐               │
-│  │    Laptop    │  │    Phone     │  │    Camera    │               │
-│  │  10.0.1.2/30 │  │  10.0.2.2/30 │  │  10.0.3.2/30 │               │
-│  │  gw: 10.0.1.1│  │  gw: 10.0.2.1│  │  gw: 10.0.3.1│               │
-│  │   TRUSTED    │  │   TRUSTED    │  │     IOT      │               │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘               │
-│         │                 │                 │                        │
-│         │    Different subnets = no direct communication             │
-│         │    All traffic MUST go through gateway                     │
-│         ▼                 ▼                 ▼                        │
+│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐         │
+│  │     Laptop     │  │     Phone      │  │     Camera     │         │
+│  │  10.0.0.3/32   │  │  10.0.0.4/32   │  │  10.0.0.5/32   │         │
+│  │  fd00::3/128   │  │  fd00::4/128   │  │  fd00::5/128   │         │
+│  │  gw: 10.0.0.1  │  │  gw: 10.0.0.1  │  │  gw: 10.0.0.1  │         │
+│  │    TRUSTED     │  │    TRUSTED     │  │      IOT       │         │
+│  └───────┬────────┘  └───────┬────────┘  └───────┬────────┘         │
+│          │                   │                   │                   │
+│          │  Point-to-point /32+/128 = no direct communication       │
+│          │  All traffic MUST go through gateway                      │
+│          ▼                   ▼                   ▼                   │
 │  ═══════════════════════════════════════════════════════════════    │
-│              HermitShell (all gateway addresses)                     │
-│              10.0.1.1, 10.0.2.1, 10.0.3.1, ... on br0                │
+│         HermitShell (single gateway for all devices)                 │
+│         IPv4: 10.0.0.1 on eth1    IPv6: fd00::1 on eth1             │
 │  ═══════════════════════════════════════════════════════════════    │
 │                              │                                       │
 │                              ▼                                       │
 │  ┌─────────────────────────────────────────────────────────────┐    │
-│  │                    nftables (routing policy)                 │    │
+│  │          nftables (dual-stack routing policy)                │    │
 │  ├─────────────────────────────────────────────────────────────┤    │
-│  │ Laptop (10.0.1.2) → Phone (10.0.2.2): ✓ (both TRUSTED)      │    │
-│  │ Laptop (10.0.1.2) → Camera (10.0.3.2): ✓ (TRUSTED can init) │    │
-│  │ Camera (10.0.3.2) → Laptop (10.0.1.2): ✗ (IOT can't init)   │    │
-│  │ Camera (10.0.3.2) → Internet: ✓                              │    │
+│  │ Laptop (10.0.0.3) → Phone (10.0.0.4): ✓ (both TRUSTED)      │    │
+│  │ Laptop (fd00::3) → Camera (fd00::5): ✓ (TRUSTED can init)    │    │
+│  │ Camera (10.0.0.5) → Laptop (10.0.0.3): ✗ (IOT can't init)   │    │
+│  │ Camera (fd00::5) → Internet: ✓                               │    │
 │  │ Any device → mDNS broadcast: ✗ (blocked by default)         │    │
 │  └─────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────┘
@@ -250,26 +260,32 @@ HermitShell provides true device isolation without requiring VLANs, managed swit
 |----------|---------------------|------------------|---------------------------|
 | MAC-based rules | Can bypass via L2 | Can bypass | No |
 | VLANs | Isolated | Requires VLAN-capable AP | Yes |
-| **Per-device subnet** | **Must route through us** | **Must route through us** | **No** |
+| **Per-device /32+/128** | **Must route through us** | **Must route through us** | **No** |
 
 **Why devices can't bypass this:**
 
-- Device A (10.0.1.2/30) wants to reach Device B (10.0.2.2)
-- Device A checks: "Is 10.0.2.2 on my subnet (10.0.1.0/30)?" → No
-- Device A sends packet to its gateway (10.0.1.1) → HermitShell
+- Device A (10.0.0.3/32) wants to reach Device B (10.0.0.4)
+- Device A's DHCP option 121 routes say "all traffic via 10.0.0.1" → sends to gateway
 - HermitShell applies policy, forwards or drops
+- Same for IPv6: Device A (fd00::3/128) routes all traffic via fd00::1
 
-Even if devices are on the same physical switch or WiFi AP, they won't ARP for each other because the IP math says "that's not my network." The only way to bypass this is raw Ethernet frame injection, which requires root access on an already-compromised device.
+Even if devices are on the same physical switch or WiFi AP, they won't ARP for each other because /32 addressing means no other host is on-link. The only way to bypass this is raw Ethernet frame injection, which requires root access on an already-compromised device.
 
 **Address allocation:**
 
 | Range | Purpose |
 |-------|---------|
-| 10.0.0.0/16 | Device subnets |
-| 10.0.X.0/30 | Device X's subnet (10.0.X.1 = gateway, 10.0.X.2 = device) |
+| **IPv4** | |
+| 10.0.0.0/8 | Device address space |
+| 10.0.0.1 | Gateway (router LAN address) |
+| 10.0.0.(id+2)/32 | Device's point-to-point IPv4 address (e.g., device ID 1 = 10.0.0.3) |
 | 10.255.255.0/24 | Management (router UI, SSH) |
+| **IPv6 (ULA)** | |
+| fd00::1 | Gateway (router LAN address) |
+| fd00::(id+2)/128 | Device's ULA IPv6 address (e.g., device ID 1 = fd00::3) |
+| **IPv6 (GUA)** | ISP prefix delegation, if available |
 
-With a /16, we can support 65,534 devices (each using a /30). More than enough for any home.
+With /32 IPv4 addressing in a 10.0.0.0/8 space, we can support 16 million+ devices. More than enough for any home.
 
 **mDNS/Bonjour:**
 
@@ -283,10 +299,11 @@ For devices that legitimately need discovery (e.g., AirPlay, Chromecast), users 
 
 | Choice | Rationale |
 |--------|-----------|
-| **Per-device /30 subnets** | True isolation without VLANs, managed switches, or AP cooperation |
-| **systemd-networkd** | Modern, declarative, handles interfaces + DHCP server in one |
-| **systemd-resolved** | DoT upstream, DNSSEC, caching, zero extra packages |
-| **nftables routing policy** | Per-device forwarding rules based on source/dest subnet |
+| **Per-device /32 IPv4 + /128 IPv6** | True dual-stack isolation without VLANs, managed switches, or AP cooperation |
+| **Custom DHCP (hermitshell-dhcp)** | DHCPv4 with /32 + option 121 routes, DHCPv6 stateful /128 ULA—no off-the-shelf server supports this model |
+| **systemd-networkd** | Modern, declarative interface management |
+| **Blocky** | DNS resolver with DoT upstream, DNSSEC, built-in ad blocking, dual-stack listeners |
+| **nftables dual-stack policy** | Per-device forwarding rules via IPv4 + IPv6 verdict maps (`device_groups_v4` + `device_groups_v6`) |
 | **Host services** | Network services run on host for reliability; container restart doesn't kill network |
 
 ### 2.4 Why the Firewall is Not Containerized
@@ -362,27 +379,31 @@ We use kernel facilities instead of external analyzers:
 
 | Need | Solution |
 |------|----------|
-| Per-device bandwidth | nftables counters keyed by device subnet |
+| Per-device bandwidth | nftables dual-stack counters keyed by device address |
 | Interface-level bandwidth | vnstat (daily/weekly/monthly totals) |
 | Connection logs | conntrack events (new/destroy with byte counts) |
 | Application ID | Port → app name lookup table |
 | Historical data | Agent snapshots counters to SQLite periodically |
 
-**nftables accounting (per-device):**
+**nftables accounting (per-device, dual-stack):**
 ```nft
 table inet accounting {
     chain traffic {
         type filter hook forward priority -50; policy accept;
-        
-        # Count by source subnet (outbound from device)
-        # Device 1 (10.0.1.0/30)
-        ip saddr 10.0.1.0/30 counter name "dev:1:out"
-        ip daddr 10.0.1.0/30 counter name "dev:1:in"
-        
-        # Device 2 (10.0.2.0/30)
-        ip saddr 10.0.2.0/30 counter name "dev:2:out"
-        ip daddr 10.0.2.0/30 counter name "dev:2:in"
-        
+
+        # Count by device address (outbound from device)
+        # Device 1 (10.0.0.3 / fd00::3)
+        ip saddr 10.0.0.3 counter name "dev:1:out"
+        ip daddr 10.0.0.3 counter name "dev:1:in"
+        ip6 saddr fd00::3 counter name "dev:1:out6"
+        ip6 daddr fd00::3 counter name "dev:1:in6"
+
+        # Device 2 (10.0.0.4 / fd00::4)
+        ip saddr 10.0.0.4 counter name "dev:2:out"
+        ip daddr 10.0.0.4 counter name "dev:2:in"
+        ip6 saddr fd00::4 counter name "dev:2:out6"
+        ip6 daddr fd00::4 counter name "dev:2:in6"
+
         # ... generated for each device
     }
 }
@@ -401,12 +422,12 @@ vnstat -i eth0 --json m   # Monthly stats
 
 **conntrack events:**
 ```
-[NEW] tcp src=10.0.1.2 dst=142.250.80.46 sport=54321 dport=443
-[DESTROY] tcp src=10.0.1.2 dst=142.250.80.46 packets=15 bytes=1420
+[NEW] tcp src=10.0.0.3 dst=142.250.80.46 sport=54321 dport=443
+[DESTROY] tcp src=10.0.0.3 dst=142.250.80.46 packets=15 bytes=1420
 ```
 
 Agent streams conntrack events via WebSocket to hermitshell, which:
-1. Maps src IP → device (10.0.X.2 → device ID X)
+1. Maps src IP → device (10.0.0.{id+2} → device ID)
 2. Maps dst port → application name (443=HTTPS, 22=SSH, etc.)
 3. Stores in SQLite for historical queries
 
@@ -502,85 +523,85 @@ IPForward=yes
 # Per-device addresses are added dynamically by the agent
 ```
 
-**Per-device subnet implementation:**
+**Per-device addressing implementation:**
 
-The agent dynamically adds a /30 address for each device:
+The agent configures a single gateway address on the LAN interface. Each device gets a /32 IPv4 and /128 IPv6 address via DHCP:
 
 ```bash
-# When device with MAC aa:bb:cc:dd:ee:ff connects:
-# 1. Agent assigns it device ID 1 → subnet 10.0.1.0/30
-# 2. Agent adds gateway address to br0/eth1:
-ip addr add 10.0.1.1/30 dev eth1
+# Gateway addresses on LAN interface (configured once):
+ip addr add 10.0.0.1/24 dev eth1
+ip -6 addr add fd00::1/64 dev eth1
 
-# 3. Agent configures DHCP to offer 10.0.1.2/30 to that MAC
-# 4. Device gets: IP 10.0.1.2, netmask 255.255.255.252, gateway 10.0.1.1
+# When device with MAC aa:bb:cc:dd:ee:ff connects:
+# 1. Agent assigns it device ID 1 → IPv4 10.0.0.3/32, IPv6 fd00::3/128
+# 2. hermitshell-dhcp offers 10.0.0.3/32 with option 121 route: 0.0.0.0/0 via 10.0.0.1
+# 3. DHCPv6 offers fd00::3/128
+# 4. Device gets: IP 10.0.0.3, /32 netmask, classless route to gateway
+#    + IPv6 fd00::3/128 via DHCPv6 stateful
 ```
 
-HermitShell can have hundreds of addresses on the LAN interface—Linux handles this efficiently.
+The /32 addressing with DHCP option 121 routes ensures devices always route through the gateway, even though they share the same physical segment.
 
-### 4.2 DHCP Server (Per-Device Subnets)
+### 4.2 DHCP Server (Per-Device Dual-Stack)
 
-systemd-networkd's built-in DHCP server doesn't support per-client subnets. HermitShell uses **dnsmasq** for DHCP, configured by the agent.
+No off-the-shelf DHCP server supports the /32 + option 121 + DHCPv6 stateful /128 model. HermitShell uses a custom **hermitshell-dhcp** binary that handles both DHCPv4 and DHCPv6.
 
-**Why dnsmasq for DHCP:**
-- Supports per-host network configuration via `dhcp-host` + `dhcp-range`
-- Can assign different subnet masks per client
-- Lightweight, battle-tested
-- systemd-resolved still handles DNS (dnsmasq only does DHCP)
+**Why a custom DHCP server:**
+- DHCPv4: assigns /32 addresses with DHCP option 121 (classless static routes) to point devices at the gateway
+- DHCPv6: assigns /128 ULA addresses (stateful, not SLAAC) to match the device isolation model
+- Tight integration with the agent via IPC over the agent socket
+- No configuration files to generate and reload—the agent tells the DHCP server about devices directly
 
-```ini
-# /etc/dnsmasq.d/hermitshell.conf
-# Generated by hermitshell-agent - DO NOT EDIT
+**DHCPv4 behavior:**
 
-# Disable DNS (systemd-resolved handles it)
-port=0
+For each approved device, hermitshell-dhcp offers:
+- IP: 10.0.0.(id+2)/32 (point-to-point)
+- Option 121 (classless static route): 0.0.0.0/0 via 10.0.0.1 (forces all traffic through gateway)
+- DNS server: 10.0.0.1
 
-# Listen on LAN interface only
-interface=eth1
-bind-interfaces
+**DHCPv6 behavior:**
 
-# Lease file location
-dhcp-leasefile=/var/lib/hermitshell/dhcp.leases
+hermitshell-dhcp also listens on port 547 (DHCPv6 server):
+- Assigns fd00::(id+2)/128 per device (ULA, stateful)
+- DNS server: fd00::1
+- No SLAAC—Router Advertisements set M=1, O=1 to direct devices to DHCPv6
 
-# Default lease time
-dhcp-lease-max=1000
-
+**Example DHCP assignments:**
+```
 # Device 1: Laptop (TRUSTED)
-dhcp-host=aa:bb:cc:dd:ee:01,10.0.1.2,255.255.255.252,set:dev1
-dhcp-range=tag:dev1,10.0.1.2,10.0.1.2,255.255.255.252,24h
-dhcp-option=tag:dev1,option:router,10.0.1.1
-dhcp-option=tag:dev1,option:dns-server,10.0.1.1
+#   DHCPv4: 10.0.0.3/32, route 0.0.0.0/0 via 10.0.0.1, DNS 10.0.0.1
+#   DHCPv6: fd00::3/128, DNS fd00::1
 
 # Device 2: Phone (TRUSTED)
-dhcp-host=aa:bb:cc:dd:ee:02,10.0.2.2,255.255.255.252,set:dev2
-dhcp-range=tag:dev2,10.0.2.2,10.0.2.2,255.255.255.252,24h
-dhcp-option=tag:dev2,option:router,10.0.2.1
-dhcp-option=tag:dev2,option:dns-server,10.0.2.1
+#   DHCPv4: 10.0.0.4/32, route 0.0.0.0/0 via 10.0.0.1, DNS 10.0.0.1
+#   DHCPv6: fd00::4/128, DNS fd00::1
 
 # Device 3: Camera (IOT)
-dhcp-host=aa:bb:cc:dd:ee:03,10.0.3.2,255.255.255.252,set:dev3
-dhcp-range=tag:dev3,10.0.3.2,10.0.3.2,255.255.255.252,24h
-dhcp-option=tag:dev3,option:router,10.0.3.1
-dhcp-option=tag:dev3,option:dns-server,10.0.3.1
-
-# Unknown devices get quarantine subnet (temporary, until agent assigns permanent)
-dhcp-range=10.254.0.2,10.254.255.254,255.255.255.252,5m
-dhcp-option=option:router,10.254.0.1
-dhcp-option=option:dns-server,10.254.0.1
+#   DHCPv4: 10.0.0.5/32, route 0.0.0.0/0 via 10.0.0.1, DNS 10.0.0.1
+#   DHCPv6: fd00::5/128, DNS fd00::1
 ```
 
 **New device flow:**
 
 1. Unknown MAC requests DHCP
-2. dnsmasq assigns from quarantine pool (10.254.x.x/30, short lease)
-3. Agent detects new lease, creates device record in DB
-4. Agent assigns permanent device ID → permanent /30 subnet
-5. Agent regenerates dnsmasq.conf with new `dhcp-host` entry
-6. Agent adds gateway address to LAN interface: `ip addr add 10.0.X.1/30 dev eth1`
-7. Agent reloads dnsmasq: `systemctl reload dnsmasq`
-8. Device's next DHCP renew gets permanent subnet
+2. hermitshell-dhcp assigns from quarantine pool (10.254.x.x, short lease)
+3. Agent detects new device, creates device record in DB
+4. Agent assigns permanent device ID → permanent /32 IPv4 + /128 IPv6 address
+5. Agent notifies hermitshell-dhcp of the new device via IPC
+6. Agent adds route for the device address on LAN interface
+7. Device's next DHCP renew gets permanent address
+8. DHCPv6 assigns matching ULA address
 
-**Quarantine subnet handling:**
+**Router Advertisements:**
+
+The agent sends ICMPv6 Router Advertisements on the LAN interface every 30 seconds with:
+- M=1 (Managed address configuration) — directs devices to use DHCPv6 for addresses
+- O=1 (Other configuration) — directs devices to use DHCPv6 for DNS, etc.
+- No prefix information (prevents SLAAC)
+
+This ensures devices use DHCPv6 stateful, matching the isolation model.
+
+**Quarantine handling:**
 
 Quarantine devices (10.254.x.x) get:
 - Internet access (NAT works normally)
@@ -593,10 +614,10 @@ Quarantine devices (10.254.x.x) get:
 chain forward {
     # Quarantine can reach internet
     ip saddr 10.254.0.0/16 oifname "eth0" accept
-    
+
     # Quarantine can reach router UI
     ip saddr 10.254.0.0/16 ip daddr 10.255.255.1 tcp dport 8080 accept
-    
+
     # Quarantine cannot reach anything else
     ip saddr 10.254.0.0/16 drop
 }
@@ -604,62 +625,62 @@ chain forward {
 
 **Reading leases:**
 ```bash
-# Leases in dnsmasq format
-cat /var/lib/hermitshell/dhcp.leases
-# Format: timestamp MAC IP hostname client-id
-
-# Or via agent API
+# Via agent API
 curl -s http://localhost:9999/api/leases
 ```
 
-### 4.3 systemd-resolved (DNS with DoT)
+### 4.3 Blocky (DNS with DoT + Ad Blocking)
 
-systemd-resolved provides DNS resolution with DNS-over-TLS upstream.
+Blocky provides DNS resolution with DNS-over-TLS upstream, DNSSEC validation, and built-in ad blocking. It listens on both IPv4 and IPv6.
 
-```ini
-# /etc/systemd/resolved.conf.d/hermitshell.conf
-[Resolve]
-DNS=1.1.1.1#cloudflare-dns.com 9.9.9.9#dns.quad9.net
-DNSOverTLS=yes
-DNSSEC=yes
-Domains=~.
+```yaml
+# /etc/hermitshell/blocky.yml
+# Generated by hermitshell-agent - DO NOT EDIT
 
-# Listen on LAN interfaces (not just localhost)
-DNSStubListenerExtra=10.0.10.1
-DNSStubListenerExtra=10.0.20.1
-DNSStubListenerExtra=10.0.30.1
-DNSStubListenerExtra=10.0.50.1
+upstream:
+  default:
+    - tcp-tls:1.1.1.1:853#cloudflare-dns.com
+    - tcp-tls:9.9.9.9:853#dns.quad9.net
+
+# Listen on both IPv4 and IPv6 LAN addresses
+ports:
+  dns: 10.0.0.1:53,[fd00::1]:53
+
+# Ad blocking via blocklists
+blocking:
+  denylists:
+    ads:
+      - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+  clientGroupsBlock:
+    default:
+      - ads
+
+# DNSSEC validation
+dnssec: true
 ```
 
-**Why systemd-resolved:**
+**Why Blocky:**
 - DNS-over-TLS to upstream (ISP can't see queries)
 - DNSSEC validation
-- Caching
-- Built into systemd (no extra packages)
+- Built-in ad/tracker blocking with blocklists
+- Dual-stack: listens on both 10.0.0.1:53 and [fd00::1]:53
+- Lightweight, single binary, zero runtime dependencies
 
-**Query logging limitation:**
+**Query logging:**
 
-systemd-resolved lacks structured query logging. Workarounds:
-
-1. **Debug mode** (verbose, includes internal state):
-   ```bash
-   resolvectl log-level debug
-   journalctl -u systemd-resolved -f | grep "Looking up RR for"
-   ```
-
-2. **nftables DNS logging** (recommended - captures source device):
+Blocky provides structured query logging natively, including source device attribution. Additionally, nftables DNS logging captures source device at the firewall level:
    See Section 4.4
 
 ### 4.4 DNS Query Logging via nftables
 
-Since systemd-resolved doesn't log which device made which query, we capture this at the firewall level using nflog:
+While Blocky provides query logging, we also capture DNS queries at the firewall level using nflog for per-device attribution:
 
 ```nft
 table inet dns_log {
     chain prerouting {
         type filter hook prerouting priority -150; policy accept;
         
-        # Log all DNS queries from LAN before forwarding to resolved
+        # Log all DNS queries from LAN before forwarding to Blocky
         iifname "eth1.*" udp dport 53 log prefix "DNS: " group 100
         iifname "eth1.*" tcp dport 53 log prefix "DNS: " group 100
     }
@@ -682,33 +703,39 @@ Or the agent directly reads from nflog:
 
 **Log format:**
 ```json
-{"ts": "2025-02-03T14:30:00Z", "src_mac": "aa:bb:cc:dd:ee:ff", "src_ip": "10.0.20.15", "domain": "api.Ring.com", "type": "A"}
-{"ts": "2025-02-03T14:30:01Z", "src_mac": "aa:bb:cc:dd:ee:ff", "src_ip": "10.0.20.15", "domain": "firmware.Ring.com", "type": "A"}
+{"ts": "2025-02-03T14:30:00Z", "src_mac": "aa:bb:cc:dd:ee:ff", "src_ip": "10.0.0.17", "domain": "api.Ring.com", "type": "A"}
+{"ts": "2025-02-03T14:30:01Z", "src_mac": "aa:bb:cc:dd:ee:ff", "src_ip": "10.0.0.17", "domain": "firmware.Ring.com", "type": "A"}
 ```
 
-This gives us per-device DNS visibility without relying on resolved's limited logging.
-
-**Future improvement:** Contribute structured query logging to systemd-resolved upstream (issue #20264 tracks this).
+This gives us per-device DNS visibility as a complement to Blocky's built-in logging.
 
 ### 4.5 Ad Blocking
 
-Without dnsmasq's hosts file or Unbound's RPZ, ad blocking options with pure systemd:
+Blocky provides built-in ad and tracker blocking via DNS blocklists:
 
-1. **Response Policy Zone via nftables** - Drop packets to known ad server IPs (limited, IPs change)
+1. **Local blocklists** (default) - Blocky loads community blocklists (StevenBlack, EasyList, etc.) and returns NXDOMAIN for blocked domains
+2. **Custom blocklists** - Users can add their own deny/allow lists via configuration
+3. **External DNS** - Users who prefer Pi-hole/AdGuard can use `provider = "external"` to bypass Blocky entirely
 
-2. **External blocklist DNS** - Point resolved at a filtering upstream like NextDNS or Quad9
+Ad blocking works on both IPv4 and IPv6 since Blocky listens on both 10.0.0.1:53 and [fd00::1]:53.
 
-3. **Local blocklist integration** - V2 feature: patch resolved or add a lightweight filtering proxy
-
-For V1, recommend users who want ad blocking either:
-- Use `provider = "external"` with Pi-hole/AdGuard
-- Use a filtering upstream like `dns.adguard.com` or NextDNS
-
-```ini
-# /etc/systemd/resolved.conf.d/adblocking.conf
-[Resolve]
-DNS=94.140.14.14#dns.adguard.com
-DNSOverTLS=yes
+```yaml
+# /etc/hermitshell/blocky.yml (ad blocking section)
+blocking:
+  denylists:
+    ads:
+      - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+      - https://adaway.org/hosts.txt
+    tracking:
+      - https://v.firebog.net/hosts/Easyprivacy.txt
+  allowlists:
+    ads:
+      - |
+        # User-defined exceptions
+  clientGroupsBlock:
+    default:
+      - ads
+      - tracking
 ```
 
 ---
@@ -734,7 +761,7 @@ upstream = ["1.1.1.1#cloudflare-dns.com", "9.9.9.9#dns.quad9.net"]
 dns_over_tls = true
 dnssec = true
 
-# "internal" = systemd-resolved managed by HermitShell
+# "internal" = Blocky managed by HermitShell (dual-stack, ad blocking)
 # "external" = user manages their own DNS (Pi-hole, AdGuard, etc.)
 provider = "internal"
 
@@ -819,9 +846,9 @@ hermitshell-agent ALL=(ALL) NOPASSWD: /usr/sbin/nft list counters
 hermitshell-agent ALL=(ALL) NOPASSWD: /bin/systemctl reload systemd-networkd
 hermitshell-agent ALL=(ALL) NOPASSWD: /bin/networkctl reload
 
-# systemd-resolved
-hermitshell-agent ALL=(ALL) NOPASSWD: /bin/systemctl reload systemd-resolved
-hermitshell-agent ALL=(ALL) NOPASSWD: /usr/bin/resolvectl flush-caches
+# Blocky DNS
+hermitshell-agent ALL=(ALL) NOPASSWD: /bin/systemctl reload blocky
+hermitshell-agent ALL=(ALL) NOPASSWD: /bin/systemctl restart blocky
 
 # Monitoring
 hermitshell-agent ALL=(ALL) NOPASSWD: /usr/sbin/conntrack -E -o xml
@@ -835,7 +862,7 @@ hermitshell-agent ALL=(ALL) NOPASSWD: /sbin/sysctl -w *
 ```ini
 [Unit]
 Description=HermitShell Network Agent
-After=network-online.target nftables.service systemd-networkd.service systemd-resolved.service
+After=network-online.target nftables.service systemd-networkd.service blocky.service
 Wants=network-online.target
 
 [Service]
@@ -855,16 +882,20 @@ WantedBy=multi-user.target
 Note: We don't add systemd sandboxing (ProtectSystem, etc.) to the agent because it legitimately needs to run privileged commands via sudo. The sudoers whitelist is the security boundary. `CAP_NET_ADMIN` is needed to read nflog for DNS query logging.
 
 **Agent responsibilities:**
-- Generate and apply nftables rulesets (including device group MAC sets)
-- Update MAC address sets when devices are approved/moved/blocked
-- Generate systemd-networkd configs for LAN + DHCP (VLANs optional)
-- Generate systemd-resolved config (writes to /etc/systemd/resolved.conf.d/)
+- Generate and apply dual-stack nftables rulesets (including device group verdict maps `device_groups_v4` + `device_groups_v6`)
+- Update verdict maps when devices are approved/moved/blocked
+- Generate systemd-networkd configs for LAN interfaces (VLANs optional)
+- Generate Blocky DNS config (writes to /etc/hermitshell/blocky.yml)
+- Manage hermitshell-dhcp via IPC (DHCPv4 /32 + option 121, DHCPv6 stateful /128 ULA)
+- Send ICMPv6 Router Advertisements (M=1, O=1) on LAN every 30s
+- Run DHCPv6-PD client on WAN to request ISP prefix delegation
 - Subscribe to nflog group 100 for DNS query logging
 - Parse DNS packets and log per-device queries to SQLite
-- Read nftables counters (polled every 10s)
+- Read nftables counters (polled every 10s, dual-stack)
 - Stream conntrack events (real-time via WebSocket)
 - Report vnstat interface stats
-- Configure host sysctl flags (including proxy ARP for isolation)
+- Configure host sysctl flags (including proxy ARP and NDP proxy for isolation)
+- Manage IPv6 firewall pinholes for inbound traffic to devices with global addresses
 - Backup configs before changes
 
 ---
@@ -875,11 +906,12 @@ Note: We don't add systemd sandboxing (ProtectSystem, etc.) to the agent because
 
 ```sql
 CREATE TABLE devices (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,  -- Device ID, determines subnet (10.0.{id}.0/30)
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,  -- Device ID, determines address (10.0.0.{id+2}/32 + fd00::{id+2}/128)
     mac         TEXT NOT NULL UNIQUE,
-    ip          TEXT,              -- Current IP (10.0.{id}.2)
-    subnet      TEXT,              -- Assigned subnet (10.0.{id}.0/30)
-    gateway     TEXT,              -- Gateway IP (10.0.{id}.1)
+    ip          TEXT,              -- Current IPv4 (10.0.0.{id+2})
+    ip6         TEXT,              -- Current IPv6 ULA (fd00::{id+2})
+    subnet      TEXT,              -- Assigned IPv4 address (10.0.0.{id+2}/32)
+    gateway     TEXT,              -- Gateway IP (10.0.0.1)
     hostname    TEXT,
     name        TEXT,              -- User-assigned friendly name
     vendor      TEXT,              -- OUI lookup
@@ -895,16 +927,16 @@ CREATE TABLE devices (
 );
 
 -- Device states:
--- approved = 0: In quarantine (10.254.x.x temporary subnet), awaiting approval  
--- approved = 1: Approved, has permanent subnet (10.0.{id}.0/30)
+-- approved = 0: In quarantine (10.254.x.x temporary address), awaiting approval
+-- approved = 1: Approved, has permanent /32 IPv4 + /128 IPv6 address
 -- blocked = 1:  All traffic dropped regardless of group
 
 -- When device is approved:
--- 1. Device ID (INTEGER) determines subnet: 10.0.{id}.0/30
--- 2. Device gets IP: 10.0.{id}.2
--- 3. Gateway is: 10.0.{id}.1
--- 4. Agent adds 10.0.{id}.1/30 to LAN interface
--- 5. Agent adds dhcp-host entry to dnsmasq
+-- 1. Device ID (INTEGER) determines address: 10.0.0.{id+2}/32 + fd00::{id+2}/128
+-- 2. Device gets IPv4: 10.0.0.{id+2}, IPv6: fd00::{id+2}
+-- 3. Gateway is: 10.0.0.1 (IPv4) / fd00::1 (IPv6)
+-- 4. Agent adds route for device on LAN interface
+-- 5. Agent notifies hermitshell-dhcp of new device via IPC
 ```
 
 ### 4.2 Traffic Stats (per-device, hourly rollups)
@@ -957,7 +989,7 @@ CREATE TABLE firewall_rules (
 
 ### 7.5 Device Groups
 
-Device groups define isolation policies enforced via per-device subnet routing rules.
+Device groups define isolation policies enforced via per-device dual-stack routing rules.
 
 ```sql
 CREATE TABLE device_groups (
@@ -983,102 +1015,99 @@ INSERT INTO device_groups VALUES
 ```
 ```
 
-**How it works:** Each device gets its own /30 subnet. The agent generates nftables rules based on each device's group membership:
+**How it works:** Each device gets its own /32 IPv4 and /128 IPv6 address. The agent generates dual-stack nftables rules based on each device's group membership using verdict maps:
 
 ```nft
 table inet hermitshell {
-    # Device subnets by group (populated by agent)
-    # Format: 10.0.X.0/30 where X is device ID
-    set trusted_subnets { type ipv4_addr; flags interval; }
-    set iot_subnets { type ipv4_addr; flags interval; }
-    set guest_subnets { type ipv4_addr; flags interval; }
-    set server_subnets { type ipv4_addr; flags interval; }
+    # Dual-stack verdict maps (populated by agent)
+    # Maps device address → group for policy routing
+    map device_groups_v4 { type ipv4_addr : verdict; }
+    map device_groups_v6 { type ipv6_addr : verdict; }
     # Quarantine uses 10.254.0.0/16
     
     chain forward {
         type filter hook forward priority 0; policy drop;
-        
+
         # Allow established/related first (fast path)
         ct state established,related accept
-        
+
         # Quarantine (10.254.x.x): internet only
         ip saddr 10.254.0.0/16 oifname "eth0" accept
         ip saddr 10.254.0.0/16 ip daddr 10.255.255.1 tcp dport 8080 accept  # Router UI
         ip saddr 10.254.0.0/16 drop
-        
-        # Guest: internet only
-        ip saddr @guest_subnets oifname "eth0" accept
-        ip saddr @guest_subnets drop
-        
-        # IoT: internet + can receive from trusted/server
-        ip saddr @iot_subnets oifname "eth0" accept
-        ip daddr @iot_subnets ip saddr @trusted_subnets accept
-        ip daddr @iot_subnets ip saddr @server_subnets accept
-        ip saddr @iot_subnets drop
-        
-        # Trusted: can reach internet and each other
-        ip saddr @trusted_subnets oifname "eth0" accept
-        ip saddr @trusted_subnets ip daddr @trusted_subnets accept
-        ip saddr @trusted_subnets ip daddr @server_subnets accept
-        ip saddr @trusted_subnets ip daddr @iot_subnets accept
-        
-        # Servers: full access
-        ip saddr @server_subnets accept
+
+        # Dual-stack verdict map lookup — routes to per-group chains
+        ip saddr vmap @device_groups_v4
+        ip6 saddr vmap @device_groups_v6
     }
-    
+
+    # Per-group chains (jumped to by verdict map)
+    chain group_trusted { oifname "eth0" accept; accept; }
+    chain group_iot { oifname "eth0" accept; drop; }
+    chain group_guest { oifname "eth0" accept; drop; }
+    chain group_server { accept; }
+
     chain input {
         type filter hook input priority 0; policy drop;
-        
+
         # Allow established/related
         ct state established,related accept
-        
+
         # Allow loopback
         iif lo accept
-        
-        # Allow DHCP from LAN
+
+        # Allow DHCP from LAN (DHCPv4 + DHCPv6)
         iifname "eth1" udp dport 67 accept
-        
-        # Allow DNS from all device subnets
+        iifname "eth1" udp dport 547 accept
+
+        # Allow DNS from all devices (dual-stack)
         ip saddr 10.0.0.0/8 udp dport 53 accept
         ip saddr 10.0.0.0/8 tcp dport 53 accept
+        ip6 saddr fd00::/8 udp dport 53 accept
+        ip6 saddr fd00::/8 tcp dport 53 accept
         ip saddr 10.254.0.0/16 udp dport 53 accept
         ip saddr 10.254.0.0/16 tcp dport 53 accept
-        
+
+        # Allow ICMPv6 NDP (required for IPv6 neighbor discovery)
+        ip6 nexthdr icmpv6 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } accept
+
         # Allow router UI from trusted + quarantine (for approval)
-        ip saddr @trusted_subnets tcp dport 8080 accept
+        ip saddr vmap @device_groups_v4 tcp dport 8080 accept
         ip saddr 10.254.0.0/16 tcp dport 8080 accept
-        
+
         # Allow SSH from trusted only
-        ip saddr @trusted_subnets tcp dport 22 accept
+        ip saddr vmap @device_groups_v4 tcp dport 22 accept
     }
 }
 ```
 
-**Example populated sets:**
+**Example populated verdict maps:**
 
 ```nft
 # After devices are assigned:
-# Device 1 (Laptop) = trusted, subnet 10.0.1.0/30
-# Device 2 (Phone) = trusted, subnet 10.0.2.0/30  
-# Device 3 (Camera) = iot, subnet 10.0.3.0/30
-# Device 4 (Smart TV) = guest, subnet 10.0.4.0/30
+# Device 1 (Laptop) = trusted, IPv4 10.0.0.3, IPv6 fd00::3
+# Device 2 (Phone) = trusted, IPv4 10.0.0.4, IPv6 fd00::4
+# Device 3 (Camera) = iot, IPv4 10.0.0.5, IPv6 fd00::5
+# Device 4 (Smart TV) = guest, IPv4 10.0.0.6, IPv6 fd00::6
 
-set trusted_subnets {
-    type ipv4_addr
-    flags interval
-    elements = { 10.0.1.0/30, 10.0.2.0/30 }
+map device_groups_v4 {
+    type ipv4_addr : verdict
+    elements = {
+        10.0.0.3 : jump group_trusted,
+        10.0.0.4 : jump group_trusted,
+        10.0.0.5 : jump group_iot,
+        10.0.0.6 : jump group_guest,
+    }
 }
 
-set iot_subnets {
-    type ipv4_addr
-    flags interval
-    elements = { 10.0.3.0/30 }
-}
-
-set guest_subnets {
-    type ipv4_addr
-    flags interval
-    elements = { 10.0.4.0/30 }
+map device_groups_v6 {
+    type ipv6_addr : verdict
+    elements = {
+        fd00::3 : jump group_trusted,
+        fd00::4 : jump group_trusted,
+        fd00::5 : jump group_iot,
+        fd00::6 : jump group_guest,
+    }
 }
 ```
 
@@ -1098,22 +1127,23 @@ CREATE TABLE device_allow_rules (
 ```
 
 ```nft
-# Generated per-device allow rules
+# Generated per-device allow rules (dual-stack)
 chain device_overrides {
-    # Laptop (10.0.1.2) can reach Camera (10.0.3.2) on any port
-    ip saddr 10.0.1.0/30 ip daddr 10.0.3.0/30 accept
+    # Laptop (10.0.0.3 / fd00::3) can reach Camera (10.0.0.5 / fd00::5) on any port
+    ip saddr 10.0.0.3 ip daddr 10.0.0.5 accept
+    ip6 saddr fd00::3 ip6 daddr fd00::5 accept
 }
 ```
 
 ### 4.6 VLANs (Optional, for Advanced Users)
 
-Per-device subnets provide strong isolation without VLANs. VLANs are only useful for:
+Per-device /32+/128 addressing provides strong isolation without VLANs. VLANs are only useful for:
 
 1. **Multi-site or complex topologies** - Extending isolation across multiple switches/buildings
 2. **Legacy devices** - Devices that need to be on a specific subnet for compatibility
-3. **Defense in depth** - Additional L2 isolation on top of per-device subnets
+3. **Defense in depth** - Additional L2 isolation on top of per-device addressing
 
-If you need VLANs, you need VLAN-capable switches and APs. For most home users, per-device subnets are simpler and work with any hardware.
+If you need VLANs, you need VLAN-capable switches and APs. For most home users, per-device /32+/128 addressing is simpler and works with any hardware.
 
 ---
 
@@ -1199,7 +1229,7 @@ Internal API on localhost:9999 (authenticated with shared secret).
 ```json
 // PUT /custom-rules
 {
-  "rules": "chain custom_forward_early {\n    ip saddr 10.0.42.2 accept\n}"
+  "rules": "chain custom_forward_early {\n    ip saddr 10.0.0.44 accept\n}"
 }
 
 // Response (success)
@@ -1494,13 +1524,13 @@ define WAN = eth0
 define LAN = eth1
 
 table inet filter {
-    # ============ DEVICE GROUP SETS ============
+    # ============ DUAL-STACK VERDICT MAPS ============
     # Populated dynamically by hermitshell-agent
-    set trusted_macs { type ether_addr; }
-    set iot_macs { type ether_addr; }
-    set guest_macs { type ether_addr; }
-    set server_macs { type ether_addr; }
-    set quarantine_macs { type ether_addr; }
+    # Maps device address → group chain for policy routing
+    map device_groups_v4 { type ipv4_addr : verdict; }
+    map device_groups_v6 { type ipv6_addr : verdict; }
+
+    # MAC-based sets for blocked devices and flat mode
     set blocked_macs { type ether_addr; }
 
     # ============ CUSTOM CHAINS (user-managed) ============
@@ -1550,15 +1580,19 @@ table inet filter {
             mld2-listener-report
         } accept
 
-        # DHCP server
+        # DHCP server (DHCPv4 + DHCPv6)
         udp dport { 67, 68 } accept
+        iifname $LAN udp dport 547 accept
 
-        # DNS (will be redirected to local resolver)
+        # DNS (dual-stack, will be redirected to Blocky)
         tcp dport 53 accept
         udp dport 53 accept
 
-        # DHCPv6 client (from ISP)
+        # DHCPv6 client (from ISP, for prefix delegation)
         iifname $WAN udp dport 546 accept
+
+        # RA Guard: only allow Router Advertisements from this router
+        iifname $LAN ip6 nexthdr icmpv6 icmpv6 type nd-router-advert drop
 
         # Web UI - from LAN only, trusted devices only
         iifname $LAN ether saddr @trusted_macs tcp dport 8080 accept
@@ -1595,8 +1629,19 @@ table inet filter {
             echo-reply
         } accept
 
-        # Apply group isolation policy
-        jump group_policy
+        # NDP allow (required for IPv6 neighbor discovery through router)
+        ip6 nexthdr icmpv6 icmpv6 type {
+            nd-neighbor-solicit,
+            nd-neighbor-advert
+        } accept
+
+        # Dual-stack verdict map lookup — routes to per-group chains
+        ip saddr vmap @device_groups_v4
+        ip6 saddr vmap @device_groups_v6
+
+        # IPv6 pinholes: inbound traffic to devices with global addresses
+        # (replaces DNAT/port forwarding for IPv6)
+        jump ipv6_pinholes
 
         # Custom rules (late - last chance before drop)
         jump custom_forward_late
@@ -1605,40 +1650,54 @@ table inet filter {
         log prefix "[HERMIT:FORWARD:DROP] " drop
     }
 
-    # ============ GROUP ISOLATION POLICY ============
-    chain group_policy {
+    # ============ PER-GROUP CHAINS (jumped to by verdict maps) ============
+    chain group_trusted {
         # Trusted: full access to internet and LAN
-        ether saddr @trusted_macs accept
+        accept
+    }
 
+    chain group_server {
         # Servers: full access to internet and LAN
-        ether saddr @server_macs accept
+        accept
+    }
 
+    chain group_iot {
         # IoT: internet only, no LAN initiation
-        # (trusted can initiate TO iot, but iot can't initiate TO trusted)
-        ether saddr @iot_macs oifname $WAN accept
-        ether saddr @iot_macs ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } drop
-        ether daddr @iot_macs ether saddr @trusted_macs accept
+        oifname $WAN accept
+        drop
+    }
 
-        # Guest: internet only, isolated from all LAN including other guests
-        ether saddr @guest_macs oifname $WAN accept
-        ether saddr @guest_macs ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } drop
+    chain group_guest {
+        # Guest: internet only, isolated from all LAN
+        oifname $WAN accept
+        drop
+    }
 
+    chain group_quarantine {
         # Quarantine: internet only, fully isolated
-        ether saddr @quarantine_macs oifname $WAN accept
-        ether saddr @quarantine_macs ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } drop
+        oifname $WAN accept
+        drop
+    }
+
+    # ============ IPv6 PINHOLES ============
+    chain ipv6_pinholes {
+        # Dynamically populated by hermitshell-agent
+        # Allows inbound IPv6 traffic to devices with global addresses
+        # Example: ip6 daddr 2001:db8::3 tcp dport 443 accept
     }
 
     # ============ PER-DEVICE RULES ============
     chain device_rules {
         # Dynamically populated by hermitshell
         # Example: Allow specific IoT device to reach a server
-        # ether saddr AA:BB:CC:DD:EE:FF ip daddr 192.168.1.50 accept
+        # ip saddr 10.0.0.5 ip daddr 10.0.0.10 accept
+        # ip6 saddr fd00::5 ip6 daddr fd00::10 accept
     }
 
     # ============ OUTPUT CHAIN ============
     chain output {
         type filter hook output priority 0; policy accept;
-        
+
         # Custom rules
         jump custom_output
     }
@@ -1655,7 +1714,7 @@ table ip nat {
         # Custom rules (before HermitShell NAT)
         jump custom_prerouting
 
-        # Force all DNS to local resolver (flat network)
+        # Force all DNS to Blocky (dual-stack)
         iifname $LAN tcp dport 53 redirect to :53
         iifname $LAN udp dport 53 redirect to :53
 
@@ -1669,7 +1728,7 @@ table ip nat {
         # Custom rules (before masquerade)
         jump custom_postrouting
 
-        # Masquerade outbound traffic
+        # Masquerade outbound IPv4 traffic (no NAT66 for ULA - LAN only)
         oifname $WAN masquerade
     }
 }
@@ -1678,9 +1737,11 @@ table inet accounting {
     chain traffic {
         type filter hook forward priority -50; policy accept;
 
-        # Per-device counters populated dynamically
-        # Example: ether saddr AA:BB:CC:DD:EE:FF counter name "dev:AA:BB:CC:DD:EE:FF:tx"
-        # Example: ether daddr AA:BB:CC:DD:EE:FF counter name "dev:AA:BB:CC:DD:EE:FF:rx"
+        # Per-device dual-stack counters populated dynamically
+        # Example: ip saddr 10.0.0.3 counter name "dev:1:tx"
+        # Example: ip daddr 10.0.0.3 counter name "dev:1:rx"
+        # Example: ip6 saddr fd00::3 counter name "dev:1:tx6"
+        # Example: ip6 daddr fd00::3 counter name "dev:1:rx6"
     }
 }
 ```
@@ -1744,24 +1805,24 @@ When the `networking.service` recreates interfaces, the `ifindex` changes. Servi
 
 **Problem:**
 ```
-# dnsmasq binds to br0 with ifindex 47
-# networking.service restarts, deletes/recreates br0
-# New br0 has ifindex 48
-# dnsmasq's socket still bound to ifindex 47 → silently fails
+# hermitshell-dhcp binds to eth1 with ifindex 47
+# networking.service restarts, deletes/recreates eth1
+# New eth1 has ifindex 48
+# hermitshell-dhcp's socket still bound to ifindex 47 → silently fails
 ```
 
 **Solution - systemd unit overrides:**
 
 ```ini
-# /etc/systemd/system/dnsmasq.service.d/hermitshell.conf
+# /etc/systemd/system/hermitshell-dhcp.service.d/hermitshell.conf
 [Unit]
-# Restart dnsmasq when networking restarts
+# Restart DHCP server when networking restarts
 PartOf=networking.service
 
 # /etc/systemd/system/networking.service.d/hermitshell.conf
 [Unit]
 # networking.service controls these
-ConsistsOf=dnsmasq.service hermitshell-agent.service
+ConsistsOf=hermitshell-dhcp.service hermitshell-agent.service
 ```
 
 The agent creates these overrides during installation.
@@ -1854,20 +1915,20 @@ If validation fails, custom rules are skipped and agent logs a warning.
 ```nft
 # /etc/hermitshell/custom-rules.nft
 
-# Map external IP 203.0.113.50 to internal device at 10.0.42.2
+# Map external IP 203.0.113.50 to internal device at 10.0.0.44
 # (Assumes you have multiple public IPs from your ISP)
 
 chain custom_prerouting {
-    ip daddr 203.0.113.50 dnat to 10.0.42.2
+    ip daddr 203.0.113.50 dnat to 10.0.0.44
 }
 
 chain custom_postrouting {
-    ip saddr 10.0.42.2 oif eth0 snat to 203.0.113.50
+    ip saddr 10.0.0.44 oif eth0 snat to 203.0.113.50
 }
 
 chain custom_forward {
     # Allow inbound to the NAT'd device
-    ip daddr 10.0.42.2 ct state new accept
+    ip daddr 10.0.0.44 ct state new accept
 }
 ```
 
@@ -1876,15 +1937,15 @@ chain custom_forward {
 ```nft
 chain custom_prerouting {
     # External access (from WAN)
-    iif eth0 ip daddr 203.0.113.50 tcp dport 443 dnat to 10.0.42.2:443
-    
+    iif eth0 ip daddr 203.0.113.50 tcp dport 443 dnat to 10.0.0.44:443
+
     # Hairpin (from LAN, accessing external IP)
-    iif eth1 ip daddr 203.0.113.50 tcp dport 443 dnat to 10.0.42.2:443
+    iif eth1 ip daddr 203.0.113.50 tcp dport 443 dnat to 10.0.0.44:443
 }
 
 chain custom_postrouting {
     # Hairpin: masquerade so return traffic comes back through router
-    ip saddr 10.0.0.0/16 ip daddr 10.0.42.2 tcp dport 443 masquerade
+    ip saddr 10.0.0.0/8 ip daddr 10.0.0.44 tcp dport 443 masquerade
 }
 ```
 
@@ -1892,8 +1953,8 @@ chain custom_postrouting {
 
 ```nft
 chain custom_forward {
-    # Mark traffic from device 10.0.15.2 (device ID 15)
-    ip saddr 10.0.15.2 meta mark set 0x1
+    # Mark traffic from device 10.0.0.17 (device ID 15)
+    ip saddr 10.0.0.17 meta mark set 0x1
 }
 
 # Then use ip rule + routing table:
@@ -2075,7 +2136,7 @@ echo "Access at http://$(hostname -I | awk '{print $1}'):8080"
 /data/hermitshell/
 ├── config/hermitshell.toml
 ├── db/hermitshell.db
-├── dnsmasq/*.conf
+├── blocky.yml
 ├── leases/*.leases
 └── backups/
 
@@ -2104,8 +2165,9 @@ echo "Access at http://$(hostname -I | awk '{print $1}'):8080"
 | Frontend | Rust, Leptos, Tailwind |
 | Charts | ApexCharts (via apexcharts-rs) |
 | Agent | Rust (single static binary) |
-| DHCP | dnsmasq |
-| Firewall | nftables |
+| DHCP | hermitshell-dhcp (custom, DHCPv4 /32 + option 121, DHCPv6 stateful /128) |
+| DNS | Blocky (DoT, DNSSEC, ad blocking, dual-stack) |
+| Firewall | nftables (dual-stack, verdict maps, RA Guard) |
 
 ---
 
@@ -2224,8 +2286,8 @@ Router testing without breaking your actual network:
 - **pytest** or Rust test harness for assertions
 
 **Test scenarios:**
-- New device appears → lands in quarantine with temporary /30 subnet
-- Approve device → assigned to group, gets permanent /30 subnet
+- New device appears → lands in quarantine with temporary address
+- Approve device → assigned to group, gets permanent /32 IPv4 + /128 IPv6 address
 - Block device → loses connectivity
 - Quarantine isolation → device can't see other quarantine devices
 - Group isolation → IoT devices can't initiate connections to Trusted devices
@@ -2305,8 +2367,8 @@ jobs:
 
 ### 17.1 Core Enhancements
 
-- [ ] **IPv6 dual-stack support** (GUA + ULA, radvd, DHCPv6-PD)
-- [ ] **WireGuard VPN** for remote access
+- [x] **IPv6 dual-stack support** (ULA + GUA via DHCPv6-PD, DHCPv6 stateful, ICMPv6 RA, IPv6 firewall pinholes) — implemented
+- [x] **WireGuard VPN** for remote access (dual-stack peers with IPv4 + IPv6 AllowedIPs) — implemented
 - [ ] Device profiles / security groups (Neutron-style)
 - [ ] Bandwidth quotas
 - [ ] Scheduled rules (parental controls)
@@ -2366,7 +2428,7 @@ runZero tells you *what* a device is. HermitShell controls *where* it can go. Bu
 Using conntrack + DNS logs we're already collecting, build per-device profiles:
 
 ```
-Device: Ring Doorbell (10.0.20.15)
+Device: Ring Doorbell (10.0.0.17 / fd00::17)
 Normal behavior (learned over 30 days):
   - Talks to: 52.*.*.* (AWS), 54.*.*.* (AWS), ntp.ubuntu.com
   - Ports: 443 (HTTPS), 123 (NTP), 8555 (Ring proprietary)
@@ -2425,7 +2487,7 @@ compromised IPs, dismantled by FBI/DOJ May 2024). Detection heuristics:
   Labs) to flag connections to known proxy relay/C2 infrastructure.
 
 ```
-⚠️ Anomaly: Samsung Smart TV (10.0.8.2)
+⚠️ Anomaly: Samsung Smart TV (10.0.0.10 / fd00::10)
   - 347 unique destination IPs in past hour (baseline: 12)
   - Upload/download ratio: 0.83 (baseline: 0.05)
   - 4 connections to known IPIDEA relay IPs (Spur feed)
@@ -2448,7 +2510,7 @@ Most consumer routers only filter inbound. Privacy users care about what's *leav
 
 #### DNS as a Full Privacy Layer
 Not just "set your DNS server" but the complete stack:
-- Local recursive resolution via Unbound (no third-party trust)
+- Local recursive resolution via Blocky with upstream DoT (minimal third-party trust)
 - DNS-over-HTTPS/TLS for forwarded queries
 - **Transparent DNS interception** (force ALL port 53 traffic through router, even when devices hardcode their own resolvers)
 - Per-device DNS policies (kids get filtered, your laptop gets unfiltered)
@@ -2680,7 +2742,8 @@ This section addresses architectural concerns learned from studying production L
 | Service | If it fails | Network impact | Recovery |
 |---------|-------------|----------------|----------|
 | systemd-networkd | VLANs may not come up on reboot | Existing VLANs persist until reboot | `systemctl restart systemd-networkd` |
-| systemd-resolved | DNS stops | No DNS resolution | `systemctl restart systemd-resolved`, clients retry |
+| Blocky | DNS stops | No DNS resolution | `systemctl restart blocky`, clients retry |
+| hermitshell-dhcp | DHCP stops | No new leases, existing addresses persist | `systemctl restart hermitshell-dhcp` |
 | nftables.service | Rules may not load on boot | If after boot: rules persist. On boot: no firewall | `nft -f /etc/nftables.conf` |
 
 #### Disk Corruption / Full Disk
@@ -2700,7 +2763,7 @@ This section addresses architectural concerns learned from studying production L
 # /lib/systemd/system/hermitshell-agent.service
 [Unit]
 Description=HermitShell Network Agent
-After=network-online.target systemd-networkd.service systemd-resolved.service nftables.service
+After=network-online.target systemd-networkd.service blocky.service nftables.service
 Wants=network-online.target
 Requires=systemd-networkd.service
 
@@ -2735,8 +2798,8 @@ WantedBy=multi-user.target
 | Device groups | SQLite `device_groups` table | → nftables routing policy |
 | Device subnets | SQLite `devices` table (id → subnet) | → Interface addresses, DHCP reservations |
 | Firewall policy | SQLite `device_groups.isolation` + `devices.blocked` | → nftables ruleset |
-| DNS upstream | `hermitshell.toml` | → resolved.conf.d/ |
-| DHCP leases | dnsmasq (runtime) | Observed by agent |
+| DNS upstream | `hermitshell.toml` | → Blocky config (blocky.yml) |
+| DHCP leases | hermitshell-dhcp (runtime) | Managed by agent via IPC |
 
 #### Reconciliation on Startup
 
@@ -2746,19 +2809,21 @@ Agent startup sequence (inspired by router7):
 1. Load hermitshell.toml (static config)
 2. Open SQLite database
 3. Read current system state:
-   - `ip addr show` → existing gateway addresses on LAN interface
+   - `ip addr show` → existing addresses on LAN interface
    - `nft list ruleset` → existing rules
-   - `resolvectl status` → DNS state
+   - Blocky status → DNS state
 4. Compare DB state to system state
 5. Apply diff:
-   - Missing gateway addresses → add (for each approved device)
-   - Firewall rules → regenerate and apply (atomic)
-   - DHCP reservations → regenerate dnsmasq config
+   - Missing device routes → add (for each approved device)
+   - Firewall rules → regenerate and apply (atomic, dual-stack)
+   - DHCP reservations → sync with hermitshell-dhcp via IPC
 6. Start monitoring (conntrack, nflog, DHCP events)
+7. Start RA sender (ICMPv6, every 30s)
+8. Start DHCPv6-PD client on WAN (if ISP supports prefix delegation)
 ```
 
 **On drift detection:**
-- Log warning: "Gateway address 10.0.99.1 exists but no device in database"
+- Log warning: "Route for 10.0.0.101 exists but no device in database"
 - Don't auto-delete (safety)
 - UI shows "orphaned" resources for manual cleanup
 
@@ -2828,19 +2893,20 @@ router7 stores all state as JSON files in `/perm`. We adopt a hybrid:
      │                │                  │ SET group_id=1,  │
      │                │                  │     approved=1   │
      │                │                  │                  │
-     │                │                  │ Add gateway addr │
-     │                │                  │ 10.0.{id}.1/30   │
+     │                │                  │ Add device route  │
+     │                │                  │ 10.0.0.{id+2}/32 │
+     │                │                  │ + fd00::{id+2}   │
      │                │                  │─────────────────>│
-     │                │                  │                  │ ip addr add
+     │                │                  │                  │ ip route add
      │                │                  │                  │
      │                │                  │ Regenerate rules │
      │                │                  │─────────────────>│
      │                │                  │                  │ nft -f rules.nft
      │                │                  │                  │
      │                │                  │ Update DHCP      │
-     │                │                  │ reservation      │
+     │                │                  │ (IPC to dhcp)    │
      │                │                  │─────────────────>│
-     │                │                  │                  │ kill -HUP dnsmasq
+     │                │                  │                  │ hermitshell-dhcp
      │                │ 200 OK           │                  │
      │                │<─────────────────│                  │
      │ "Device moved  │                  │                  │
@@ -2848,8 +2914,8 @@ router7 stores all state as JSON files in `/perm`. We adopt a hybrid:
      │<───────────────│                  │                  │
      │                │                  │                  │
      │ (Device gets   │                  │                  │
-     │  permanent /30 │                  │                  │
-     │  via DHCP)     │                  │                  │
+     │  permanent /32 │                  │                  │
+     │  + /128 IPv6)  │                  │                  │
 ```
 
 ### 18.4 Upgrade & Migration
@@ -2918,7 +2984,7 @@ Structured JSON to journald:
 
 ```json
 {"ts":"2025-02-03T14:00:00Z","level":"info","msg":"Device approved","mac":"aa:bb:cc:dd:ee:ff","vlan":"trusted"}
-{"ts":"2025-02-03T14:00:01Z","level":"warn","msg":"Blocked connection attempt","src":"10.0.20.15","dst":"10.0.10.5","reason":"IoT→Trusted denied"}
+{"ts":"2025-02-03T14:00:01Z","level":"warn","msg":"Blocked connection attempt","src":"10.0.0.17","dst":"10.0.0.7","reason":"IoT→Trusted denied"}
 ```
 
 Query:
@@ -2936,7 +3002,7 @@ Agent exposes `/health` endpoint (localhost only):
   "checks": {
     "database": "ok",
     "networkd": "ok",
-    "resolved": "ok",
+    "blocky": "ok",
     "wan_connectivity": "ok",
     "last_wan_check": "2025-02-03T14:00:00Z"
   },
@@ -3001,8 +3067,8 @@ FallbackNTP=0.pool.ntp.org 1.pool.ntp.org
 2. Attempts NTP sync (timeout 30s)
 3. If fails: use RTC (logged warning)
 4. systemd-networkd starts (DHCP can work without accurate time)
-5. systemd-resolved starts
-6. Agent starts
+5. Blocky starts (DNS)
+6. Agent starts (+ hermitshell-dhcp, RA sender, DHCPv6-PD client)
 ```
 
 ### 18.8 Security Threat Model
@@ -3054,17 +3120,16 @@ Most Trusted                              Least Trusted
 | Counter granularity | Per-MAC sufficient for V1 |
 | Agent auth | Unix socket (filesystem permissions, no secret needed) |
 | ARM64 / Raspberry Pi | Not supported in V1 |
-| IPv6 | Defer to V2 |
-| DNS/DHCP stack | Pure systemd (networkd + resolved) |
-| DNS query logging | nflog at firewall level (resolved lacks per-device attribution) |
-| Ad blocking | External (Pi-hole) or upstream filter (AdGuard DNS) for V1; local blocking V2 |
+| IPv6 | Implemented: dual-stack with DHCPv6 stateful, RA, DHCPv6-PD, IPv6 pinholes |
+| DNS/DHCP stack | Blocky (DNS), hermitshell-dhcp (DHCP), systemd-networkd (interfaces) |
+| DNS query logging | nflog at firewall level + Blocky built-in logging |
+| Ad blocking | Built into Blocky with blocklists; external (Pi-hole) still supported |
 
 ### Still Open
 
 1. **Installer UX**: Interactive CLI wizard or just documentation?
 2. **Backup/restore format**: JSON dump? SQLite copy? Both?
 3. **Log rotation**: How long to retain conntrack/DNS logs? User configurable?
-4. **systemd-resolved patch**: Contribute structured query logging upstream?
 
 ---
 
@@ -3155,7 +3220,7 @@ hermitshell-agent ALL=(ALL) NOPASSWD: /sbin/ip link add link eth1 name eth1.* ty
 hermitshell-agent ALL=(ALL) NOPASSWD: /sbin/ip link del eth1.*
 hermitshell-agent ALL=(ALL) NOPASSWD: /sbin/ip link set eth1.* up
 hermitshell-agent ALL=(ALL) NOPASSWD: /sbin/ip addr add */24 dev eth1.*
-hermitshell-agent ALL=(ALL) NOPASSWD: /bin/systemctl restart dnsmasq
+hermitshell-agent ALL=(ALL) NOPASSWD: /bin/systemctl restart hermitshell-dhcp
 hermitshell-agent ALL=(ALL) NOPASSWD: /usr/sbin/conntrack -E -o xml
 hermitshell-agent ALL=(ALL) NOPASSWD: /usr/bin/vnstat --json *
 ```
@@ -3181,15 +3246,15 @@ fn authenticate(req: &Request) -> Result<()> {
 listen = "127.0.0.1:9999"  # NEVER 0.0.0.0
 ```
 
-### 20.4 dnsmasq Container
+### 20.4 DHCP Server Security
 
-dnsmasq runs with `network_mode: host` and `CAP_NET_ADMIN`. This is necessary for DHCP but increases risk:
+hermitshell-dhcp runs on the host as a dedicated process managed by the agent. It binds to the LAN interface for DHCPv4 (port 67) and DHCPv6 (port 547).
 
 | Concern | Mitigation |
 |---------|------------|
-| Config injection | hermitshell writes config files, dnsmasq only reads them |
-| Process escape | Minimal attack surface (dnsmasq is well-audited) |
-| Network access | Expected - it's the DHCP server |
+| Config injection | Agent controls DHCP server via IPC, no config files to inject |
+| Privilege scope | Runs as dedicated user, only needs raw socket on LAN interface |
+| Network access | Expected - it's the DHCP server, bound to LAN only |
 
 We do NOT mount Docker socket into any container.
 
@@ -3235,8 +3300,8 @@ Agent backs up configs before modification:
 │   ├── 10-wan.network
 │   ├── 30-vlan-trusted.network
 │   └── ...
-├── resolved-2025-02-02T14:00:00/
-│   └── hermitshell.conf
+├── blocky-2025-02-02T14:00:00/
+│   └── blocky.yml
 └── nftables-2025-02-02T14:00:00.nft
 ```
 
@@ -3248,8 +3313,9 @@ Agent backs up configs before modification:
 |-----------|-------|----------------|
 | hermitshell (web) | Container | Docker isolation (automatic) |
 | hermitshell-agent | Host | Input validation + sudoers whitelist |
+| hermitshell-dhcp | Host | Agent controls via IPC, dedicated user |
 | systemd-networkd | Host | Agent generates configs, systemd applies |
-| systemd-resolved | Host | Agent generates configs, validated |
+| Blocky | Host | Agent generates config, validated |
 | Docker socket | Not mounted | N/A |
 
 ---
@@ -3337,22 +3403,15 @@ Declarative, reproducible router config is appealing. HermitShell's TOML config 
 - [Linux Router, Firewall and IDS Appliance](https://nbailey.ca/post/linux-firewall-ids/) - Suricata IDS integration, ansible automation
 - [router7](https://router7.org/) - Pure-Go router; auto-rollback, state-as-JSON, fast kexec updates
 
-### Network Stack (systemd)
-- [systemd-networkd](https://www.freedesktop.org/software/systemd/man/systemd.network.html) - Network configuration + DHCP server
-- [systemd-resolved](https://www.freedesktop.org/software/systemd/man/systemd-resolved.service.html) - DNS resolver with DoT, DNSSEC
-- [ArchWiki: systemd-networkd](https://wiki.archlinux.org/title/Systemd-networkd) - DHCPServer configuration examples
-- [ArchWiki: systemd-resolved](https://wiki.archlinux.org/title/Systemd-resolved) - DoT setup, DNSStubListenerExtra
+### Network Stack
+- [systemd-networkd](https://www.freedesktop.org/software/systemd/man/systemd.network.html) - Network interface configuration
+- [ArchWiki: systemd-networkd](https://wiki.archlinux.org/title/Systemd-networkd) - Network configuration examples
+- [Blocky](https://0xerr0r.github.io/blocky/) - DNS proxy with DoT upstream, DNSSEC, ad blocking
 - [CAKE qdisc](https://www.bufferbloat.net/projects/codel/wiki/Cake/) - Modern queue discipline for bufferbloat prevention
 - [cake-autorate](https://github.com/lynxthecat/cake-autorate) - Dynamic bandwidth adjustment for variable connections
 
 ### DNS Query Logging
 - [nflog target](https://wiki.nftables.org/wiki-nftables/index.php/Logging_traffic) - nftables packet logging to userspace
-- [systemd-resolved monitor feature request](https://github.com/systemd/systemd/issues/20264) - Upstream issue for structured query logging
-
-### V2 Candidates
-- [Kea DHCP](https://www.isc.org/kea/) - ISC's modern DHCP server with REST API
-- [Unbound](https://nlnetlabs.nl/projects/unbound/about/) - Recursive DNS resolver with query logging
-- [dnsmasq](https://thekelleys.org.uk/dnsmasq/doc.html) - Lightweight DHCP + DNS with log-queries
 
 ### Security
 - [Home Router Security Report 2020](https://www.fkie.fraunhofer.de/content/dam/fkie/de/documents/HomeRouter/HomeRouterSecurity_2020_Bericht.pdf) - Fraunhofer FKIE analysis of consumer router vulnerabilities
