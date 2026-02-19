@@ -1,5 +1,9 @@
 use anyhow::Result;
+use argon2::password_hash::SaltString;
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -1039,6 +1043,145 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 }
                 Err(e) => Response::err(&e.to_string()),
             }
+        }
+        "has_password" => {
+            let db = db.lock().unwrap();
+            let has = db
+                .get_config("admin_password_hash")
+                .ok()
+                .flatten()
+                .is_some();
+            let mut resp = Response::ok();
+            resp.config_value = Some(if has { "true" } else { "false" }.to_string());
+            resp
+        }
+        "verify_password" => {
+            let Some(value) = req.value else {
+                return Response::err("value required");
+            };
+            if value.len() > 128 {
+                return Response::err("password too long");
+            }
+            let db = db.lock().unwrap();
+            let hash_str = match db.get_config("admin_password_hash").ok().flatten() {
+                Some(h) => h,
+                None => {
+                    warn!("password verification failed");
+                    let mut resp = Response::ok();
+                    resp.config_value = Some("false".to_string());
+                    return resp;
+                }
+            };
+            let parsed_hash = match PasswordHash::new(&hash_str) {
+                Ok(h) => h,
+                Err(_) => {
+                    warn!("password verification failed");
+                    let mut resp = Response::ok();
+                    resp.config_value = Some("false".to_string());
+                    return resp;
+                }
+            };
+            let valid = Argon2::default()
+                .verify_password(value.as_bytes(), &parsed_hash)
+                .is_ok();
+            if !valid {
+                warn!("password verification failed");
+            }
+            let mut resp = Response::ok();
+            resp.config_value = Some(if valid { "true" } else { "false" }.to_string());
+            resp
+        }
+        "setup_password" => {
+            let Some(value) = req.value else {
+                return Response::err("value required");
+            };
+            if value.len() < 8 {
+                return Response::err("password too short (minimum 8 characters)");
+            }
+            if value.len() > 128 {
+                return Response::err("password too long (maximum 128 characters)");
+            }
+            let db = db.lock().unwrap();
+            let existing_hash = db.get_config("admin_password_hash").ok().flatten();
+            if let Some(ref hash_str) = existing_hash {
+                // Current password required to change
+                let Some(current) = req.key else {
+                    return Response::err("key required (current password)");
+                };
+                let parsed_hash = match PasswordHash::new(hash_str) {
+                    Ok(h) => h,
+                    Err(_) => return Response::err("stored hash corrupt"),
+                };
+                if Argon2::default()
+                    .verify_password(current.as_bytes(), &parsed_hash)
+                    .is_err()
+                {
+                    warn!("setup_password rejected: wrong current password");
+                    return Response::err("wrong current password");
+                }
+            }
+            let salt = SaltString::generate(&mut rand::rngs::OsRng);
+            let new_hash = match Argon2::default().hash_password(value.as_bytes(), &salt) {
+                Ok(h) => h.to_string(),
+                Err(e) => return Response::err(&format!("hashing failed: {}", e)),
+            };
+            match db.set_config("admin_password_hash", &new_hash) {
+                Ok(()) => Response::ok(),
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
+        "create_session" => {
+            let db = db.lock().unwrap();
+            let secret = match db.get_config("session_secret").ok().flatten() {
+                Some(s) => s,
+                None => {
+                    let s = hex::encode(rand::Rng::r#gen::<[u8; 32]>(&mut rand::thread_rng()));
+                    if let Err(e) = db.set_config("session_secret", &s) {
+                        return Response::err(&format!("failed to store secret: {}", e));
+                    }
+                    s
+                }
+            };
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let payload = format!("admin:{}", timestamp);
+            let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+            mac.update(payload.as_bytes());
+            let sig = hex::encode(mac.finalize().into_bytes());
+            let cookie = format!("{}.{}", payload, sig);
+            let mut resp = Response::ok();
+            resp.config_value = Some(cookie);
+            resp
+        }
+        "verify_session" => {
+            let Some(value) = req.value else {
+                return Response::err("value required");
+            };
+            let db = db.lock().unwrap();
+            let secret = match db.get_config("session_secret").ok().flatten() {
+                Some(s) => s,
+                None => {
+                    let mut resp = Response::ok();
+                    resp.config_value = Some("false".to_string());
+                    return resp;
+                }
+            };
+            // Cookie format: "admin:TIMESTAMP.SIGNATURE"
+            let valid = if let Some(dot_pos) = value.rfind('.') {
+                let payload = &value[..dot_pos];
+                let sig = &value[dot_pos + 1..];
+                let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+                mac.update(payload.as_bytes());
+                let expected = hex::encode(mac.finalize().into_bytes());
+                sig == expected
+            } else {
+                false
+            };
+            let mut resp = Response::ok();
+            resp.config_value = Some(if valid { "true" } else { "false" }.to_string());
+            resp
         }
         _ => Response::err("unknown method"),
     }
