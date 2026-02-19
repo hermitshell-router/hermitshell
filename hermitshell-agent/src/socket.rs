@@ -17,6 +17,18 @@ fn sanitize_hostname(raw: &str) -> String {
         .collect()
 }
 
+const BLOCKED_CONFIG_KEYS: &[&str] = &[
+    "admin_password_hash",
+    "session_secret",
+    "wg_private_key",
+    "tls_key_pem",
+    "tls_cert_pem",
+];
+
+fn is_blocked_config_key(key: &str) -> bool {
+    BLOCKED_CONFIG_KEYS.contains(&key)
+}
+
 #[derive(Debug, Deserialize)]
 struct Request {
     method: String,
@@ -623,6 +635,10 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         }
         "get_config" => {
             let Some(key) = req.key else { return Response::err("key required"); };
+            if is_blocked_config_key(&key) {
+                warn!(key = %key, "blocked config key read attempt");
+                return Response::err("access denied");
+            }
             let db = db.lock().unwrap();
             match db.get_config(&key) {
                 Ok(val) => {
@@ -635,6 +651,10 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         }
         "set_config" => {
             let Some(key) = req.key else { return Response::err("key required"); };
+            if is_blocked_config_key(&key) {
+                warn!(key = %key, "blocked config key write attempt");
+                return Response::err("access denied");
+            }
             let Some(value) = req.value else { return Response::err("value required"); };
             let db = db.lock().unwrap();
             match db.set_config(&key, &value) {
