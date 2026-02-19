@@ -14,6 +14,8 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Separate the IPC into privileged and unprivileged channels, or have the agent handle auth verification directly (e.g., a `verify_password` method that accepts a plaintext password and returns true/false, keeping the hash internal).
 
+**Status: Fixed.** `get_config` now blocks reads of `admin_password_hash`, `session_secret`, `wg_private_key`, `tls_key_pem`, `tls_cert_pem`. Dedicated IPC methods (`verify_password`, `create_session`, `verify_session`, `get_tls_config`) provide minimum-necessary access. The web UI no longer handles raw secrets.
+
 ## 2. Session cookies have no expiration
 
 **What:** Session cookies are HMAC-signed `admin:TIMESTAMP` values. The timestamp is recorded but never checked — a cookie is valid forever as long as the HMAC verifies against the current `session_secret`.
@@ -196,6 +198,8 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** `chmod 0600` the backup file after creation.
 
+**Status: Fixed.** Backup file is now `chmod 0600` after creation.
+
 ---
 
 ## Rate Limiting and Resource Exhaustion
@@ -265,6 +269,8 @@ This document tracks security compromises made during implementation, why they w
 **Mitigating factor:** Same as #1 — socket is `0660 root:root` in production.
 
 **Proper fix:** Write-protect critical keys: `admin_password_hash` should only be writable via a dedicated `setup` or `change_password` IPC method. `wg_private_key` should be agent-internal. `session_secret` should be auto-generated and never externally writable.
+
+**Status: Fixed.** `set_config` now blocks writes to the same five keys. Password changes go through `setup_password` (requires current password). Session secret and TLS cert are agent-generated. Attempts to read or write blocked keys are logged as warnings.
 
 ## 25. Port forwarding can shadow management services
 
