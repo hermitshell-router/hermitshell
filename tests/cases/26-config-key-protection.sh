@@ -25,38 +25,10 @@ result=$(vm_exec router "echo '{\"method\":\"get_config\",\"key\":\"test_key_26\
 assert_match "$result" '"ok":true' "get_config allows non-secret key"
 assert_match "$result" 'hello' "get_config returns correct value"
 
-# --- has_password ---
+# --- has_password (password was set by test 21) ---
 result=$(vm_exec router "echo '{\"method\":\"has_password\"}' | socat - $SOCK")
 assert_match "$result" '"ok":true' "has_password responds"
-assert_match "$result" '"config_value"' "has_password returns config_value"
-
-# --- verify_password with no password set ---
-result=$(vm_exec router "echo '{\"method\":\"verify_password\",\"value\":\"wrongpass\"}' | socat - $SOCK")
-assert_match "$result" '"ok":true' "verify_password responds when no password set"
-assert_match "$result" '"false"' "verify_password returns false when no password"
-
-# --- verify_password missing value ---
-result=$(vm_exec router "echo '{\"method\":\"verify_password\"}' | socat - $SOCK")
-assert_match "$result" '"ok":false' "verify_password requires value"
-
-# --- setup_password rejects short password ---
-result=$(vm_exec router "echo '{\"method\":\"setup_password\",\"value\":\"short\"}' | socat - $SOCK")
-assert_match "$result" '"ok":false' "setup_password rejects short password"
-assert_match "$result" 'too short' "setup_password says too short"
-
-# --- setup_password rejects long password ---
-long_pw=$(printf 'x%.0s' $(seq 1 129))
-result=$(vm_exec router "echo '{\"method\":\"setup_password\",\"value\":\"$long_pw\"}' | socat - $SOCK")
-assert_match "$result" '"ok":false' "setup_password rejects long password"
-assert_match "$result" 'too long' "setup_password says too long"
-
-# --- setup_password succeeds (first time, no current password needed) ---
-result=$(vm_exec router "echo '{\"method\":\"setup_password\",\"value\":\"testpass123\"}' | socat - $SOCK")
-assert_match "$result" '"ok":true' "setup_password succeeds first time"
-
-# --- has_password now returns true ---
-result=$(vm_exec router "echo '{\"method\":\"has_password\"}' | socat - $SOCK")
-assert_match "$result" '"true"' "has_password returns true after setup"
+assert_match "$result" '"true"' "has_password returns true"
 
 # --- verify_password with correct password ---
 result=$(vm_exec router "echo '{\"method\":\"verify_password\",\"value\":\"testpass123\"}' | socat - $SOCK")
@@ -65,6 +37,42 @@ assert_match "$result" '"true"' "verify_password accepts correct password"
 # --- verify_password with wrong password ---
 result=$(vm_exec router "echo '{\"method\":\"verify_password\",\"value\":\"wrongpass\"}' | socat - $SOCK")
 assert_match "$result" '"false"' "verify_password rejects wrong password"
+
+# --- verify_password missing value ---
+result=$(vm_exec router "echo '{\"method\":\"verify_password\"}' | socat - $SOCK")
+assert_match "$result" '"ok":false' "verify_password requires value"
+
+# --- setup_password rejects short password ---
+result=$(vm_exec router "echo '{\"method\":\"setup_password\",\"value\":\"short\",\"key\":\"testpass123\"}' | socat - $SOCK")
+assert_match "$result" '"ok":false' "setup_password rejects short password"
+assert_match "$result" 'too short' "setup_password says too short"
+
+# --- setup_password rejects long password ---
+long_pw=$(printf 'x%.0s' $(seq 1 129))
+result=$(vm_exec router "echo '{\"method\":\"setup_password\",\"value\":\"$long_pw\",\"key\":\"testpass123\"}' | socat - $SOCK")
+assert_match "$result" '"ok":false' "setup_password rejects long password"
+assert_match "$result" 'too long' "setup_password says too long"
+
+# --- setup_password requires current password when one is set ---
+result=$(vm_exec router "echo '{\"method\":\"setup_password\",\"value\":\"newpass12345\"}' | socat - $SOCK")
+assert_match "$result" '"ok":false' "setup_password requires current password"
+assert_match "$result" 'current password' "setup_password error mentions current password"
+
+# --- setup_password rejects wrong current password ---
+result=$(vm_exec router "echo '{\"method\":\"setup_password\",\"value\":\"newpass12345\",\"key\":\"wrongpass\"}' | socat - $SOCK")
+assert_match "$result" '"ok":false' "setup_password rejects wrong current password"
+
+# --- setup_password succeeds with correct current password ---
+result=$(vm_exec router "echo '{\"method\":\"setup_password\",\"value\":\"newpass12345\",\"key\":\"testpass123\"}' | socat - $SOCK")
+assert_match "$result" '"ok":true' "setup_password succeeds with current password"
+
+# --- verify_password works with new password ---
+result=$(vm_exec router "echo '{\"method\":\"verify_password\",\"value\":\"newpass12345\"}' | socat - $SOCK")
+assert_match "$result" '"true"' "verify_password accepts new password"
+
+# --- Restore original password for any subsequent tests ---
+result=$(vm_exec router "echo '{\"method\":\"setup_password\",\"value\":\"testpass123\",\"key\":\"newpass12345\"}' | socat - $SOCK")
+assert_match "$result" '"ok":true' "setup_password restores original password"
 
 # --- create_session returns a cookie ---
 result=$(vm_exec router "echo '{\"method\":\"create_session\"}' | socat - $SOCK")
