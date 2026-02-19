@@ -8,12 +8,6 @@ use serde::Deserialize;
 use hermitshell_ui::App;
 use hermitshell_ui::client;
 
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
-use argon2::password_hash::SaltString;
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
-use rand::Rng;
-
 const STYLE_CSS: &str = include_str!("../../hermitshell-ui/style/style.css");
 
 async fn serve_css() -> impl IntoResponse {
@@ -54,37 +48,6 @@ struct SetupForm {
     confirm: String,
 }
 
-fn get_session_secret() -> String {
-    match client::get_config("session_secret") {
-        Ok(Some(s)) => s,
-        _ => {
-            let secret: String = hex::encode(rand::thread_rng().r#gen::<[u8; 32]>());
-            let _ = client::set_config("session_secret", &secret);
-            secret
-        }
-    }
-}
-
-fn make_session_cookie(secret: &str) -> String {
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-    let payload = format!("admin:{}", timestamp);
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
-    mac.update(payload.as_bytes());
-    let sig = hex::encode(mac.finalize().into_bytes());
-    format!("{}.{}", payload, sig)
-}
-
-fn verify_session_cookie(cookie: &str, secret: &str) -> bool {
-    let parts: Vec<&str> = cookie.rsplitn(2, '.').collect();
-    if parts.len() != 2 { return false; }
-    let (sig, payload) = (parts[0], parts[1]);
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
-    mac.update(payload.as_bytes());
-    let expected = hex::encode(mac.finalize().into_bytes());
-    sig == expected
-}
-
 async fn handle_ad_blocking(Form(form): Form<AdBlockingForm>) -> impl IntoResponse {
     let enabled = form.enabled == "true";
     let _ = client::set_ad_blocking(enabled);
@@ -115,31 +78,24 @@ async fn handle_unblock(Form(form): Form<DeviceForm>) -> impl IntoResponse {
 }
 
 async fn handle_setup(Form(form): Form<SetupForm>) -> impl IntoResponse {
-    if form.password != form.confirm || form.password.len() < 8 {
+    if form.password != form.confirm || form.password.len() < 8 || form.password.len() > 128 {
         return axum::response::Redirect::to("/setup").into_response();
     }
-    let salt = SaltString::generate(&mut rand::rngs::OsRng);
-    let hash = Argon2::default()
-        .hash_password(form.password.as_bytes(), &salt)
-        .unwrap().to_string();
-    let _ = client::set_config("admin_password_hash", &hash);
-    axum::response::Redirect::to("/login").into_response()
+    match client::setup_password(&form.password, None) {
+        Ok(()) => axum::response::Redirect::to("/login").into_response(),
+        Err(_) => axum::response::Redirect::to("/setup").into_response(),
+    }
 }
 
 async fn handle_login(Form(form): Form<LoginForm>) -> impl IntoResponse {
-    let hash = match client::get_config("admin_password_hash") {
-        Ok(Some(h)) => h,
-        _ => return axum::response::Redirect::to("/setup").into_response(),
-    };
-    let parsed = match PasswordHash::new(&hash) {
-        Ok(p) => p,
+    match client::verify_password(&form.password) {
+        Ok(true) => {}
+        _ => return axum::response::Redirect::to("/login").into_response(),
+    }
+    let cookie = match client::create_session() {
+        Ok(c) => c,
         Err(_) => return axum::response::Redirect::to("/login").into_response(),
     };
-    if Argon2::default().verify_password(form.password.as_bytes(), &parsed).is_err() {
-        return axum::response::Redirect::to("/login").into_response();
-    }
-    let secret = get_session_secret();
-    let cookie = make_session_cookie(&secret);
     let mut response = axum::response::Redirect::to("/").into_response();
     response.headers_mut().insert(
         axum::http::header::SET_COOKIE,
@@ -235,19 +191,15 @@ async fn auth_middleware(
 ) -> axum::response::Response {
     let path = req.uri().path().to_string();
 
-    // Exempt paths
     if path == "/login" || path == "/api/login" || path == "/setup" || path == "/api/setup" || path == "/style.css" {
         return next.run(req).await;
     }
 
-    // Check if setup is needed
-    let has_password = client::get_config("admin_password_hash")
-        .ok().flatten().is_some();
+    let has_password = client::has_password().unwrap_or(false);
     if !has_password {
         return axum::response::Redirect::to("/setup").into_response();
     }
 
-    // Verify session cookie
     let cookie_header = req.headers().get(axum::http::header::COOKIE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
@@ -259,8 +211,7 @@ async fn auth_middleware(
         .next()
         .unwrap_or("");
 
-    let secret = get_session_secret();
-    if verify_session_cookie(session, &secret) {
+    if client::verify_session(session).unwrap_or(false) {
         next.run(req).await
     } else {
         axum::response::Redirect::to("/login").into_response()
@@ -293,24 +244,9 @@ async fn main() {
         .layer(axum::middleware::from_fn(auth_middleware))
         .with_state(leptos_options);
 
-    // Load or generate TLS cert
-    let (cert_pem, key_pem) = match (
-        client::get_config("tls_cert_pem"),
-        client::get_config("tls_key_pem"),
-    ) {
-        (Ok(Some(cert)), Ok(Some(key))) => (cert, key),
-        _ => {
-            let cert = rcgen::generate_simple_self_signed(vec![
-                "hermitshell.local".to_string(),
-                "10.0.0.1".to_string(),
-            ]).expect("cert generation failed");
-            let cert_pem = cert.cert.pem();
-            let key_pem = cert.key_pair.serialize_pem();
-            let _ = client::set_config("tls_cert_pem", &cert_pem);
-            let _ = client::set_config("tls_key_pem", &key_pem);
-            (cert_pem, key_pem)
-        }
-    };
+    // Load TLS cert from agent
+    let (cert_pem, key_pem) = client::get_tls_config()
+        .expect("failed to get TLS config from agent");
 
     // Parse certs for rustls
     let certs: Vec<_> = rustls_pemfile::certs(&mut cert_pem.as_bytes())
