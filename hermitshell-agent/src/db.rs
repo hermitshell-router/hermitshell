@@ -499,6 +499,11 @@ impl Db {
 
     pub fn vacuum_into(&self, path: &str) -> Result<()> {
         self.conn.execute(&format!("VACUUM INTO '{}'", path), [])?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
         Ok(())
     }
 

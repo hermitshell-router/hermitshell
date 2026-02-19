@@ -15,3 +15,7 @@ assert_match "$result" "hermitshell-backup.db" "backup returns path"
 # Verify backup file exists
 assert_success "Backup file exists" \
     vm_exec router "sudo test -f /data/hermitshell/hermitshell-backup.db"
+
+# Verify backup file has restricted permissions (0600)
+perms=$(vm_exec router "sudo stat -c '%a' /data/hermitshell/hermitshell-backup.db")
+assert_match "$perms" "600" "Backup file has 0600 permissions"
