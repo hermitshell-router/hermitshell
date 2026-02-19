@@ -97,6 +97,10 @@ struct Response {
     log_config: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ipv6_pinholes: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tls_cert_pem: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tls_key_pem: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -126,10 +130,10 @@ struct WgPeerInfo {
 
 impl Response {
     fn ok() -> Self {
-        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None }
+        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None, tls_cert_pem: None, tls_key_pem: None }
     }
     fn err(msg: &str) -> Self {
-        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None }
+        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None, tls_cert_pem: None, tls_key_pem: None }
     }
 }
 
@@ -1182,6 +1186,20 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             let mut resp = Response::ok();
             resp.config_value = Some(if valid { "true" } else { "false" }.to_string());
             resp
+        }
+        "get_tls_config" => {
+            let db = db.lock().unwrap();
+            let cert = db.get_config("tls_cert_pem").ok().flatten();
+            let key = db.get_config("tls_key_pem").ok().flatten();
+            match (cert, key) {
+                (Some(c), Some(k)) => {
+                    let mut resp = Response::ok();
+                    resp.tls_cert_pem = Some(c);
+                    resp.tls_key_pem = Some(k);
+                    resp
+                }
+                _ => Response::err("TLS not yet configured"),
+            }
         }
         _ => Response::err("unknown method"),
     }

@@ -128,6 +128,34 @@ async fn main() -> Result<()> {
     let db = Arc::new(Mutex::new(db::Db::open(DB_PATH)?));
     info!(path = DB_PATH, "database opened");
 
+    // Generate self-signed TLS cert if missing
+    {
+        let db_guard = db.lock().unwrap();
+        let has_cert = db_guard.get_config("tls_cert_pem").ok().flatten().is_some();
+        let has_key = db_guard.get_config("tls_key_pem").ok().flatten().is_some();
+        if !has_cert || !has_key {
+            let subject_alt_names = vec!["hermitshell.local".to_string(), "10.0.0.1".to_string()];
+            match rcgen::generate_simple_self_signed(subject_alt_names) {
+                Ok(cert) => {
+                    let cert_pem = cert.cert.pem();
+                    let key_pem = cert.key_pair.serialize_pem();
+                    let _ = db_guard.set_config("tls_cert_pem", &cert_pem);
+                    let _ = db_guard.set_config("tls_key_pem", &key_pem);
+                    info!("self-signed TLS certificate generated");
+                }
+                Err(e) => {
+                    error!(error = %e, "failed to generate TLS certificate");
+                }
+            }
+        }
+        // Generate session secret if missing
+        if db_guard.get_config("session_secret").ok().flatten().is_none() {
+            let secret = hex::encode(rand::Rng::r#gen::<[u8; 32]>(&mut rand::thread_rng()));
+            let _ = db_guard.set_config("session_secret", &secret);
+            info!("session secret generated");
+        }
+    }
+
     // Try to obtain IPv6 prefix delegation from ISP
     match crate::pd::request_prefix(wan_iface) {
         Ok(Some(prefix)) => {
