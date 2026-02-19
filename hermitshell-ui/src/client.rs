@@ -43,6 +43,8 @@ pub struct Response {
     pub dmz_ip: Option<String>,
     pub dhcp_reservations: Option<Vec<crate::types::DhcpReservation>>,
     pub config_value: Option<String>,
+    pub tls_cert_pem: Option<String>,
+    pub tls_key_pem: Option<String>,
     pub connection_logs: Option<Vec<ConnectionLog>>,
     pub dns_logs: Option<Vec<DnsLogEntry>>,
     pub log_config: Option<serde_json::Value>,
@@ -140,6 +142,42 @@ pub fn get_config(key: &str) -> Result<Option<String>, String> {
 pub fn set_config(key: &str, value: &str) -> Result<(), String> {
     ok_or_err(send(json!({"method": "set_config", "key": key, "value": value}))?)?;
     Ok(())
+}
+
+pub fn verify_password(password: &str) -> Result<bool, String> {
+    let resp = ok_or_err(send(json!({"method": "verify_password", "value": password}))?)?;
+    Ok(resp.config_value.as_deref() == Some("true"))
+}
+
+pub fn setup_password(new_password: &str, current_password: Option<&str>) -> Result<(), String> {
+    let mut req = json!({"method": "setup_password", "value": new_password});
+    if let Some(current) = current_password {
+        req["key"] = serde_json::Value::String(current.to_string());
+    }
+    ok_or_err(send(req)?)?;
+    Ok(())
+}
+
+pub fn has_password() -> Result<bool, String> {
+    let resp = ok_or_err(send(json!({"method": "has_password"}))?)?;
+    Ok(resp.config_value.as_deref() == Some("true"))
+}
+
+pub fn create_session() -> Result<String, String> {
+    let resp = ok_or_err(send(json!({"method": "create_session"}))?)?;
+    resp.config_value.ok_or_else(|| "no cookie in response".to_string())
+}
+
+pub fn verify_session(cookie: &str) -> Result<bool, String> {
+    let resp = ok_or_err(send(json!({"method": "verify_session", "value": cookie}))?)?;
+    Ok(resp.config_value.as_deref() == Some("true"))
+}
+
+pub fn get_tls_config() -> Result<(String, String), String> {
+    let resp = ok_or_err(send(json!({"method": "get_tls_config"}))?)?;
+    let cert = resp.tls_cert_pem.ok_or("no cert in response")?;
+    let key = resp.tls_key_pem.ok_or("no key in response")?;
+    Ok((cert, key))
 }
 
 pub fn list_port_forwards() -> Result<crate::types::PortForwardsInfo, String> {
