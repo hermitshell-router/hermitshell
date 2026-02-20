@@ -184,6 +184,18 @@ pub struct DnsLogEntry {
     pub ts: i64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct Alert {
+    pub id: i64,
+    pub device_mac: String,
+    pub rule: String,
+    pub severity: String,
+    pub message: String,
+    pub details: Option<String>,
+    pub created_at: i64,
+    pub acknowledged: bool,
+}
+
 pub struct Db {
     conn: Connection,
 }
@@ -767,5 +779,255 @@ impl Db {
             [cutoff],
         )?;
         Ok((conn_deleted + conn_stale, dns_deleted))
+    }
+
+    // Alert methods
+
+    pub fn insert_alert(&self, device_mac: &str, rule: &str, severity: &str, message: &str, details: Option<&str>) -> Result<i64> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+        self.conn.execute(
+            "INSERT INTO alerts (device_mac, rule, severity, message, details, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            (device_mac, rule, severity, message, details, now),
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn has_recent_alert(&self, device_mac: &str, rule: &str, cooldown_secs: i64) -> Result<bool> {
+        let cutoff = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64 - cooldown_secs;
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM alerts WHERE device_mac = ?1 AND rule = ?2 AND created_at > ?3",
+            (device_mac, rule, cutoff),
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    pub fn list_alerts(&self, device_mac: Option<&str>, rule: Option<&str>, severity: Option<&str>, acknowledged: Option<bool>, limit: i64, offset: i64) -> Result<Vec<Alert>> {
+        let mut sql = String::from("SELECT id, device_mac, rule, severity, message, details, created_at, acknowledged FROM alerts WHERE 1=1");
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        let mut idx = 1;
+
+        if let Some(mac) = device_mac {
+            sql.push_str(&format!(" AND device_mac = ?{idx}"));
+            params.push(Box::new(mac.to_string()));
+            idx += 1;
+        }
+        if let Some(r) = rule {
+            sql.push_str(&format!(" AND rule = ?{idx}"));
+            params.push(Box::new(r.to_string()));
+            idx += 1;
+        }
+        if let Some(s) = severity {
+            sql.push_str(&format!(" AND severity = ?{idx}"));
+            params.push(Box::new(s.to_string()));
+            idx += 1;
+        }
+        if let Some(ack) = acknowledged {
+            sql.push_str(&format!(" AND acknowledged = ?{idx}"));
+            params.push(Box::new(ack as i32));
+            idx += 1;
+        }
+
+        sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ?{idx} OFFSET ?{}", idx + 1));
+        params.push(Box::new(limit));
+        params.push(Box::new(offset));
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = self.conn.prepare(&sql)?;
+        let alerts = stmt.query_map(param_refs.as_slice(), |row| {
+            Ok(Alert {
+                id: row.get(0)?,
+                device_mac: row.get(1)?,
+                rule: row.get(2)?,
+                severity: row.get(3)?,
+                message: row.get(4)?,
+                details: row.get(5)?,
+                created_at: row.get(6)?,
+                acknowledged: row.get::<_, i32>(7)? != 0,
+            })
+        })?;
+        Ok(alerts.filter_map(|a| a.ok()).collect())
+    }
+
+    pub fn get_alert(&self, id: i64) -> Result<Option<Alert>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, device_mac, rule, severity, message, details, created_at, acknowledged FROM alerts WHERE id = ?1"
+        )?;
+        let mut rows = stmt.query([id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(Alert {
+                id: row.get(0)?,
+                device_mac: row.get(1)?,
+                rule: row.get(2)?,
+                severity: row.get(3)?,
+                message: row.get(4)?,
+                details: row.get(5)?,
+                created_at: row.get(6)?,
+                acknowledged: row.get::<_, i32>(7)? != 0,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn acknowledge_alert(&self, id: i64) -> Result<bool> {
+        let updated = self.conn.execute(
+            "UPDATE alerts SET acknowledged = 1 WHERE id = ?1",
+            [id],
+        )?;
+        Ok(updated > 0)
+    }
+
+    pub fn acknowledge_all_alerts(&self, device_mac: Option<&str>) -> Result<usize> {
+        if let Some(mac) = device_mac {
+            Ok(self.conn.execute(
+                "UPDATE alerts SET acknowledged = 1 WHERE device_mac = ?1 AND acknowledged = 0",
+                [mac],
+            )?)
+        } else {
+            Ok(self.conn.execute(
+                "UPDATE alerts SET acknowledged = 1 WHERE acknowledged = 0",
+                [],
+            )?)
+        }
+    }
+
+    pub fn alert_counts_by_severity(&self) -> Result<(i64, i64, i64)> {
+        let high: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM alerts WHERE severity = 'high' AND acknowledged = 0", [], |r| r.get(0)
+        )?;
+        let medium: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM alerts WHERE severity = 'medium' AND acknowledged = 0", [], |r| r.get(0)
+        )?;
+        let low: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM alerts WHERE severity = 'low' AND acknowledged = 0", [], |r| r.get(0)
+        )?;
+        Ok((high, medium, low))
+    }
+
+    // Baseline methods
+
+    pub fn upsert_baseline(&self, mac: &str, metric: &str, avg: f64, stddev: f64) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+        self.conn.execute(
+            "INSERT INTO device_baselines (mac, metric, window_avg, window_stddev, last_computed)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(mac, metric) DO UPDATE SET window_avg = ?3, window_stddev = ?4, last_computed = ?5",
+            rusqlite::params![mac, metric, avg, stddev, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_baseline(&self, mac: &str, metric: &str) -> Result<Option<(f64, f64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT window_avg, window_stddev FROM device_baselines WHERE mac = ?1 AND metric = ?2"
+        )?;
+        let mut rows = stmt.query(rusqlite::params![mac, metric])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some((row.get(0)?, row.get(1)?)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    // Aggregate queries for analysis
+
+    pub fn count_unique_dns_domains_hourly(&self, device_ip: &str, hours_back: i64) -> Result<Vec<(i64, i64)>> {
+        let cutoff = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64 - (hours_back * 3600);
+        let mut stmt = self.conn.prepare(
+            "SELECT (ts / 3600) AS hour_bucket, COUNT(DISTINCT domain)
+             FROM dns_logs WHERE device_ip = ?1 AND ts >= ?2
+             GROUP BY hour_bucket ORDER BY hour_bucket"
+        )?;
+        let rows = stmt.query_map(rusqlite::params![device_ip, cutoff], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn count_unique_dest_ips_hourly(&self, device_ip: &str, hours_back: i64) -> Result<Vec<(i64, i64)>> {
+        let cutoff = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64 - (hours_back * 3600);
+        let mut stmt = self.conn.prepare(
+            "SELECT (started_at / 3600) AS hour_bucket, COUNT(DISTINCT dest_ip)
+             FROM connection_logs WHERE device_ip = ?1 AND started_at >= ?2
+             GROUP BY hour_bucket ORDER BY hour_bucket"
+        )?;
+        let rows = stmt.query_map(rusqlite::params![device_ip, cutoff], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn get_dns_beaconing_candidates(&self, device_ip: &str, min_queries: i64) -> Result<Vec<(String, Vec<i64>)>> {
+        let one_hour_ago = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64 - 3600;
+        let mut stmt = self.conn.prepare(
+            "SELECT domain FROM dns_logs
+             WHERE device_ip = ?1 AND ts >= ?2
+             GROUP BY domain HAVING COUNT(*) >= ?3"
+        )?;
+        let domains: Vec<String> = stmt.query_map(rusqlite::params![device_ip, one_hour_ago, min_queries], |row| {
+            row.get(0)
+        })?.filter_map(|r| r.ok()).collect();
+
+        let mut results = Vec::new();
+        for domain in domains {
+            let mut ts_stmt = self.conn.prepare(
+                "SELECT ts FROM dns_logs WHERE device_ip = ?1 AND domain = ?2 AND ts >= ?3 ORDER BY ts"
+            )?;
+            let timestamps: Vec<i64> = ts_stmt.query_map(rusqlite::params![device_ip, &domain, one_hour_ago], |row| {
+                row.get(0)
+            })?.filter_map(|r| r.ok()).collect();
+            results.push((domain, timestamps));
+        }
+        Ok(results)
+    }
+
+    pub fn get_suspicious_port_connections(&self, device_ip: &str) -> Result<Vec<(String, i64, String)>> {
+        let one_hour_ago = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64 - 3600;
+        let mut stmt = self.conn.prepare(
+            "SELECT dest_ip, dest_port, protocol FROM connection_logs
+             WHERE device_ip = ?1 AND started_at >= ?2
+             AND (dest_port IN (23, 445, 3389, 5900) OR (dest_port > 49152 AND dest_ip LIKE '10.%'))"
+        )?;
+        let rows = stmt.query_map(rusqlite::params![device_ip, one_hour_ago], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn get_device_tx_bytes_hourly(&self, device_ip: &str, hours_back: i64) -> Result<Vec<(i64, i64)>> {
+        let cutoff = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64 - (hours_back * 3600);
+        let mut stmt = self.conn.prepare(
+            "SELECT (started_at / 3600) AS hour_bucket, SUM(bytes_sent)
+             FROM connection_logs WHERE device_ip = ?1 AND started_at >= ?2
+             GROUP BY hour_bucket ORDER BY hour_bucket"
+        )?;
+        let rows = stmt.query_map(rusqlite::params![device_ip, cutoff], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn rotate_alerts(&self, retention_secs: i64) -> Result<usize> {
+        let cutoff = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64 - retention_secs;
+        Ok(self.conn.execute("DELETE FROM alerts WHERE created_at < ?1", [cutoff])?)
     }
 }
