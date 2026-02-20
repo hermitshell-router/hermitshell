@@ -7,6 +7,7 @@ mod nftables;
 mod pd;
 mod ra;
 mod socket;
+mod runzero;
 mod wireguard;
 
 use hermitshell_common::subnet;
@@ -348,6 +349,12 @@ async fn main() -> Result<()> {
         if let Err(e) = socket::run_dhcp_socket(DHCP_SOCKET_PATH, db_dhcp, lan_iface_dhcp).await {
             error!(error = %e, "DHCP socket error");
         }
+    });
+
+    // Spawn runZero sync task
+    let db_runzero = db.clone();
+    tokio::spawn(async move {
+        runzero::run(db_runzero).await;
     });
 
     // Spawn DHCP server as child process
