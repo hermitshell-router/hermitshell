@@ -25,6 +25,10 @@ pub fn Settings() -> impl IntoView {
         || (),
         |_| async { client::get_analyzer_status() },
     );
+    let qos_config = create_resource(
+        || (),
+        |_| async { client::get_qos_config() },
+    );
 
     view! {
         <Layout title="Settings" active_page="settings">
@@ -297,6 +301,64 @@ pub fn Settings() -> impl IntoView {
                         }.into_view()
                     }
                     Err(_) => view! { <span></span> }.into_view(),
+                })}
+            </Suspense>
+            <Suspense fallback=move || view! { <p>"Loading QoS config..."</p> }>
+                {move || qos_config.get().map(|result| match result {
+                    Ok(config) => {
+                        let enabled = config.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+                        let upload_mbps = config.get("upload_mbps").and_then(|v| v.as_u64()).map(|v| v.to_string()).unwrap_or_default();
+                        let download_mbps = config.get("download_mbps").and_then(|v| v.as_u64()).map(|v| v.to_string()).unwrap_or_default();
+                        let test_url = config.get("test_url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+                        view! {
+                            <div class="settings-section">
+                                <h3>"QoS / Bufferbloat Prevention"</h3>
+                                <p class="hint">"CAKE qdisc with per-device fair queuing. Set bandwidth to ~85-90% of your ISP speed."</p>
+                                <form method="post" action="/api/set-qos-config">
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Enabled"</span>
+                                        <span class="settings-value">
+                                            <select name="qos_enabled">
+                                                <option value="true" selected={enabled}>"Yes"</option>
+                                                <option value="false" selected={!enabled}>"No"</option>
+                                            </select>
+                                        </span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Upload Speed Mbps"</span>
+                                        <span class="settings-value">
+                                            <input type="number" name="upload_mbps" min="1" max="1000000" value={upload_mbps} />
+                                        </span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Download Speed Mbps"</span>
+                                        <span class="settings-value">
+                                            <input type="number" name="download_mbps" min="1" max="1000000" value={download_mbps} />
+                                        </span>
+                                    </div>
+                                    <div class="actions-bar">
+                                        <button type="submit" class="btn btn-primary btn-sm">"Save"</button>
+                                    </div>
+                                </form>
+                                <form method="post" action="/api/set-qos-test-url" style="margin-top: 0.5rem;">
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Speed Test URL"</span>
+                                        <span class="settings-value">
+                                            <input type="text" name="url" placeholder="https://speed.cloudflare.com/__down?bytes=25000000" value={test_url} />
+                                        </span>
+                                    </div>
+                                    <div class="actions-bar">
+                                        <button type="submit" class="btn btn-primary btn-sm">"Save Test URL"</button>
+                                    </div>
+                                </form>
+                                <form method="post" action="/api/run-speed-test" style="margin-top: 0.5rem;">
+                                    <button type="submit" class="btn btn-sm">"Run Speed Test"</button>
+                                </form>
+                            </div>
+                        }.into_view()
+                    }
+                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_view(),
                 })}
             </Suspense>
         </Layout>

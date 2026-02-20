@@ -64,6 +64,8 @@ pub struct Response {
     pub alerts: Option<Vec<Alert>>,
     pub alert: Option<Alert>,
     pub analyzer_status: Option<serde_json::Value>,
+    #[serde(default)]
+    pub qos_config: Option<serde_json::Value>,
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
@@ -325,6 +327,33 @@ pub fn acknowledge_all_alerts(device_mac: Option<&str>) -> Result<(), String> {
 pub fn get_analyzer_status() -> Result<serde_json::Value, String> {
     let resp = ok_or_err(send(json!({"method": "get_analyzer_status"}))?)?;
     resp.analyzer_status.ok_or_else(|| "no analyzer status".to_string())
+}
+
+pub fn get_qos_config() -> Result<serde_json::Value, String> {
+    let resp = ok_or_err(send(json!({"method": "get_qos_config"}))?)?;
+    Ok(resp.qos_config.unwrap_or(json!({})))
+}
+
+pub fn set_qos_config(enabled: bool, upload_mbps: Option<u32>, download_mbps: Option<u32>) -> Result<(), String> {
+    let mut req = json!({"method": "set_qos_config", "enabled": enabled});
+    if let Some(up) = upload_mbps {
+        req["upload_mbps"] = json!(up);
+    }
+    if let Some(down) = download_mbps {
+        req["download_mbps"] = json!(down);
+    }
+    ok_or_err(send(req)?)?;
+    Ok(())
+}
+
+pub fn set_qos_test_url(url: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "set_qos_test_url", "url": url}))?)?;
+    Ok(())
+}
+
+pub fn run_speed_test() -> Result<serde_json::Value, String> {
+    let resp = ok_or_err(send(json!({"method": "run_speed_test"}))?)?;
+    Ok(resp.qos_config.unwrap_or(json!({})))
 }
 
 #[cfg(test)]
