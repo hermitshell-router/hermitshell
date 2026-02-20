@@ -48,13 +48,17 @@ impl BlockyManager {
     default:
 {servers}
 blocking:
+  loading:
+    strategy: fast
   denylists:
     ads:
       - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+    custom:
       - file://{custom_blocklist}
   clientGroupsBlock:
     default:
       - ads
+      - custom
 ports:
   dns: {listen}
   http: 127.0.0.1:4000
@@ -67,9 +71,9 @@ queryLog:
   creationAttempts: 1
   creationCooldown: 5s
   fields:
-    - questionName
-    - questionType
-    - responseCode
+    - question
+    - responseReason
+    - duration
 "#,
             servers = servers,
             custom_blocklist = custom_blocklist,
