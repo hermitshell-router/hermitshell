@@ -1,3 +1,4 @@
+mod analyzer;
 mod blocky;
 mod conntrack;
 mod db;
@@ -321,6 +322,7 @@ async fn main() -> Result<()> {
 
     let db_dns = db.clone();
     let log_tx_dns = log_tx.clone();
+    let log_tx_analyzer = log_tx.clone();
     tokio::spawn(async move {
         dns_log::start(db_dns, log_tx_dns).await;
     });
@@ -383,6 +385,7 @@ async fn main() -> Result<()> {
     }
 
     let mut rotation_counter: u64 = 0;
+    let mut analysis_counter: u64 = 0;
 
     loop {
         interval.tick().await;
@@ -408,10 +411,18 @@ async fn main() -> Result<()> {
                 }
             }
         }
+        drop(db_guard);
+
+        // Run behavioral analysis every 6 ticks (60 seconds)
+        analysis_counter += 1;
+        if analysis_counter % 6 == 0 {
+            analyzer::run_analysis_cycle(&db_for_counters, &log_tx_analyzer);
+        }
 
         // Hourly log rotation (360 ticks * 10s = 1 hour)
         rotation_counter += 1;
         if rotation_counter % 360 == 0 {
+            let db_guard = db_for_counters.lock().unwrap();
             let retention_days: i64 = db_guard
                 .get_config("log_retention_days")
                 .ok()
@@ -425,6 +436,9 @@ async fn main() -> Result<()> {
                     }
                 }
                 Err(e) => error!(error = %e, "log rotation failed"),
+            }
+            if let Err(e) = db_guard.rotate_alerts(retention_days * 86400) {
+                error!(error = %e, "alert rotation failed");
             }
         }
     }
