@@ -21,6 +21,10 @@ pub fn Settings() -> impl IntoView {
         || (),
         |_| async { client::get_runzero_config() },
     );
+    let analyzer_status = create_resource(
+        || (),
+        |_| async { client::get_analyzer_status() },
+    );
 
     view! {
         <Layout title="Settings" active_page="settings">
@@ -218,6 +222,81 @@ pub fn Settings() -> impl IntoView {
                         }.into_view()
                     }
                     Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_view(),
+                })}
+            </Suspense>
+
+            <Suspense fallback=move || view! { <p>"Loading analyzer status..."</p> }>
+                {move || analyzer_status.get().map(|result| match result {
+                    Ok(status) => {
+                        let enabled = status.get("enabled")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("true")
+                            .to_string();
+                        let alert_counts = status.get("unacknowledged_alerts")
+                            .and_then(|v| v.as_object())
+                            .map(|counts| {
+                                let high = counts.get("high").and_then(|v| v.as_i64()).unwrap_or(0);
+                                let medium = counts.get("medium").and_then(|v| v.as_i64()).unwrap_or(0);
+                                let low = counts.get("low").and_then(|v| v.as_i64()).unwrap_or(0);
+                                format!("{} high, {} medium, {} low", high, medium, low)
+                            });
+                        let rule_statuses: Vec<(&str, String)> = status.get("rules")
+                            .and_then(|v| v.as_object())
+                            .map(|rule_map| {
+                                let rule_names = [
+                                    ("dns_beaconing", "DNS Beaconing"),
+                                    ("dns_volume_spike", "DNS Volume Spike"),
+                                    ("new_dest_spike", "New Destination Spike"),
+                                    ("suspicious_ports", "Suspicious Ports"),
+                                    ("bandwidth_spike", "Bandwidth Spike"),
+                                ];
+                                rule_names.iter().map(|(key, label)| {
+                                    let s = rule_map.get(*key)
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("enabled")
+                                        .to_string();
+                                    (*label, s)
+                                }).collect()
+                            })
+                            .unwrap_or_default();
+
+                        view! {
+                            <div class="settings-section">
+                                <h3>"Behavioral Analysis"</h3>
+                                <div class="settings-row">
+                                    <span class="settings-label">"Status"</span>
+                                    <span class="settings-value">{if enabled == "true" { "Enabled" } else { "Disabled" }}</span>
+                                </div>
+                                {if let Some(counts_text) = alert_counts {
+                                    view! {
+                                        <div class="settings-row">
+                                            <span class="settings-label">"Unacknowledged Alerts"</span>
+                                            <span class="settings-value">
+                                                {counts_text}
+                                            </span>
+                                        </div>
+                                    }.into_view()
+                                } else {
+                                    view! { <span></span> }.into_view()
+                                }}
+                                {if !rule_statuses.is_empty() {
+                                    view! {
+                                        {rule_statuses.iter().map(|(label, s)| {
+                                            view! {
+                                                <div class="settings-row">
+                                                    <span class="settings-label">{*label}</span>
+                                                    <span class="settings-value">{s.clone()}</span>
+                                                </div>
+                                            }
+                                        }).collect_view()}
+                                    }.into_view()
+                                } else {
+                                    view! { <span></span> }.into_view()
+                                }}
+                            </div>
+                        }.into_view()
+                    }
+                    Err(_) => view! { <span></span> }.into_view(),
                 })}
             </Suspense>
         </Layout>
