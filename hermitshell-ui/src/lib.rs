@@ -6,6 +6,7 @@ pub mod types;
 use leptos::*;
 use leptos_router::*;
 
+use pages::alerts::Alerts;
 use pages::dashboard::Dashboard;
 use pages::device_detail::DeviceDetail;
 use pages::devices::DeviceList;
@@ -30,6 +31,7 @@ pub fn App() -> impl IntoView {
                     <Route path="/groups" view=Groups />
                     <Route path="/traffic" view=Traffic />
                     <Route path="/dns" view=Dns />
+                    <Route path="/alerts" view=Alerts />
                     <Route path="/wireguard" view=Wireguard />
                     <Route path="/port-forwarding" view=PortForwarding />
                     <Route path="/settings" view=Settings />
