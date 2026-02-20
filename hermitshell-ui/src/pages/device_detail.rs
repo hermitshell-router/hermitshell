@@ -75,6 +75,32 @@ pub fn DeviceDetail() -> impl IntoView {
                                 </div>
                             </div>
 
+                            {if d.runzero_last_sync.is_some() {
+                                view! {
+                                    <h2 class="section-header">"Device Identity (runZero)"</h2>
+                                    <div class="detail-grid">
+                                        <div class="detail-item">
+                                            <div class="detail-label">"OS"</div>
+                                            <div class="detail-value">{d.runzero_os.clone().unwrap_or_else(|| "\u{2014}".to_string())}</div>
+                                        </div>
+                                        <div class="detail-item">
+                                            <div class="detail-label">"Hardware"</div>
+                                            <div class="detail-value">{d.runzero_hw.clone().unwrap_or_else(|| "\u{2014}".to_string())}</div>
+                                        </div>
+                                        <div class="detail-item">
+                                            <div class="detail-label">"Type"</div>
+                                            <div class="detail-value">{d.runzero_device_type.clone().unwrap_or_else(|| "\u{2014}".to_string())}</div>
+                                        </div>
+                                        <div class="detail-item">
+                                            <div class="detail-label">"Manufacturer"</div>
+                                            <div class="detail-value">{d.runzero_manufacturer.clone().unwrap_or_else(|| "\u{2014}".to_string())}</div>
+                                        </div>
+                                    </div>
+                                }.into_view()
+                            } else {
+                                view! { <span></span> }.into_view()
+                            }}
+
                             <h2 class="section-header">"Actions"</h2>
                             <div class="actions-bar">
                                 {if group != "blocked" {
