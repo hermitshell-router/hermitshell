@@ -24,27 +24,33 @@ This document tracks security compromises made during implementation, why they w
 
 **Risk:** Stolen session cookies remain valid until the `session_secret` is rotated (which only happens if the config DB is wiped).
 
-**Proper fix:** Check the timestamp in `verify_session_cookie` and reject cookies older than a configurable TTL (e.g., 24 hours). Add a logout-all mechanism that rotates `session_secret`.
+**Proper fix:** Check the timestamp in `verify_session` and reject cookies older than a configurable TTL (e.g., 24 hours). Add a logout-all mechanism that rotates `session_secret`.
+
+**Note:** Session creation and verification moved from the web UI to the agent (`socket.rs` `create_session`/`verify_session`). The expiration gap persists — the agent's `verify_session` verifies the HMAC but does not check the embedded timestamp.
 
 ## 3. Session cookie comparison is not constant-time
 
-**What:** `verify_session_cookie` compares the HMAC signature using `==` (string equality), which is vulnerable to timing attacks.
+**What:** The agent's `verify_session` handler compares the HMAC signature using `==` (string equality), which is vulnerable to timing attacks.
 
 **Why:** Simplicity. The `hmac` crate provides `verify_slice` for constant-time comparison, but the implementation hex-encodes and uses string comparison instead.
 
-**Risk:** An attacker on the local network could theoretically forge a session cookie by measuring response times. In practice, network jitter makes this extremely difficult over HTTP.
+**Risk:** An attacker on the local network could theoretically forge a session cookie by measuring response times. In practice, network jitter makes this extremely difficult over a Unix socket.
 
 **Proper fix:** Use `mac.verify_slice(&hex::decode(sig))` instead of comparing hex strings.
 
+**Note:** This logic moved from the web UI to the agent (`socket.rs` `verify_session`). The non-constant-time comparison was carried forward. The attack surface is now a Unix socket (`0660 root:root`) rather than an HTTPS endpoint, making timing attacks even less practical.
+
 ## 4. Self-signed TLS certificate
 
-**What:** The web UI generates a self-signed certificate on first run and stores it in the config DB. Browsers will show security warnings.
+**What:** The agent generates a self-signed certificate on first startup and stores it in the config DB. The web UI retrieves it via `get_tls_config`. Browsers will show security warnings.
 
 **Why:** A local router appliance has no domain name to get a real certificate from a CA. Self-signed is the standard approach for appliance web UIs.
 
 **Risk:** Vulnerable to MITM on first connection (no TOFU mechanism). Users must manually trust the certificate.
 
 **Proper fix:** Offer Let's Encrypt via DNS challenge for users with a domain. For LAN-only access, consider mDNS + a local CA root that users can install, or just document the self-signed approach as acceptable for the threat model.
+
+**Note:** TLS cert generation moved from the web UI to the agent startup (`main.rs`). The self-signed nature is unchanged. The cert and private key are now stored in the config DB and served to the web UI via the `get_tls_config` IPC method — see issue #32.
 
 ## 5. SSH open on all interfaces in nftables input chain
 
@@ -224,6 +230,8 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Add `|| form.password.len() > 128` to the validation check.
 
+**Status: Fixed.** Both `verify_password` and `setup_password` IPC methods reject passwords over 128 bytes. The web UI `handle_setup` also checks `form.password.len() > 128`.
+
 ---
 
 ## Untrusted Network Input
@@ -345,3 +353,53 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** If the lease file is tampered with (by an attacker with root access, or if the file permissions are misconfigured), the parsed prefix could be invalid or malicious. An attacker-controlled prefix could cause the agent to assign addresses from an unexpected range, potentially conflicting with other networks or routing traffic to attacker-controlled infrastructure. However, an attacker with root access already has full control of the system.
 
 **Proper fix:** Validate the parsed prefix format (must be a valid IPv6 prefix with a reasonable prefix length, e.g., /48 to /64). Reject prefixes that fall outside expected ULA or GUA ranges. Set the lease file permissions to `0600 root:root` and verify them before parsing.
+
+---
+
+## Config Key Protection
+
+## 32. get_tls_config exposes the TLS private key over IPC
+
+**What:** The `get_tls_config` IPC method returns both `tls_cert_pem` and `tls_key_pem` to the caller. The TLS private key crosses the Unix socket boundary.
+
+**Why:** The web UI container terminates TLS (it binds ports 80/443 and handles HTTPS). It needs the private key to configure `rustls`. The agent generates and stores the cert, so the web UI must retrieve it at startup.
+
+**Risk:** Any process with socket access can obtain the TLS private key. With the key, an attacker can impersonate the router's web UI or decrypt captured traffic. The same socket permissions (`0660 root:root`) that protect other secrets protect this one.
+
+**Mitigating factor:** Same socket access control as all other IPC methods. The cert is self-signed, so impersonation is only meaningful if the user has already trusted it.
+
+**Proper fix:** Have the agent terminate TLS directly instead of delegating to the web UI container. Alternatively, write the cert/key to a file readable only by the container, avoiding IPC transfer. Neither approach is clearly better given the current Docker architecture.
+
+## 33. verify_password accepts plaintext passwords over the Unix socket
+
+**What:** The `verify_password` IPC method accepts a plaintext password in the `value` field. The password is transmitted in the clear over the Unix socket.
+
+**Why:** This is the purpose-built replacement for the web UI reading the password hash directly. The agent now performs Argon2 verification internally, keeping the hash secret. The tradeoff is that the plaintext password crosses the IPC boundary instead.
+
+**Risk:** A process that can read Unix socket traffic (e.g., root using `strace` or `socat` on the socket path) could capture plaintext passwords. In practice, a root attacker can already read the hash from the DB directly.
+
+**Mitigating factor:** Unix socket traffic is local-only and not network-observable. The socket is `0660 root:root`. The previous approach (web UI reading the hash) was worse — the hash could be extracted and cracked offline, while a plaintext password captured from a single request has limited replay value if sessions are used.
+
+**Proper fix:** Acceptable for the threat model. A challenge-response protocol (e.g., SRP) would avoid sending the plaintext, but adds significant complexity for no practical security gain on a local socket.
+
+## 34. Argon2 hashing holds the database mutex
+
+**What:** The `verify_password` and `setup_password` handlers acquire the database mutex lock and hold it through the Argon2 hash/verify operation. Argon2 is intentionally slow (~100ms-1s depending on parameters), blocking all other IPC methods that need DB access during that time.
+
+**Why:** The agent uses a single `Mutex<Db>` for all database access. The password handlers need to read from the DB (get the stored hash) and the Argon2 operation is performed while the lock is held.
+
+**Risk:** During password verification or setup, all other IPC requests (device listing, DHCP, config reads) are blocked. Under normal usage this is a brief delay on infrequent operations. Under brute-force attack, the attacker effectively DoS-es the entire agent IPC.
+
+**Mitigating factor:** Logins are infrequent. Issue #8 (no rate limiting) is the more direct concern — rate limiting would prevent sustained blocking.
+
+**Proper fix:** Read the hash from the DB, drop the lock, perform Argon2, then re-acquire for writes. This requires splitting the operation but keeps the mutex held for only microseconds.
+
+## 35. No memory zeroization of secret material
+
+**What:** The `session_secret`, `admin_password_hash`, TLS private key, and plaintext passwords during verification are held in standard Rust `String` values. When dropped, the memory is freed but not zeroed — the secret data may linger in the process heap until overwritten by a future allocation.
+
+**Why:** Simplicity. The `zeroize` crate exists for this purpose but was not added.
+
+**Risk:** A memory dump of the agent process (via `/proc/pid/mem`, core dump, or cold boot attack) could recover secret material. An attacker who can dump the agent's memory already has root access, so the practical risk is limited to forensic scenarios.
+
+**Proper fix:** Use `zeroize::Zeroizing<String>` for secret values to ensure they are zeroed on drop. Apply to variables holding `session_secret`, password hash strings, plaintext passwords, and TLS key PEM data.
