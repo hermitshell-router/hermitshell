@@ -17,6 +17,10 @@ pub fn Settings() -> impl IntoView {
         || (),
         |_| async { client::get_log_config() },
     );
+    let runzero_config = create_resource(
+        || (),
+        |_| async { client::get_runzero_config() },
+    );
 
     view! {
         <Layout title="Settings" active_page="settings">
@@ -155,6 +159,60 @@ pub fn Settings() -> impl IntoView {
                                     <div class="actions-bar">
                                         <button type="submit" class="btn btn-primary btn-sm">"Save Log Settings"</button>
                                     </div>
+                                </form>
+                            </div>
+                        }.into_view()
+                    }
+                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_view(),
+                })}
+            </Suspense>
+
+            <Suspense fallback=move || view! { <p>"Loading runZero config..."</p> }>
+                {move || runzero_config.get().map(|result| match result {
+                    Ok(config) => {
+                        let url = config.get("runzero_url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let interval = config.get("runzero_sync_interval").and_then(|v| v.as_str()).unwrap_or("3600").to_string();
+                        let enabled = config.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+                        let has_token = config.get("has_token").and_then(|v| v.as_bool()).unwrap_or(false);
+                        let token_placeholder = if has_token { "(configured)" } else { "XT-..." };
+
+                        view! {
+                            <div class="settings-section">
+                                <h3>"runZero Integration"</h3>
+                                <form method="post" action="/api/set-runzero-config">
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Console URL"</span>
+                                        <span class="settings-value">
+                                            <input type="text" name="runzero_url" placeholder="https://runzero.lan:8443" value={url} />
+                                        </span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Export Token"</span>
+                                        <span class="settings-value">
+                                            <input type="password" name="runzero_token" placeholder={token_placeholder} />
+                                        </span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Sync Interval (seconds)"</span>
+                                        <span class="settings-value">
+                                            <input type="number" name="runzero_sync_interval" min="60" value={interval} />
+                                        </span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Enabled"</span>
+                                        <span class="settings-value">
+                                            <select name="runzero_enabled">
+                                                <option value="true" selected={enabled}>"Yes"</option>
+                                                <option value="false" selected={!enabled}>"No"</option>
+                                            </select>
+                                        </span>
+                                    </div>
+                                    <div class="actions-bar">
+                                        <button type="submit" class="btn btn-primary btn-sm">"Save runZero Settings"</button>
+                                    </div>
+                                </form>
+                                <form method="post" action="/api/sync-runzero" style="margin-top: 0.5rem;">
+                                    <button type="submit" class="btn btn-sm">"Sync Now"</button>
                                 </form>
                             </div>
                         }.into_view()

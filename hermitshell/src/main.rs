@@ -162,6 +162,32 @@ struct LogConfigForm {
     log_retention_days: String,
 }
 
+#[derive(Deserialize)]
+struct RunZeroConfigForm {
+    runzero_url: String,
+    runzero_token: String,
+    runzero_sync_interval: String,
+    runzero_enabled: String,
+}
+
+async fn handle_set_runzero_config(Form(form): Form<RunZeroConfigForm>) -> impl IntoResponse {
+    let mut config = serde_json::json!({
+        "runzero_url": form.runzero_url,
+        "runzero_sync_interval": form.runzero_sync_interval,
+        "runzero_enabled": form.runzero_enabled,
+    });
+    if !form.runzero_token.is_empty() {
+        config["runzero_token"] = serde_json::Value::String(form.runzero_token);
+    }
+    let _ = client::set_runzero_config(&config);
+    axum::response::Redirect::to("/settings")
+}
+
+async fn handle_sync_runzero() -> impl IntoResponse {
+    let _ = client::sync_runzero();
+    axum::response::Redirect::to("/settings")
+}
+
 async fn handle_set_log_config(Form(form): Form<LogConfigForm>) -> impl IntoResponse {
     let config = serde_json::json!({
         "log_format": form.log_format,
@@ -240,6 +266,8 @@ async fn main() {
         .route("/api/remove-reservation", axum::routing::post(handle_remove_reservation))
         .route("/api/backup/config", axum::routing::get(handle_backup_config))
         .route("/api/set-log-config", axum::routing::post(handle_set_log_config))
+        .route("/api/set-runzero-config", axum::routing::post(handle_set_runzero_config))
+        .route("/api/sync-runzero", axum::routing::post(handle_sync_runzero))
         .leptos_routes(&leptos_options, routes, App)
         .layer(axum::middleware::from_fn(auth_middleware))
         .with_state(leptos_options);
