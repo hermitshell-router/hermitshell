@@ -1,6 +1,9 @@
 #!/bin/bash
 source "$(dirname "$0")/../lib/helpers.sh"
 
+require_agent
+require_lan_ip
+
 # Get LAN device MAC
 lan_mac=$(vm_exec lan "cat /sys/class/net/eth1/address")
 assert_match "$lan_mac" "^[0-9a-f]" "LAN MAC is valid"

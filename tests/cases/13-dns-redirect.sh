@@ -1,6 +1,9 @@
 #!/bin/bash
 source "$(dirname "$0")/../lib/helpers.sh"
 
+require_blocky
+require_nftables
+
 # Query ad domain via 8.8.8.8 from LAN — should still be blocked via DNAT
 dns_redirected() {
     local result

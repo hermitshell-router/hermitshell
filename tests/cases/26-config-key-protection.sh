@@ -1,6 +1,8 @@
 #!/bin/bash
 source "$(dirname "$0")/../lib/helpers.sh"
 
+require_agent
+
 SOCK="UNIX-CONNECT:/run/hermitshell/agent.sock"
 
 # --- Blocked config key reads ---

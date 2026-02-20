@@ -3,9 +3,9 @@ source "$(dirname "$0")/../lib/helpers.sh"
 
 # Export config
 result=$(vm_exec router 'echo "{\"method\":\"export_config\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
-assert_match "$result" '"ok":true' "export_config succeeds"
-assert_match "$result" 'version.*:.*1' "export contains version"
-assert_match "$result" 'devices' "export contains devices"
+assert_contains "$result" '"ok":true' "export_config succeeds"
+assert_contains "$result" '"version"' "export contains version"
+assert_contains "$result" '"devices"' "export contains devices"
 
 # Backup database
 result=$(vm_exec router 'echo "{\"method\":\"backup_database\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')

@@ -1,6 +1,11 @@
 #!/bin/bash
 source "$(dirname "$0")/../lib/helpers.sh"
 
+require_agent
+require_wan
+require_lan_ip
+require_nftables
+
 # LAN device makes an outbound connection (triggers conntrack NEW)
 vm_exec lan "curl -s -o /dev/null http://1.1.1.1/ 2>/dev/null" || true
 

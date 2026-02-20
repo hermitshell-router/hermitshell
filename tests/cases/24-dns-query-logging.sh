@@ -1,6 +1,10 @@
 #!/bin/bash
 source "$(dirname "$0")/../lib/helpers.sh"
 
+require_agent
+require_lan_ip
+require_blocky
+
 # LAN device resolves a domain (generates DNS log entry if Blocky CSV ingest is active)
 vm_exec lan "dig +short example.com @10.0.0.1 2>/dev/null" || true
 

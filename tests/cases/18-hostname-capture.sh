@@ -1,6 +1,9 @@
 #!/bin/bash
 source "$(dirname "$0")/../lib/helpers.sh"
 
+require_agent
+require_lan_ip
+
 # Force DHCP renewal with hostname
 vm_exec lan "sudo dhclient -r eth1 2>/dev/null; sudo dhclient eth1 -H testhost 2>/dev/null" || true
 

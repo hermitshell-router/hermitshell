@@ -1,6 +1,8 @@
 #!/bin/bash
 source "$(dirname "$0")/../lib/helpers.sh"
 
+require_docker
+
 # HTTPS should redirect unauthenticated to setup/login
 response=$(vm_exec router "curl -s -k -o /dev/null -w '%{http_code}' https://localhost/")
 assert_match "$response" "30[0-9]" "HTTPS redirects unauthenticated"

@@ -1,6 +1,8 @@
 #!/bin/bash
 source "$(dirname "$0")/../lib/helpers.sh"
 
+require_agent
+
 # Get current log config
 result=$(vm_exec router 'echo "{\"method\":\"get_log_config\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$result" '"ok":true' "get_log_config succeeds"
@@ -27,9 +29,9 @@ assert_match "$result" '"json"' "log_format updated to json"
 
 # Verify backup includes log config keys
 result=$(vm_exec router 'echo "{\"method\":\"export_config\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
-assert_match "$result" '"ok":true' "export_config succeeds"
-assert_match "$result" '"log_retention_days"' "backup includes log_retention_days"
-assert_match "$result" '"log_format"' "backup includes log_format"
+assert_contains "$result" '"ok":true' "export_config succeeds"
+assert_contains "$result" '"log_retention_days"' "backup includes log_retention_days"
+assert_contains "$result" '"log_format"' "backup includes log_format"
 
 # Reset log config to defaults
 vm_exec router 'echo "{\"method\":\"set_log_config\",\"value\":\"{\\\"log_retention_days\\\":\\\"7\\\",\\\"log_format\\\":\\\"text\\\"}\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' >/dev/null

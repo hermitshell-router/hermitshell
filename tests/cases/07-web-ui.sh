@@ -1,6 +1,8 @@
 #!/bin/bash
 source "$(dirname "$0")/../lib/helpers.sh"
 
+require_docker
+
 # Check if container is running
 assert_success "Web UI container running" \
     vm_exec router "docker ps | grep -q hermitshell"

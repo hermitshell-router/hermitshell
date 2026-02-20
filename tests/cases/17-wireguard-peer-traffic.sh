@@ -1,6 +1,9 @@
 #!/bin/bash
 source "$(dirname "$0")/../lib/helpers.sh"
 
+require_agent
+require_wan
+
 # Enable WireGuard on router
 result=$(vm_exec router 'echo "{\"method\":\"set_wireguard_enabled\",\"enabled\":true}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$result" '"ok":true' "Enable WireGuard for traffic test"

@@ -1,6 +1,10 @@
 #!/bin/bash
 source "$(dirname "$0")/../lib/helpers.sh"
 
+require_agent
+require_lan_ip
+require_nftables
+
 # Get LAN device IP
 device_ip=$(vm_exec lan "ip -4 addr show eth1 | grep inet | awk '{print \$2}' | cut -d/ -f1")
 assert_match "$device_ip" "10\." "LAN device has 10.x IP"

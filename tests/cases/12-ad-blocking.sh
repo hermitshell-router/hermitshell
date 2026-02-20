@@ -1,6 +1,9 @@
 #!/bin/bash
 source "$(dirname "$0")/../lib/helpers.sh"
 
+require_agent
+require_blocky
+
 # Verify blocky process is running
 blocky_pid=$(vm_exec router "pgrep blocky" || echo "")
 assert_match "$blocky_pid" "^[0-9]+" "Blocky process is running"

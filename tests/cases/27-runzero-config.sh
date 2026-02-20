@@ -1,6 +1,8 @@
 #!/bin/bash
 source "$(dirname "$0")/../lib/helpers.sh"
 
+require_agent
+
 SOCK="UNIX-CONNECT:/run/hermitshell/agent.sock"
 
 # --- runZero config defaults ---
@@ -45,10 +47,10 @@ assert_match "$result" '"ok":true' "list_devices succeeds with new schema"
 
 # --- export_config includes runzero settings ---
 result=$(vm_exec router "echo '{\"method\":\"export_config\"}' | socat - $SOCK")
-assert_match "$result" '"ok":true' "export_config succeeds"
-assert_match "$result" 'runzero_url' "export includes runzero_url"
-assert_match "$result" 'runzero_sync_interval' "export includes runzero_sync_interval"
-assert_match "$result" 'runzero_enabled' "export includes runzero_enabled"
+assert_contains "$result" '"ok":true' "export_config succeeds"
+assert_contains "$result" 'runzero_url' "export includes runzero_url"
+assert_contains "$result" 'runzero_sync_interval' "export includes runzero_sync_interval"
+assert_contains "$result" 'runzero_enabled' "export includes runzero_enabled"
 # Token must NOT be in export
 if echo "$result" | grep -qF "XT-test123"; then
     echo -e "${RED}FAIL${NC}: export_config leaks runzero_token"
