@@ -269,3 +269,17 @@ select {
 
 .settings-label { color: var(--text-secondary); font-size: 0.875rem; }
 .settings-value { font-weight: 500; font-size: 0.875rem; }
+
+/* Alert severity badges */
+.badge-high {
+    background: #dc3545;
+    color: #fff;
+}
+.badge-medium {
+    background: #ffc107;
+    color: #000;
+}
+.badge-low {
+    background: #0d6efd;
+    color: #fff;
+}
