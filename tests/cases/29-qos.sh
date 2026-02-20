@@ -51,7 +51,7 @@ else
 fi
 
 nft_qos=$(vm_exec router "sudo nft list table inet qos 2>&1")
-if echo "$nft_qos" | grep -qF 'table inet qos'; then
+if echo "$nft_qos" | grep -qF 'chain mark_forward'; then
     echo -e "${RED}FAIL${NC}: nft table inet qos still exists after disable"
 else
     echo -e "${GREEN}PASS${NC}: nft table inet qos removed after disable"

@@ -37,7 +37,12 @@ pub fn enable(wan_iface: &str, upload_mbps: u32, download_mbps: u32) -> Result<(
     info!(iface = %wan_iface, bandwidth = %up_bw, "CAKE upload qdisc applied");
 
     // Download shaping: IFB device + CAKE
-    // Create ifb0 module and device
+    // Load ifb kernel module (may not be loaded by default)
+    let _ = Command::new("/usr/sbin/modprobe")
+        .args(["ifb"])
+        .status();
+
+    // Create ifb0 device
     let status = Command::new("/usr/sbin/ip")
         .args(["link", "add", "ifb0", "type", "ifb"])
         .status()?;
