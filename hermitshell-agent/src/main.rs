@@ -198,6 +198,39 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Restore QoS if enabled
+    {
+        let db_guard = db.lock().unwrap();
+        let qos_enabled = db_guard.get_config("qos_enabled")
+            .ok().flatten()
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if qos_enabled {
+            let upload: u32 = db_guard.get_config("qos_upload_mbps")
+                .ok().flatten()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let download: u32 = db_guard.get_config("qos_download_mbps")
+                .ok().flatten()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            if upload > 0 && download > 0 {
+                if let Err(e) = qos::enable(wan_iface, upload, download) {
+                    error!(error = %e, "failed to restore QoS");
+                } else {
+                    info!(upload = upload, download = download, "QoS restored");
+                    let assigned = db_guard.list_assigned_devices().unwrap_or_default();
+                    let devices: Vec<(String, String)> = assigned.iter()
+                        .filter_map(|d| d.ipv4.as_ref().map(|ip| (ip.clone(), d.device_group.clone())))
+                        .collect();
+                    if let Err(e) = qos::apply_dscp_rules(&devices) {
+                        error!(error = %e, "failed to restore DSCP rules");
+                    }
+                }
+            }
+        }
+    }
+
     // Restore port forwarding rules
     {
         let db_guard = db.lock().unwrap();

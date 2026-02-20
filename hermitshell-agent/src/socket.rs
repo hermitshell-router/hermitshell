@@ -60,6 +60,9 @@ struct Request {
     rule: Option<String>,
     severity: Option<String>,
     acknowledged: Option<bool>,
+    upload_mbps: Option<u32>,
+    download_mbps: Option<u32>,
+    url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -113,6 +116,8 @@ struct Response {
     alert: Option<crate::db::Alert>,
     #[serde(skip_serializing_if = "Option::is_none")]
     analyzer_status: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    qos_config: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -142,10 +147,10 @@ struct WgPeerInfo {
 
 impl Response {
     fn ok() -> Self {
-        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None, tls_cert_pem: None, tls_key_pem: None, runzero_config: None, alerts: None, alert: None, analyzer_status: None }
+        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None, tls_cert_pem: None, tls_key_pem: None, runzero_config: None, alerts: None, alert: None, analyzer_status: None, qos_config: None }
     }
     fn err(msg: &str) -> Self {
-        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None, tls_cert_pem: None, tls_key_pem: None, runzero_config: None, alerts: None, alert: None, analyzer_status: None }
+        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None, tls_cert_pem: None, tls_key_pem: None, runzero_config: None, alerts: None, alert: None, analyzer_status: None, qos_config: None }
     }
 }
 
@@ -292,6 +297,18 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 return Response::err(&format!("failed to add new rule: {}", e));
             }
             let _ = nftables::add_device_forward_rule_v6(&ipv6, &group);
+            // Update QoS DSCP rules if QoS is enabled
+            let qos_enabled = db.get_config("qos_enabled")
+                .ok().flatten()
+                .map(|v| v == "true")
+                .unwrap_or(false);
+            if qos_enabled {
+                let assigned = db.list_assigned_devices().unwrap_or_default();
+                let devices: Vec<(String, String)> = assigned.iter()
+                    .filter_map(|d| d.ipv4.as_ref().map(|ip| (ip.clone(), d.device_group.clone())))
+                    .collect();
+                let _ = crate::qos::apply_dscp_rules(&devices);
+            }
             match db.get_device(&mac) {
                 Ok(Some(device)) => {
                     let mut resp = Response::ok();
@@ -791,7 +808,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             let peers = db.list_wg_peers().unwrap_or_default();
             let pinholes = db.list_ipv6_pinholes().unwrap_or_default();
 
-            let config_keys = ["ad_blocking_enabled", "wg_listen_port", "dmz_host_ip", "log_format", "syslog_target", "webhook_url", "log_retention_days", "runzero_url", "runzero_sync_interval", "runzero_enabled"];
+            let config_keys = ["ad_blocking_enabled", "wg_listen_port", "dmz_host_ip", "log_format", "syslog_target", "webhook_url", "log_retention_days", "runzero_url", "runzero_sync_interval", "runzero_enabled", "qos_enabled", "qos_upload_mbps", "qos_download_mbps", "qos_test_url"];
             let mut config_map = serde_json::Map::new();
             for key in &config_keys {
                 if let Ok(Some(val)) = db.get_config(key) {
@@ -894,7 +911,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             if let Some(config) = parsed.get("config").and_then(|v| v.as_object()) {
                 for (key, val) in config {
                     match key.as_str() {
-                        "ad_blocking_enabled" | "wg_listen_port" | "dmz_host_ip" | "log_format" | "syslog_target" | "webhook_url" | "log_retention_days" | "runzero_url" | "runzero_sync_interval" | "runzero_enabled" => {
+                        "ad_blocking_enabled" | "wg_listen_port" | "dmz_host_ip" | "log_format" | "syslog_target" | "webhook_url" | "log_retention_days" | "runzero_url" | "runzero_sync_interval" | "runzero_enabled" | "qos_enabled" | "qos_upload_mbps" | "qos_download_mbps" | "qos_test_url" => {
                             if let Some(v) = val.as_str() {
                                 let _ = db.set_config(key, v);
                             }
@@ -908,8 +925,38 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             let forwards = db.list_enabled_port_forwards().unwrap_or_default();
             let dmz = db.get_config("dmz_host_ip").ok().flatten().unwrap_or_default();
             let dmz_ref = if dmz.is_empty() { None } else { Some(dmz.as_str()) };
+
+            // Read QoS config before dropping the lock
+            let qos_enabled = db.get_config("qos_enabled")
+                .ok().flatten()
+                .map(|v| v == "true")
+                .unwrap_or(false);
+            let qos_upload: u32 = db.get_config("qos_upload_mbps")
+                .ok().flatten().and_then(|v| v.parse().ok()).unwrap_or(0);
+            let qos_download: u32 = db.get_config("qos_download_mbps")
+                .ok().flatten().and_then(|v| v.parse().ok()).unwrap_or(0);
+            let qos_devices: Vec<(String, String)> = if qos_enabled {
+                let assigned = db.list_assigned_devices().unwrap_or_default();
+                assigned.iter()
+                    .filter_map(|d| d.ipv4.as_ref().map(|ip| (ip.clone(), d.device_group.clone())))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
             drop(db);
             let _ = nftables::apply_port_forwards(wan_iface, lan_iface, &forwards, dmz_ref);
+
+            // Apply QoS if enabled in imported config
+            if qos_enabled {
+                if qos_upload > 0 && qos_download > 0 {
+                    let _ = crate::qos::enable(wan_iface, qos_upload, qos_download);
+                    let _ = crate::qos::apply_dscp_rules(&qos_devices);
+                }
+            } else {
+                let _ = crate::qos::disable(wan_iface);
+                let _ = crate::qos::remove_dscp_rules();
+            }
 
             Response::ok()
         }
@@ -1363,6 +1410,92 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             resp.analyzer_status = Some(status);
             resp
         }
+        "get_qos_config" => {
+            let db = db.lock().unwrap();
+            let enabled = db.get_config("qos_enabled")
+                .ok().flatten()
+                .map(|v| v == "true")
+                .unwrap_or(false);
+            let upload = db.get_config("qos_upload_mbps").ok().flatten().unwrap_or_default();
+            let download = db.get_config("qos_download_mbps").ok().flatten().unwrap_or_default();
+            let test_url = db.get_config("qos_test_url").ok().flatten().unwrap_or_default();
+            let mut resp = Response::ok();
+            resp.qos_config = Some(serde_json::json!({
+                "enabled": enabled,
+                "upload_mbps": upload,
+                "download_mbps": download,
+                "test_url": test_url,
+            }));
+            resp
+        }
+        "set_qos_config" => {
+            let Some(enabled) = req.enabled else {
+                return Response::err("enabled required");
+            };
+            let db = db.lock().unwrap();
+
+            if enabled {
+                let Some(upload) = req.upload_mbps else {
+                    return Response::err("upload_mbps required when enabling");
+                };
+                let Some(download) = req.download_mbps else {
+                    return Response::err("download_mbps required when enabling");
+                };
+                if let Err(e) = crate::qos::validate_bandwidth(upload) {
+                    return Response::err(&e.to_string());
+                }
+                if let Err(e) = crate::qos::validate_bandwidth(download) {
+                    return Response::err(&e.to_string());
+                }
+
+                let _ = db.set_config("qos_upload_mbps", &upload.to_string());
+                let _ = db.set_config("qos_download_mbps", &download.to_string());
+                let _ = db.set_config("qos_enabled", "true");
+
+                if let Err(e) = crate::qos::enable(wan_iface, upload, download) {
+                    return Response::err(&format!("failed to enable QoS: {}", e));
+                }
+
+                // Apply DSCP rules for all assigned devices
+                let assigned = db.list_assigned_devices().unwrap_or_default();
+                let devices: Vec<(String, String)> = assigned.iter()
+                    .filter_map(|d| d.ipv4.as_ref().map(|ip| (ip.clone(), d.device_group.clone())))
+                    .collect();
+                if let Err(e) = crate::qos::apply_dscp_rules(&devices) {
+                    return Response::err(&format!("failed to apply DSCP rules: {}", e));
+                }
+            } else {
+                let _ = db.set_config("qos_enabled", "false");
+                let _ = crate::qos::disable(wan_iface);
+                let _ = crate::qos::remove_dscp_rules();
+            }
+
+            Response::ok()
+        }
+        "set_qos_test_url" => {
+            let Some(url) = req.url else {
+                return Response::err("url required");
+            };
+            match reqwest::Url::parse(&url) {
+                Ok(parsed) => {
+                    let scheme = parsed.scheme();
+                    if scheme != "http" && scheme != "https" {
+                        return Response::err("url must be http or https");
+                    }
+                    if let Some(host) = parsed.host_str() {
+                        if let Ok(addr) = host.parse::<std::net::IpAddr>() {
+                            if !crate::qos::is_public_ip(&addr) {
+                                return Response::err("url must not point to private/loopback address");
+                            }
+                        }
+                    }
+                }
+                Err(_) => return Response::err("invalid url"),
+            }
+            let db = db.lock().unwrap();
+            let _ = db.set_config("qos_test_url", &url);
+            Response::ok()
+        }
         _ => Response::err("unknown method"),
     }
 }
@@ -1511,6 +1644,23 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
                 error!(ip = %ipv4, error = %e, "failed to add forward rule");
             }
             let _ = nftables::add_device_forward_rule_v6(&ipv6, "quarantine");
+
+            // Update QoS DSCP rules if QoS is enabled
+            let qos_enabled = {
+                let db = db.lock().unwrap();
+                db.get_config("qos_enabled")
+                    .ok().flatten()
+                    .map(|v| v == "true")
+                    .unwrap_or(false)
+            };
+            if qos_enabled {
+                let db = db.lock().unwrap();
+                let assigned = db.list_assigned_devices().unwrap_or_default();
+                let devices: Vec<(String, String)> = assigned.iter()
+                    .filter_map(|d| d.ipv4.as_ref().map(|ip| (ip.clone(), d.device_group.clone())))
+                    .collect();
+                let _ = crate::qos::apply_dscp_rules(&devices);
+            }
 
             Response::ok()
         }
