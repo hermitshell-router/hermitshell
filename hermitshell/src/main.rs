@@ -170,6 +170,11 @@ struct RunZeroConfigForm {
     runzero_enabled: String,
 }
 
+#[derive(Deserialize)]
+struct AlertIdForm {
+    id: i64,
+}
+
 async fn handle_set_runzero_config(Form(form): Form<RunZeroConfigForm>) -> impl IntoResponse {
     let mut config = serde_json::json!({
         "runzero_url": form.runzero_url,
@@ -186,6 +191,16 @@ async fn handle_set_runzero_config(Form(form): Form<RunZeroConfigForm>) -> impl 
 async fn handle_sync_runzero() -> impl IntoResponse {
     let _ = client::sync_runzero();
     axum::response::Redirect::to("/settings")
+}
+
+async fn handle_acknowledge_alert(Form(form): Form<AlertIdForm>) -> impl IntoResponse {
+    let _ = client::acknowledge_alert(form.id);
+    axum::response::Redirect::to("/alerts")
+}
+
+async fn handle_acknowledge_all_alerts() -> impl IntoResponse {
+    let _ = client::acknowledge_all_alerts(None);
+    axum::response::Redirect::to("/alerts")
 }
 
 async fn handle_set_log_config(Form(form): Form<LogConfigForm>) -> impl IntoResponse {
@@ -268,6 +283,8 @@ async fn main() {
         .route("/api/set-log-config", axum::routing::post(handle_set_log_config))
         .route("/api/set-runzero-config", axum::routing::post(handle_set_runzero_config))
         .route("/api/sync-runzero", axum::routing::post(handle_sync_runzero))
+        .route("/api/acknowledge-alert", axum::routing::post(handle_acknowledge_alert))
+        .route("/api/acknowledge-all-alerts", axum::routing::post(handle_acknowledge_all_alerts))
         .leptos_routes(&leptos_options, routes, App)
         .layer(axum::middleware::from_fn(auth_middleware))
         .with_state(leptos_options);
