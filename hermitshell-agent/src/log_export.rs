@@ -23,6 +23,13 @@ pub enum LogEvent {
         domain: String,
         query_type: String,
     },
+    Alert {
+        device_mac: String,
+        rule: String,
+        severity: String,
+        message: String,
+        details: Option<String>,
+    },
 }
 
 /// Convert epoch seconds to ISO 8601 date-time string (UTC).
@@ -100,6 +107,28 @@ impl LogEvent {
                 "domain": domain,
                 "query_type": query_type,
             }),
+            LogEvent::Alert {
+                device_mac,
+                rule,
+                severity,
+                message,
+                details,
+            } => {
+                let mut json = serde_json::json!({
+                    "type": "alert",
+                    "timestamp": ts,
+                    "device_mac": device_mac,
+                    "rule": rule,
+                    "severity": severity,
+                    "message": message,
+                });
+                if let Some(d) = details {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(d) {
+                        json["details"] = parsed;
+                    }
+                }
+                json
+            },
         }
     }
 
@@ -131,6 +160,22 @@ impl LogEvent {
                     ts, hostname, device_ip, domain, query_type
                 )
             }
+            LogEvent::Alert {
+                device_mac,
+                rule,
+                severity,
+                message,
+                ..
+            } => {
+                let pri = match severity.as_str() {
+                    "high" => 11,
+                    "medium" => 12,
+                    _ => 14,
+                };
+                format!(
+                    "<{pri}>1 {ts} {hostname} hermitshell - - - alert device_mac=\"{device_mac}\" rule=\"{rule}\" severity=\"{severity}\" message=\"{message}\""
+                )
+            },
         }
     }
 }
@@ -297,6 +342,15 @@ fn emit_tracing(event: &LogEvent) {
                 query_type = %query_type,
                 "log_export"
             );
+        }
+        LogEvent::Alert {
+            device_mac,
+            rule,
+            severity,
+            message,
+            ..
+        } => {
+            info!(device_mac, rule, severity, message, "alert");
         }
     }
 }
