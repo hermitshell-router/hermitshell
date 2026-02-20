@@ -87,6 +87,31 @@ CREATE TABLE IF NOT EXISTS ipv6_pinholes (
     description TEXT,
     created_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS device_baselines (
+    mac TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    window_avg REAL NOT NULL,
+    window_stddev REAL NOT NULL,
+    last_computed INTEGER NOT NULL,
+    PRIMARY KEY (mac, metric)
+);
+
+CREATE TABLE IF NOT EXISTS alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_mac TEXT NOT NULL,
+    rule TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    message TEXT NOT NULL,
+    details TEXT,
+    created_at INTEGER NOT NULL,
+    acknowledged INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_alerts_device ON alerts(device_mac);
+CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at);
+CREATE INDEX IF NOT EXISTS idx_conn_logs_device_started ON connection_logs(device_ip, started_at);
+CREATE INDEX IF NOT EXISTS idx_dns_logs_device_ts ON dns_logs(device_ip, ts);
 "#;
 
 #[derive(Debug, Clone, Serialize)]
@@ -182,6 +207,31 @@ impl Db {
         ] {
             let _ = conn.execute_batch(&format!("ALTER TABLE devices ADD COLUMN {col}"));
         }
+        // Behavioral analysis tables (idempotent)
+        let _ = conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS device_baselines (
+                mac TEXT NOT NULL,
+                metric TEXT NOT NULL,
+                window_avg REAL NOT NULL,
+                window_stddev REAL NOT NULL,
+                last_computed INTEGER NOT NULL,
+                PRIMARY KEY (mac, metric)
+            );
+            CREATE TABLE IF NOT EXISTS alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                device_mac TEXT NOT NULL,
+                rule TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                message TEXT NOT NULL,
+                details TEXT,
+                created_at INTEGER NOT NULL,
+                acknowledged INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_alerts_device ON alerts(device_mac);
+            CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at);
+            CREATE INDEX IF NOT EXISTS idx_conn_logs_device_started ON connection_logs(device_ip, started_at);
+            CREATE INDEX IF NOT EXISTS idx_dns_logs_device_ts ON dns_logs(device_ip, ts);"
+        );
         Ok(())
     }
 
