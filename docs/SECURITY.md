@@ -403,3 +403,23 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** A memory dump of the agent process (via `/proc/pid/mem`, core dump, or cold boot attack) could recover secret material. An attacker who can dump the agent's memory already has root access, so the practical risk is limited to forensic scenarios.
 
 **Proper fix:** Use `zeroize::Zeroizing<String>` for secret values to ensure they are zeroed on drop. Apply to variables holding `session_secret`, password hash strings, plaintext passwords, and TLS key PEM data.
+
+## 36. runZero API token stored in plaintext
+
+**What:** The `runzero_token` config value (a runZero Export API token, XT-prefixed) is stored unencrypted in the SQLite config table, same as `wg_private_key`.
+
+**Why:** The agent needs the token to authenticate with the runZero Export API on each sync cycle. There is no keyring or HSM available on a router appliance.
+
+**Risk:** An attacker with filesystem access to the SQLite database can read the token and use it to query the runZero console's asset inventory. The token is read-only (Export API), so no data can be modified. The token is blocked from `get_config`/`set_config` IPC reads/writes and only accessible via the dedicated `set_runzero_config` method.
+
+**Proper fix:** Encrypt secrets at rest using a key derived from a hardware identifier or TPM, if available. Alternatively, use short-lived OAuth tokens instead of long-lived Export API tokens.
+
+## 37. TLS certificate verification disabled for runZero API
+
+**What:** The reqwest client in `runzero.rs` uses `danger_accept_invalid_certs(true)` when connecting to the runZero console.
+
+**Why:** Self-hosted runZero consoles commonly use self-signed TLS certificates. Requiring valid certs would prevent most self-hosted deployments from working without a custom CA configuration path.
+
+**Risk:** An attacker in a man-in-the-middle position on the network path between the router and the runZero console could intercept the API token and asset data. The token is read-only, limiting the impact.
+
+**Proper fix:** Add a `runzero_ca_cert` config option that allows the user to upload a custom CA certificate for the runZero console. Use this CA cert for TLS verification instead of disabling it entirely.
