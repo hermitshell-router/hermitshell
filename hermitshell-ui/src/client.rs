@@ -29,6 +29,18 @@ pub struct DnsLogEntry {
     pub ts: i64,
 }
 
+#[derive(Debug, Clone, serde::Serialize, Deserialize)]
+pub struct Alert {
+    pub id: i64,
+    pub device_mac: String,
+    pub rule: String,
+    pub severity: String,
+    pub message: String,
+    pub details: Option<String>,
+    pub created_at: i64,
+    pub acknowledged: bool,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Response {
     pub ok: bool,
@@ -49,6 +61,9 @@ pub struct Response {
     pub dns_logs: Option<Vec<DnsLogEntry>>,
     pub log_config: Option<serde_json::Value>,
     pub runzero_config: Option<serde_json::Value>,
+    pub alerts: Option<Vec<Alert>>,
+    pub alert: Option<Alert>,
+    pub analyzer_status: Option<serde_json::Value>,
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
@@ -277,6 +292,39 @@ pub fn set_runzero_config(config: &serde_json::Value) -> Result<(), String> {
 pub fn sync_runzero() -> Result<String, String> {
     let resp = ok_or_err(send(json!({"method": "sync_runzero"}))?)?;
     Ok(resp.config_value.unwrap_or_else(|| "sync started".to_string()))
+}
+
+pub fn list_alerts(device_mac: Option<&str>, limit: i64) -> Result<Vec<Alert>, String> {
+    let mut req = json!({"method": "list_alerts", "limit": limit});
+    if let Some(mac) = device_mac {
+        req["mac"] = serde_json::Value::String(mac.to_string());
+    }
+    let resp = ok_or_err(send(req)?)?;
+    Ok(resp.alerts.unwrap_or_default())
+}
+
+pub fn get_alert(id: i64) -> Result<Alert, String> {
+    let resp = ok_or_err(send(json!({"method": "get_alert", "id": id}))?)?;
+    resp.alert.ok_or_else(|| "No alert in response".to_string())
+}
+
+pub fn acknowledge_alert(id: i64) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "acknowledge_alert", "id": id}))?)?;
+    Ok(())
+}
+
+pub fn acknowledge_all_alerts(device_mac: Option<&str>) -> Result<(), String> {
+    let mut req = json!({"method": "acknowledge_all_alerts"});
+    if let Some(mac) = device_mac {
+        req["mac"] = serde_json::Value::String(mac.to_string());
+    }
+    ok_or_err(send(req)?)?;
+    Ok(())
+}
+
+pub fn get_analyzer_status() -> Result<serde_json::Value, String> {
+    let resp = ok_or_err(send(json!({"method": "get_analyzer_status"}))?)?;
+    resp.analyzer_status.ok_or_else(|| "no analyzer status".to_string())
 }
 
 #[cfg(test)]
