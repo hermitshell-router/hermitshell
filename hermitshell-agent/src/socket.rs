@@ -57,6 +57,9 @@ struct Request {
     value: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
+    rule: Option<String>,
+    severity: Option<String>,
+    acknowledged: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -104,6 +107,12 @@ struct Response {
     tls_key_pem: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     runzero_config: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    alerts: Option<Vec<crate::db::Alert>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    alert: Option<crate::db::Alert>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    analyzer_status: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -133,10 +142,10 @@ struct WgPeerInfo {
 
 impl Response {
     fn ok() -> Self {
-        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None, tls_cert_pem: None, tls_key_pem: None, runzero_config: None }
+        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None, tls_cert_pem: None, tls_key_pem: None, runzero_config: None, alerts: None, alert: None, analyzer_status: None }
     }
     fn err(msg: &str) -> Self {
-        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None, tls_cert_pem: None, tls_key_pem: None, runzero_config: None }
+        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None, tls_cert_pem: None, tls_key_pem: None, runzero_config: None, alerts: None, alert: None, analyzer_status: None }
     }
 }
 
@@ -1270,6 +1279,88 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             });
             let mut resp = Response::ok();
             resp.config_value = Some("sync started".to_string());
+            resp
+        }
+        "list_alerts" => {
+            let limit = req.limit.unwrap_or(100).min(1000);
+            let offset = req.offset.unwrap_or(0);
+            let device_mac = req.mac.as_deref();
+            let rule = req.rule.as_deref();
+            let severity = req.severity.as_deref();
+            let acknowledged = req.acknowledged;
+            let db = db.lock().unwrap();
+            match db.list_alerts(device_mac, rule, severity, acknowledged, limit, offset) {
+                Ok(alerts) => {
+                    let mut resp = Response::ok();
+                    resp.alerts = Some(alerts);
+                    resp
+                }
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
+        "get_alert" => {
+            let id = match req.id {
+                Some(id) => id,
+                None => return Response::err("id required"),
+            };
+            let db = db.lock().unwrap();
+            match db.get_alert(id) {
+                Ok(Some(alert)) => {
+                    let mut resp = Response::ok();
+                    resp.alert = Some(alert);
+                    resp
+                }
+                Ok(None) => Response::err("alert not found"),
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
+        "acknowledge_alert" => {
+            let id = match req.id {
+                Some(id) => id,
+                None => return Response::err("id required"),
+            };
+            let db = db.lock().unwrap();
+            match db.acknowledge_alert(id) {
+                Ok(true) => Response::ok(),
+                Ok(false) => Response::err("alert not found"),
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
+        "acknowledge_all_alerts" => {
+            let db = db.lock().unwrap();
+            match db.acknowledge_all_alerts(req.mac.as_deref()) {
+                Ok(count) => {
+                    let mut resp = Response::ok();
+                    resp.config_value = Some(count.to_string());
+                    resp
+                }
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
+        "get_analyzer_status" => {
+            let db = db.lock().unwrap();
+            let enabled = db.get_config("analyzer_enabled")
+                .ok().flatten().unwrap_or_else(|| "true".to_string());
+            let rules = ["dns_beaconing", "dns_volume_spike", "new_dest_spike", "suspicious_ports", "bandwidth_spike"];
+            let rule_status: serde_json::Value = rules.iter().map(|r| {
+                let key = format!("alert_rule_{r}");
+                let val = db.get_config(&key).ok().flatten().unwrap_or_else(|| "enabled".to_string());
+                (r.to_string(), serde_json::Value::String(val))
+            }).collect::<serde_json::Map<String, serde_json::Value>>().into();
+
+            let (high, medium, low) = db.alert_counts_by_severity().unwrap_or((0, 0, 0));
+
+            let status = serde_json::json!({
+                "enabled": enabled,
+                "rules": rule_status,
+                "unacknowledged_alerts": {
+                    "high": high,
+                    "medium": medium,
+                    "low": low,
+                },
+            });
+            let mut resp = Response::ok();
+            resp.analyzer_status = Some(status);
             resp
         }
         _ => Response::err("unknown method"),
