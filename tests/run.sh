@@ -27,9 +27,16 @@ for i in $(seq 1 30); do
 done
 vagrant ssh router -c "sudo chmod 666 /run/hermitshell/agent.sock" 2>/dev/null || true
 # Verify agent responds before running tests
-for i in $(seq 1 10); do
+for i in $(seq 1 30); do
     result=$(vagrant ssh router -c 'echo "{\"method\":\"get_status\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' 2>/dev/null || true)
     if echo "$result" | grep -q '"ok":true'; then
+        break
+    fi
+    sleep 1
+done
+# Wait for blocky DNS to be ready
+for i in $(seq 1 30); do
+    if vagrant ssh router -c "dig +short +time=1 +tries=1 @10.0.0.1 example.com" 2>/dev/null | grep -q '[0-9]'; then
         break
     fi
     sleep 1
@@ -45,6 +52,21 @@ for i in $(seq 1 15); do
     sleep 1
 done
 echo
+
+# Deploy dhclient hook so DHCP renewals set the default route via hermitshell router
+cat lib/rfc3442-classless-routes | vagrant ssh lan -c "sudo tee /etc/dhcp/dhclient-exit-hooks.d/rfc3442-classless-routes > /dev/null" 2>/dev/null || true
+# Renew DHCP lease so the new hook takes effect and sets the default route
+vagrant ssh lan -c "sudo dhclient -r eth1 2>/dev/null; sudo dhclient eth1 2>/dev/null" 2>/dev/null || true
+# Wait for LAN IP to come back
+for i in $(seq 1 15); do
+    if vagrant ssh lan -c "ip -4 addr show eth1 | grep -q '10\.0\.'" 2>/dev/null; then
+        break
+    fi
+    sleep 1
+done
+
+# Reset all devices to quarantine so tests start with clean state
+vagrant ssh router -c 'for mac in $(echo "{\"method\":\"list_devices\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock 2>/dev/null | grep -oP "\"mac\":\"[^\"]+\"" | grep -oP "[0-9a-f:]+"); do echo "{\"method\":\"set_device_group\",\"mac\":\"$mac\",\"group\":\"quarantine\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock >/dev/null 2>&1; done' 2>/dev/null || true
 
 # Check VMs are running
 echo "Checking VM status..."

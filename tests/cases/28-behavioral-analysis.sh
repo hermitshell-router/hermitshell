@@ -2,6 +2,7 @@
 source "$(dirname "$0")/../lib/helpers.sh"
 
 require_agent
+require_wan
 require_lan_ip
 require_blocky
 
@@ -14,20 +15,46 @@ assert_match "$result" '"enabled":"true"' "analyzer enabled by default"
 device_ip=$(vm_exec lan "ip -4 addr show eth1 | grep inet | awk '{print \$2}' | cut -d/ -f1")
 device_mac=$(vm_exec lan "ip link show eth1 | grep ether | awk '{print \$2}'")
 
-# Generate suspicious port connection (telnet port 23)
-vm_exec lan "curl -s --connect-timeout 2 telnet://10.0.0.1:23 2>/dev/null" || true
+# Clear any existing alerts
+vm_exec router 'echo "{\"method\":\"acknowledge_all_alerts\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' > /dev/null
 
-# Verify connection to port 23 was logged
+# Generate suspicious port connections (port 23 = telnet, a suspicious port)
+# Must target non-router IP (10.0.0.1 is filtered from conntrack logs)
+vm_exec lan "curl -s --connect-timeout 2 telnet://192.168.100.2:23 2>/dev/null" || true
+
+# Wait for conntrack to log the port 23 connection
+port23_logged() {
+    vm_exec router "echo '{\"method\":\"list_connection_logs\",\"internal_ip\":\"$device_ip\",\"limit\":50}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock" | grep -q '"dest_port":23'
+}
+wait_for 15 "Port 23 connection logged" port23_logged
+
 result=$(vm_exec router "echo '{\"method\":\"list_connection_logs\",\"internal_ip\":\"$device_ip\",\"limit\":50}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock")
-assert_match "$result" '"ok":true' "connection logs available"
+assert_contains "$result" '"dest_port":23' "Port 23 connection logged in database"
 
-# List alerts (may be empty if analyzer hasn't run yet)
-result=$(vm_exec router 'echo "{\"method\":\"list_alerts\",\"limit\":50}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
-assert_match "$result" '"ok":true' "list_alerts succeeds"
+# Wait for the analyzer cycle (runs every 60s) to detect the suspicious port
+alert_fired() {
+    vm_exec router 'echo "{\"method\":\"list_alerts\",\"limit\":50}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' | grep -q '"suspicious_ports"'
+}
+wait_for 90 "Suspicious ports alert fired" alert_fired
+
+# Verify the alert has correct fields
+alerts=$(vm_exec router 'echo "{\"method\":\"list_alerts\",\"limit\":50}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_match "$alerts" '"ok":true' "list_alerts succeeds"
+assert_contains "$alerts" '"rule":"suspicious_ports"' "Alert has correct rule name"
+assert_contains "$alerts" '"severity":"medium"' "Alert has correct severity"
+assert_contains "$alerts" '"device_mac"' "Alert has device_mac field"
+assert_contains "$alerts" '"message"' "Alert has message field"
+
+# Verify alert details contain port 23 (details is JSON-in-JSON, so quotes may be escaped)
+assert_match "$alerts" 'port.*:.*23' "Alert details reference port 23"
 
 # Test acknowledge_all_alerts
 result=$(vm_exec router 'echo "{\"method\":\"acknowledge_all_alerts\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$result" '"ok":true' "acknowledge_all_alerts succeeds"
+
+# Verify alerts are acknowledged
+alerts_after=$(vm_exec router 'echo "{\"method\":\"list_alerts\",\"limit\":50}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_contains "$alerts_after" '"acknowledged":true' "Alerts marked as acknowledged"
 
 # Test disabling a rule
 result=$(vm_exec router 'echo "{\"method\":\"set_config\",\"key\":\"alert_rule_dns_beaconing\",\"value\":\"disabled\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')

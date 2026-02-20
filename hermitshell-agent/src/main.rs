@@ -115,13 +115,17 @@ async fn main() -> Result<()> {
     }
 
     // Ensure LAN interface has the base IPv6 ULA address
-    let status_v6 = std::process::Command::new("/usr/sbin/ip")
+    let _ = std::process::Command::new("/usr/sbin/ip")
         .args(["-6", "addr", "add", LAN_ADDR_V6, "dev", lan_iface])
         .status();
-    match status_v6 {
-        Ok(s) if s.success() || s.code() == Some(2) => {}
-        Ok(s) => warn!(addr = LAN_ADDR_V6, iface = lan_iface, code = ?s.code(), "ip -6 addr add exited unexpectedly"),
-        Err(e) => warn!(error = %e, "failed to add LAN v6 address"),
+    // Verify the address is actually present (ip addr add exit code 2 is ambiguous)
+    let has_ipv6_ula = std::process::Command::new("/usr/sbin/ip")
+        .args(["-6", "addr", "show", "dev", lan_iface])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("fd00::1"))
+        .unwrap_or(false);
+    if !has_ipv6_ula {
+        warn!("IPv6 ULA address not available on {}", lan_iface);
     }
 
     // Apply base nftables rules
@@ -311,9 +315,14 @@ async fn main() -> Result<()> {
 
     let blocky_mgr = {
         let dns_strings: Vec<String> = upstream_dns.iter().map(|ip| ip.to_string()).collect();
+        let blocky_listen = if has_ipv6_ula {
+            "10.0.0.1:53,[fd00::1]:53".to_string()
+        } else {
+            "10.0.0.1:53".to_string()
+        };
         let mut mgr = blocky::BlockyManager::new(
             dns_strings,
-            "10.0.0.1:53,[fd00::1]:53".to_string(),
+            blocky_listen,
             "/data/hermitshell/blocky".to_string(),
             "/opt/hermitshell/blocky".to_string(),
         );

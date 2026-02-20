@@ -106,9 +106,9 @@ if [ -n "$lan_mac" ]; then
     # The set should have at least one element (the iot device IP)
     assert_contains "$nft_qos" 'elements' "bulk_v4 has elements for iot device"
 
-    # Restore device to trusted group
-    result=$(vm_exec router "echo '{\"method\":\"set_device_group\",\"mac\":\"$lan_mac\",\"group\":\"trusted\"}' | socat - $SOCK")
-    assert_match "$result" '"ok":true' "restored device to trusted"
+    # Restore device to quarantine group
+    result=$(vm_exec router "echo '{\"method\":\"set_device_group\",\"mac\":\"$lan_mac\",\"group\":\"quarantine\"}' | socat - $SOCK")
+    assert_match "$result" '"ok":true' "restored device to quarantine"
 else
     echo -e "${GREEN}SKIP${NC}: no LAN device MAC found, skipping DSCP device test"
 fi

@@ -27,7 +27,15 @@ ad_blocked() {
 wait_for 10 "Ad domain blocked by blocky" ad_blocked
 
 blocked=$(vm_exec router "dig +short @10.0.0.1 ads.test.hermitshell" || echo "")
-assert_match "$blocked" "0\.0\.0\.0" "Ad domain blocked by blocky"
+assert_match "$blocked" "0\.0\.0\.0" "Custom blocklist domain blocked"
+
+# Verify blocky API reports blocking is enabled
+blocky_status=$(vm_exec router "curl -s http://127.0.0.1:4000/api/blocking/status" 2>/dev/null || echo "")
+assert_contains "$blocky_status" "enabled" "Blocky API reports blocking enabled"
+
+# Verify the custom blocklist file exists with our test domain
+blocklist=$(vm_exec router "cat /data/hermitshell/blocky/custom-blocklist.txt" 2>/dev/null || echo "")
+assert_contains "$blocklist" "ads.test.hermitshell" "Custom blocklist file has test domain"
 
 # Toggle ad blocking off via API
 result=$(vm_exec router 'echo "{\"method\":\"set_ad_blocking\",\"enabled\":false}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
@@ -43,6 +51,10 @@ wait_for 10 "Ad domain resolves after disable" ad_unblocked
 
 unblocked=$(vm_exec router "dig +short @10.0.0.1 ads.test.hermitshell" || echo "")
 assert_match "$unblocked" "93\.184\.216\.34" "Ad domain resolves when blocking disabled"
+
+# Verify blocky API confirms blocking is disabled
+blocky_off_status=$(vm_exec router "curl -s http://127.0.0.1:4000/api/blocking/status" 2>/dev/null || echo "")
+assert_contains "$blocky_off_status" "disabled" "Blocky API confirms blocking disabled"
 
 # Toggle ad blocking back on
 result=$(vm_exec router 'echo "{\"method\":\"set_ad_blocking\",\"enabled\":true}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')

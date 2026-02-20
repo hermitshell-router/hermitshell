@@ -897,6 +897,7 @@ dependencies = [
  "leptos",
  "leptos_axum",
  "leptos_router",
+ "rustls",
  "rustls-pemfile",
  "serde",
  "serde_json",

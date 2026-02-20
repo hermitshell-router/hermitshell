@@ -291,6 +291,10 @@ async fn auth_middleware(
 
 #[tokio::main]
 async fn main() {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install rustls crypto provider");
+
     let conf = get_configuration(None).await.unwrap();
     let leptos_options = conf.leptos_options;
     let routes = generate_route_list(App);
