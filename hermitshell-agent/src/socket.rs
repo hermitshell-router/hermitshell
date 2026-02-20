@@ -27,6 +27,7 @@ const BLOCKED_CONFIG_KEYS: &[&str] = &[
     "wg_private_key",
     "tls_key_pem",
     "tls_cert_pem",
+    "runzero_token",
 ];
 
 fn is_blocked_config_key(key: &str) -> bool {
@@ -101,6 +102,8 @@ struct Response {
     tls_cert_pem: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tls_key_pem: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runzero_config: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -130,10 +133,10 @@ struct WgPeerInfo {
 
 impl Response {
     fn ok() -> Self {
-        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None, tls_cert_pem: None, tls_key_pem: None }
+        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None, tls_cert_pem: None, tls_key_pem: None, runzero_config: None }
     }
     fn err(msg: &str) -> Self {
-        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None, tls_cert_pem: None, tls_key_pem: None }
+        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None, tls_cert_pem: None, tls_key_pem: None, runzero_config: None }
     }
 }
 
@@ -1200,6 +1203,74 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 }
                 _ => Response::err("TLS not yet configured"),
             }
+        }
+        "get_runzero_config" => {
+            let db = db.lock().unwrap();
+            let url = db.get_config("runzero_url").ok().flatten().unwrap_or_default();
+            let sync_interval = db.get_config("runzero_sync_interval").ok().flatten().unwrap_or_else(|| "3600".to_string());
+            let enabled = db.get_config("runzero_enabled").ok().flatten().map(|v| v == "true").unwrap_or(false);
+            let has_token = db.get_config("runzero_token").ok().flatten().map(|t| !t.is_empty()).unwrap_or(false);
+            let mut resp = Response::ok();
+            resp.runzero_config = Some(serde_json::json!({
+                "runzero_url": url,
+                "runzero_sync_interval": sync_interval,
+                "enabled": enabled,
+                "has_token": has_token,
+            }));
+            resp
+        }
+        "set_runzero_config" => {
+            let Some(value) = req.value else {
+                return Response::err("value required (JSON object)");
+            };
+            let parsed: serde_json::Value = match serde_json::from_str(&value) {
+                Ok(v) => v,
+                Err(e) => return Response::err(&format!("invalid JSON: {}", e)),
+            };
+            let db = db.lock().unwrap();
+            if let Some(url) = parsed.get("runzero_url").and_then(|v| v.as_str()) {
+                if !url.is_empty() && !url.starts_with("https://") {
+                    return Response::err("runzero_url must start with https://");
+                }
+                let _ = db.set_config("runzero_url", url);
+            }
+            if let Some(token) = parsed.get("runzero_token").and_then(|v| v.as_str()) {
+                let _ = db.set_config("runzero_token", token);
+            }
+            if let Some(interval_str) = parsed.get("runzero_sync_interval").and_then(|v| v.as_str()) {
+                if let Ok(secs) = interval_str.parse::<u64>() {
+                    if secs >= 60 {
+                        let _ = db.set_config("runzero_sync_interval", interval_str);
+                    } else {
+                        return Response::err("sync interval must be >= 60 seconds");
+                    }
+                }
+            }
+            if let Some(enabled) = parsed.get("runzero_enabled").and_then(|v| v.as_str()) {
+                let _ = db.set_config("runzero_enabled", enabled);
+            }
+            Response::ok()
+        }
+        "sync_runzero" => {
+            let (url, token) = {
+                let db = db.lock().unwrap();
+                let url = db.get_config("runzero_url").ok().flatten().unwrap_or_default();
+                let token = db.get_config("runzero_token").ok().flatten().unwrap_or_default();
+                (url, token)
+            };
+            if url.is_empty() || token.is_empty() {
+                return Response::err("runzero_url and runzero_token must be configured");
+            }
+            let db_clone = db.clone();
+            tokio::task::spawn(async move {
+                match crate::runzero::sync_once(&db_clone, &url, &token).await {
+                    Ok(n) => info!(matched = n, "manual runZero sync complete"),
+                    Err(e) => warn!(error = %e, "manual runZero sync failed"),
+                }
+            });
+            let mut resp = Response::ok();
+            resp.config_value = Some("sync started".to_string());
+            resp
         }
         _ => Response::err("unknown method"),
     }
