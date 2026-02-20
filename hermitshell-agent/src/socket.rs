@@ -1496,6 +1496,28 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             let _ = db.set_config("qos_test_url", &url);
             Response::ok()
         }
+        "run_speed_test" => {
+            let db = db.lock().unwrap();
+            let url = match db.get_config("qos_test_url") {
+                Ok(Some(u)) if !u.is_empty() => u,
+                _ => return Response::err("no speed test URL configured; set it first via set_qos_test_url"),
+            };
+            drop(db);
+
+            let result = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(crate::qos::run_speed_test(&url))
+            });
+            match result {
+                Ok(mbps) => {
+                    let mut resp = Response::ok();
+                    resp.qos_config = Some(serde_json::json!({
+                        "download_mbps": mbps,
+                    }));
+                    resp
+                }
+                Err(e) => Response::err(&format!("speed test failed: {}", e)),
+            }
+        }
         _ => Response::err("unknown method"),
     }
 }

@@ -215,6 +215,39 @@ table inet qos {{
     Ok(())
 }
 
+/// Run a download speed test by fetching the given URL and measuring throughput.
+/// Returns estimated download speed in Mbps.
+pub async fn run_speed_test(url: &str) -> Result<u32> {
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|_| anyhow::anyhow!("invalid url"))?;
+
+    // SSRF check
+    if let Some(host) = parsed.host_str() {
+        if let Ok(addr) = host.parse::<std::net::IpAddr>() {
+            if !is_public_ip(&addr) {
+                anyhow::bail!("url must not point to private/loopback address");
+            }
+        }
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
+
+    let start = std::time::Instant::now();
+    let resp = client.get(url).send().await?;
+    let bytes = resp.bytes().await?;
+    let elapsed = start.elapsed().as_secs_f64();
+
+    if elapsed < 0.001 {
+        anyhow::bail!("test completed too quickly for accurate measurement");
+    }
+
+    let mbps = (bytes.len() as f64 * 8.0) / (elapsed * 1_000_000.0);
+    info!(url = url, bytes = bytes.len(), elapsed_ms = (elapsed * 1000.0) as u64, mbps = mbps as u32, "speed test complete");
+    Ok(mbps as u32)
+}
+
 /// Remove DSCP marking rules by deleting the `table inet qos`.
 /// Ignores errors if the table does not exist.
 pub fn remove_dscp_rules() -> Result<()> {
