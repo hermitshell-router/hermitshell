@@ -102,6 +102,11 @@ pub struct Device {
     pub tx_bytes: i64,
     pub device_group: String,
     pub subnet_id: Option<i64>,
+    pub runzero_os: Option<String>,
+    pub runzero_hw: Option<String>,
+    pub runzero_device_type: Option<String>,
+    pub runzero_manufacturer: Option<String>,
+    pub runzero_last_sync: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -163,7 +168,21 @@ impl Db {
         std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap())?;
         let conn = Connection::open(path)?;
         conn.execute_batch(SCHEMA)?;
+        Self::migrate(&conn)?;
         Ok(Self { conn })
+    }
+
+    fn migrate(conn: &Connection) -> Result<()> {
+        for col in &[
+            "runzero_os TEXT",
+            "runzero_hw TEXT",
+            "runzero_device_type TEXT",
+            "runzero_manufacturer TEXT",
+            "runzero_last_sync INTEGER",
+        ] {
+            let _ = conn.execute_batch(&format!("ALTER TABLE devices ADD COLUMN {col}"));
+        }
+        Ok(())
     }
 
     pub fn update_counters(&self, ip: &str, rx_bytes: i64, tx_bytes: i64) -> Result<()> {
@@ -176,7 +195,7 @@ impl Db {
 
     pub fn list_devices(&self) -> Result<Vec<Device>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id FROM devices"
+            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync FROM devices"
         )?;
         let devices = stmt.query_map([], |row| {
             Ok(Device {
@@ -191,6 +210,11 @@ impl Db {
                 tx_bytes: row.get(8)?,
                 device_group: row.get(9)?,
                 subnet_id: row.get(10)?,
+                runzero_os: row.get(11)?,
+                runzero_hw: row.get(12)?,
+                runzero_device_type: row.get(13)?,
+                runzero_manufacturer: row.get(14)?,
+                runzero_last_sync: row.get(15)?,
             })
         })?;
         Ok(devices.filter_map(|d| d.ok()).collect())
@@ -198,7 +222,7 @@ impl Db {
 
     pub fn get_device(&self, mac: &str) -> Result<Option<Device>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id FROM devices WHERE mac = ?1"
+            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync FROM devices WHERE mac = ?1"
         )?;
         let mut rows = stmt.query([mac])?;
         if let Some(row) = rows.next()? {
@@ -214,6 +238,11 @@ impl Db {
                 tx_bytes: row.get(8)?,
                 device_group: row.get(9)?,
                 subnet_id: row.get(10)?,
+                runzero_os: row.get(11)?,
+                runzero_hw: row.get(12)?,
+                runzero_device_type: row.get(13)?,
+                runzero_manufacturer: row.get(14)?,
+                runzero_last_sync: row.get(15)?,
             }))
         } else {
             Ok(None)
@@ -300,7 +329,7 @@ impl Db {
     /// List all devices that have subnet_id set (for state restoration on startup)
     pub fn list_assigned_devices(&self) -> Result<Vec<Device>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id FROM devices WHERE subnet_id IS NOT NULL"
+            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync FROM devices WHERE subnet_id IS NOT NULL"
         )?;
         let devices = stmt.query_map([], |row| {
             Ok(Device {
@@ -315,6 +344,11 @@ impl Db {
                 tx_bytes: row.get(8)?,
                 device_group: row.get(9)?,
                 subnet_id: row.get(10)?,
+                runzero_os: row.get(11)?,
+                runzero_hw: row.get(12)?,
+                runzero_device_type: row.get(13)?,
+                runzero_manufacturer: row.get(14)?,
+                runzero_last_sync: row.get(15)?,
             })
         })?;
         Ok(devices.filter_map(|d| d.ok()).collect())
@@ -488,6 +522,17 @@ impl Db {
         self.conn.execute(
             "UPDATE devices SET hostname = ?1, last_seen = ?2 WHERE mac = ?3",
             (hostname, now, mac),
+        )?;
+        Ok(())
+    }
+
+    pub fn update_runzero_data(&self, mac: &str, os: Option<&str>, hw: Option<&str>, device_type: Option<&str>, manufacturer: Option<&str>) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+        self.conn.execute(
+            "UPDATE devices SET runzero_os = ?1, runzero_hw = ?2, runzero_device_type = ?3, runzero_manufacturer = ?4, runzero_last_sync = ?5 WHERE mac = ?6",
+            (os, hw, device_type, manufacturer, now, mac),
         )?;
         Ok(())
     }
