@@ -6,6 +6,7 @@ mod dns_log;
 mod log_export;
 mod nftables;
 mod pd;
+mod qos;
 mod ra;
 mod socket;
 mod runzero;
