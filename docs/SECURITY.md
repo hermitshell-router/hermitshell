@@ -423,3 +423,13 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** An attacker in a man-in-the-middle position on the network path between the router and the runZero console could intercept the API token and asset data. The token is read-only, limiting the impact.
 
 **Proper fix:** Add a `runzero_ca_cert` config option that allows the user to upload a custom CA certificate for the runZero console. Use this CA cert for TLS verification instead of disabling it entirely.
+
+## 38. Speed test makes outbound HTTP requests to admin-configured URL
+
+**What:** The QoS speed test feature uses `reqwest` to make HTTP GET/POST requests from the router to a URL configured by the admin.
+
+**Why:** Needed to measure WAN link speed for CAKE qdisc bandwidth configuration.
+
+**Risk:** SSRF — if the admin configures a URL pointing to an internal service (e.g., `http://10.0.0.5:8080/admin`), the router will make a request to it on the admin's behalf. Mitigated by rejecting private/loopback IP ranges (10.x, 172.16-31.x, 192.168.x, 127.x, ::1, fd00::) in the URL.
+
+**Proper fix:** The IP validation is sufficient for the threat model. The admin already has full router access, so SSRF provides no privilege escalation. The validation prevents accidental misconfiguration rather than a real attack vector.
