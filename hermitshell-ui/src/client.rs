@@ -48,6 +48,7 @@ pub struct Response {
     pub connection_logs: Option<Vec<ConnectionLog>>,
     pub dns_logs: Option<Vec<DnsLogEntry>>,
     pub log_config: Option<serde_json::Value>,
+    pub runzero_config: Option<serde_json::Value>,
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
@@ -261,6 +262,21 @@ pub fn get_log_config() -> Result<serde_json::Value, String> {
 pub fn set_log_config(config: &serde_json::Value) -> Result<(), String> {
     ok_or_err(send(json!({"method": "set_log_config", "value": config.to_string()}))?)?;
     Ok(())
+}
+
+pub fn get_runzero_config() -> Result<serde_json::Value, String> {
+    let resp = ok_or_err(send(json!({"method": "get_runzero_config"}))?)?;
+    resp.runzero_config.ok_or_else(|| "no runzero config".to_string())
+}
+
+pub fn set_runzero_config(config: &serde_json::Value) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "set_runzero_config", "value": config.to_string()}))?)?;
+    Ok(())
+}
+
+pub fn sync_runzero() -> Result<String, String> {
+    let resp = ok_or_err(send(json!({"method": "sync_runzero"}))?)?;
+    Ok(resp.config_value.unwrap_or_else(|| "sync started".to_string()))
 }
 
 #[cfg(test)]

@@ -11,6 +11,11 @@ pub struct Device {
     pub tx_bytes: i64,
     pub device_group: String,
     pub subnet_id: Option<i64>,
+    pub runzero_os: Option<String>,
+    pub runzero_hw: Option<String>,
+    pub runzero_device_type: Option<String>,
+    pub runzero_manufacturer: Option<String>,
+    pub runzero_last_sync: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
