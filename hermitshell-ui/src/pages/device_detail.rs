@@ -210,6 +210,41 @@ pub fn DeviceDetail() -> impl IntoView {
                                     }}
                                 }
                             }
+
+                            {
+                                let device_alerts = client::list_alerts(Some(&mac), 50).unwrap_or_default();
+                                view! {
+                                    <h2 class="section-header">"Recent Alerts"</h2>
+                                    {if device_alerts.is_empty() {
+                                        view! { <p class="muted">"No alerts for this device."</p> }.into_view()
+                                    } else {
+                                        view! {
+                                            <table class="data-table">
+                                                <thead><tr>
+                                                    <th>"Time"</th><th>"Rule"</th><th>"Severity"</th><th>"Message"</th>
+                                                </tr></thead>
+                                                <tbody>
+                                                    {device_alerts.iter().map(|a| {
+                                                        let sev_class = match a.severity.as_str() {
+                                                            "high" => "badge badge-high",
+                                                            "medium" => "badge badge-medium",
+                                                            _ => "badge badge-low",
+                                                        };
+                                                        view! {
+                                                            <tr>
+                                                                <td>{format_timestamp(a.created_at)}</td>
+                                                                <td>{a.rule.clone()}</td>
+                                                                <td><span class={sev_class}>{a.severity.clone()}</span></td>
+                                                                <td>{a.message.clone()}</td>
+                                                            </tr>
+                                                        }
+                                                    }).collect_view()}
+                                                </tbody>
+                                            </table>
+                                        }.into_view()
+                                    }}
+                                }
+                            }
                         }.into_view()
                     }
                     Err(e) => view! { <p>"Error: " {e}</p> }.into_view(),
