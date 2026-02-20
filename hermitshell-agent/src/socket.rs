@@ -782,7 +782,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             let peers = db.list_wg_peers().unwrap_or_default();
             let pinholes = db.list_ipv6_pinholes().unwrap_or_default();
 
-            let config_keys = ["ad_blocking_enabled", "wg_listen_port", "dmz_host_ip", "log_format", "syslog_target", "webhook_url", "log_retention_days"];
+            let config_keys = ["ad_blocking_enabled", "wg_listen_port", "dmz_host_ip", "log_format", "syslog_target", "webhook_url", "log_retention_days", "runzero_url", "runzero_sync_interval", "runzero_enabled"];
             let mut config_map = serde_json::Map::new();
             for key in &config_keys {
                 if let Ok(Some(val)) = db.get_config(key) {
@@ -885,7 +885,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             if let Some(config) = parsed.get("config").and_then(|v| v.as_object()) {
                 for (key, val) in config {
                     match key.as_str() {
-                        "ad_blocking_enabled" | "wg_listen_port" | "dmz_host_ip" | "log_format" | "syslog_target" | "webhook_url" | "log_retention_days" => {
+                        "ad_blocking_enabled" | "wg_listen_port" | "dmz_host_ip" | "log_format" | "syslog_target" | "webhook_url" | "log_retention_days" | "runzero_url" | "runzero_sync_interval" | "runzero_enabled" => {
                             if let Some(v) = val.as_str() {
                                 let _ = db.set_config(key, v);
                             }
