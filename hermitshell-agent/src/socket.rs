@@ -1330,6 +1330,55 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             resp.config_value = Some(if valid { "true" } else { "false" }.to_string());
             resp
         }
+        "refresh_session" => {
+            let Some(value) = req.value else {
+                return Response::err("value required");
+            };
+            let db = db.lock().unwrap();
+            let secret = match db.get_config("session_secret").ok().flatten() {
+                Some(s) => s,
+                None => return Response::err("no session secret"),
+            };
+            // Verify the existing token first
+            let dot_pos = match value.rfind('.') {
+                Some(p) => p,
+                None => return Response::err("invalid token"),
+            };
+            let payload = &value[..dot_pos];
+            let sig = &value[dot_pos + 1..];
+            let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+            mac.update(payload.as_bytes());
+            let expected = hex::encode(mac.finalize().into_bytes());
+            if sig != expected {
+                return Response::err("invalid signature");
+            }
+            // Parse timestamps
+            let parts: Vec<&str> = payload.splitn(3, ':').collect();
+            if parts.len() != 3 {
+                return Response::err("invalid token format");
+            }
+            let created = match parts[1].parse::<u64>() {
+                Ok(t) => t,
+                Err(_) => return Response::err("invalid timestamp"),
+            };
+            // Check absolute timeout
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            if now.saturating_sub(created) > SESSION_ABSOLUTE_TIMEOUT_SECS {
+                return Response::err("session expired");
+            }
+            // Issue new token with same CREATED but updated LAST_ACTIVE
+            let new_payload = format!("admin:{}:{}", created, now);
+            let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+            mac.update(new_payload.as_bytes());
+            let new_sig = hex::encode(mac.finalize().into_bytes());
+            let new_cookie = format!("{}.{}", new_payload, new_sig);
+            let mut resp = Response::ok();
+            resp.config_value = Some(new_cookie);
+            resp
+        }
         "get_tls_config" => {
             let db = db.lock().unwrap();
             let cert = db.get_config("tls_cert_pem").ok().flatten();
