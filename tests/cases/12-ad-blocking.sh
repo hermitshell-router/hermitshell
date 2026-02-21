@@ -15,18 +15,19 @@ blocky_ready() {
 wait_for 10 "Blocky is listening" blocky_ready
 
 # Verify blocky resolves normal DNS
-normal=$(vm_exec router "dig +short @10.0.0.1 example.com" || echo "")
+normal=$(vm_exec router "dig +short +time=1 +tries=1 @10.0.0.1 example.com" || echo "")
 assert_match "$normal" "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" "Blocky resolves normal DNS"
 
 # Verify ad domain is blocked (returns 0.0.0.0)
 ad_blocked() {
     local result
-    result=$(vm_exec router "dig +short @10.0.0.1 ads.test.hermitshell" || echo "")
+    result=$(vm_exec router "dig +short +time=1 +tries=1 @10.0.0.1 ads.test.hermitshell" || echo "")
     echo "$result" | grep -q '0\.0\.0\.0'
 }
 wait_for 10 "Ad domain blocked by blocky" ad_blocked
 
-blocked=$(vm_exec router "dig +short @10.0.0.1 ads.test.hermitshell" || echo "")
+# Re-verify (wait_for confirmed it, but assert for test output)
+blocked=$(vm_exec router "dig +short +time=1 +tries=1 @10.0.0.1 ads.test.hermitshell" || echo "")
 assert_match "$blocked" "0\.0\.0\.0" "Custom blocklist domain blocked"
 
 # Verify blocky API reports blocking is enabled
@@ -44,12 +45,12 @@ assert_match "$result" '"ok":true' "set_ad_blocking(false) succeeds"
 # After disabling, ad domain should resolve normally
 ad_unblocked() {
     local result
-    result=$(vm_exec router "dig +short @10.0.0.1 ads.test.hermitshell" || echo "")
+    result=$(vm_exec router "dig +short +time=1 +tries=1 @10.0.0.1 ads.test.hermitshell" || echo "")
     echo "$result" | grep -q '93\.184\.216\.34'
 }
 wait_for 10 "Ad domain resolves after disable" ad_unblocked
 
-unblocked=$(vm_exec router "dig +short @10.0.0.1 ads.test.hermitshell" || echo "")
+unblocked=$(vm_exec router "dig +short +time=1 +tries=1 @10.0.0.1 ads.test.hermitshell" || echo "")
 assert_match "$unblocked" "93\.184\.216\.34" "Ad domain resolves when blocking disabled"
 
 # Verify blocky API confirms blocking is disabled
@@ -63,5 +64,5 @@ assert_match "$result" '"ok":true' "set_ad_blocking(true) succeeds"
 # Verify ad domain is blocked again
 wait_for 10 "Ad domain re-blocked after enable" ad_blocked
 
-reblocked=$(vm_exec router "dig +short @10.0.0.1 ads.test.hermitshell" || echo "")
+reblocked=$(vm_exec router "dig +short +time=1 +tries=1 @10.0.0.1 ads.test.hermitshell" || echo "")
 assert_match "$reblocked" "0\.0\.0\.0" "Ad domain blocked again after re-enable"
