@@ -92,6 +92,8 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Track failed login attempts by IP and add exponential backoff or temporary lockout after N failures.
 
+**Status: FIXED.** Exponential backoff (1s, 2s, 4s... 60s cap) on both agent (global counter in `verify_password` and `setup_password`) and web UI (middleware returning 429). State is in-memory, resets on restart.
+
 ## 9. Docker container mounts full /run/hermitshell directory
 
 **What:** The web UI container mounts `-v /run/hermitshell:/run/hermitshell` (the entire directory) instead of just the socket file.
