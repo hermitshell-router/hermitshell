@@ -26,6 +26,56 @@ async fn handle_backup_config() -> impl IntoResponse {
     }
 }
 
+async fn csrf_middleware(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let method = req.method().clone();
+
+    // Safe methods are always allowed
+    if method == axum::http::Method::GET
+        || method == axum::http::Method::HEAD
+        || method == axum::http::Method::OPTIONS
+    {
+        return next.run(req).await;
+    }
+
+    // Check Sec-Fetch-Site first (most reliable)
+    if let Some(sfs) = req.headers().get("sec-fetch-site").and_then(|v| v.to_str().ok()) {
+        if sfs == "same-origin" {
+            return next.run(req).await;
+        }
+        // Any other value (cross-site, same-site, none) → reject
+        return (axum::http::StatusCode::FORBIDDEN, "Cross-origin request blocked").into_response();
+    }
+
+    // Fallback: compare Origin to Host
+    let origin = req.headers().get(axum::http::header::ORIGIN).and_then(|v| v.to_str().ok());
+    let host = req.headers().get(axum::http::header::HOST).and_then(|v| v.to_str().ok());
+
+    match (origin, host) {
+        (Some(origin_val), Some(host_val)) => {
+            // Extract host from Origin URL (e.g., "https://hermitshell.local" → "hermitshell.local")
+            let origin_host = origin_val
+                .strip_prefix("https://").or_else(|| origin_val.strip_prefix("http://"))
+                .unwrap_or(origin_val);
+            if origin_host == host_val {
+                next.run(req).await
+            } else {
+                (axum::http::StatusCode::FORBIDDEN, "Cross-origin request blocked").into_response()
+            }
+        }
+        (Some(_), None) => {
+            // Origin present but no Host to compare → reject
+            (axum::http::StatusCode::FORBIDDEN, "Cross-origin request blocked").into_response()
+        }
+        (None, _) => {
+            // No Sec-Fetch-Site, no Origin → non-browser client → allow
+            next.run(req).await
+        }
+    }
+}
+
 async fn auth_middleware(
     req: axum::extract::Request,
     next: axum::middleware::Next,
@@ -142,6 +192,7 @@ async fn main() {
             rate_limit_state,
             rate_limit_middleware,
         ))
+        .layer(axum::middleware::from_fn(csrf_middleware))
         .with_state(leptos_options);
 
     // Load TLS cert from agent
