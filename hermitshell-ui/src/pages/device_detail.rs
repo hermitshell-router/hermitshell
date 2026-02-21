@@ -4,7 +4,7 @@ use crate::client;
 use crate::components::layout::Layout;
 use crate::components::toast::ErrorToast;
 use crate::format_bytes;
-use crate::server_fns::{SetGroup, BlockDevice, UnblockDevice, SetReservation};
+use crate::server_fns::{SetGroup, BlockDevice, UnblockDevice, SetReservation, SetNickname};
 
 fn format_timestamp(ts: i64) -> String {
     let now = std::time::SystemTime::now()
@@ -51,8 +51,10 @@ pub fn DeviceDetail() -> impl IntoView {
                         let unblock_action = ServerAction::<UnblockDevice>::new();
                         let block_action = ServerAction::<BlockDevice>::new();
                         let reserve_action = ServerAction::<SetReservation>::new();
+                        let set_nickname_action = ServerAction::<SetNickname>::new();
 
                         let mac_display = mac.clone();
+                        let mac_for_nickname = mac.clone();
                         let mac_for_group = mac.clone();
                         let mac_redirect = mac.clone();
                         let mac_for_block_unblock = mac.clone();
@@ -61,6 +63,18 @@ pub fn DeviceDetail() -> impl IntoView {
 
                         view! {
                             <div class="detail-grid">
+                                <div class="detail-item" style="grid-column: 1 / -1">
+                                    <div class="detail-label">"Nickname"</div>
+                                    <div class="detail-value">
+                                        <ActionForm action=set_nickname_action attr:style="display:flex;gap:0.5rem;align-items:center">
+                                            <input type="hidden" name="mac" value={mac_for_nickname} />
+                                            <input type="text" name="nickname" value={d.nickname.clone().unwrap_or_default()}
+                                                   placeholder="Enter nickname" maxlength="64"
+                                                   style="background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:0.375rem;padding:0.375rem 0.5rem;font-size:0.875rem" />
+                                            <button type="submit" class="btn btn-primary btn-sm">"Save"</button>
+                                        </ActionForm>
+                                    </div>
+                                </div>
                                 <div class="detail-item">
                                     <div class="detail-label">"MAC Address"</div>
                                     <div class="detail-value">{mac_display}</div>
@@ -168,6 +182,7 @@ pub fn DeviceDetail() -> impl IntoView {
                             <ErrorToast value=unblock_action.value() />
                             <ErrorToast value=block_action.value() />
                             <ErrorToast value=reserve_action.value() />
+                            <ErrorToast value=set_nickname_action.value() />
 
                             {
                                 let device_ip = d.ip.clone();

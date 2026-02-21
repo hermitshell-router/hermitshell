@@ -124,6 +124,11 @@ pub fn get_device(mac: &str) -> Result<Device, String> {
     resp.device.ok_or_else(|| "No device in response".to_string())
 }
 
+pub fn set_device_nickname(mac: &str, nickname: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "set_device_nickname", "mac": mac, "nickname": nickname}))?)?;
+    Ok(())
+}
+
 pub fn get_ad_blocking() -> Result<bool, String> {
     let resp = ok_or_err(send(json!({"method": "get_ad_blocking"}))?)?;
     Ok(resp.ad_blocking_enabled.unwrap_or(true))

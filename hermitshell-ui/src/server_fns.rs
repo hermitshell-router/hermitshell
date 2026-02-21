@@ -105,6 +105,15 @@ pub async fn unblock_device(mac: String) -> Result<(), ServerFnError> {
 }
 
 #[server]
+pub async fn set_nickname(mac: String, nickname: String) -> Result<(), ServerFnError> {
+    crate::client::set_device_nickname(&mac, &nickname)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("set_device_nickname", &format!("{}: {}", mac, nickname));
+    leptos_axum::redirect(&format!("/devices/{}", mac));
+    Ok(())
+}
+
+#[server]
 pub async fn add_port_forward(
     protocol: String,
     external_port_start: u16,

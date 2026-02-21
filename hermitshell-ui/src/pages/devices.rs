@@ -59,7 +59,7 @@ pub fn DeviceList() -> impl IntoView {
                                 <table>
                                     <thead>
                                         <tr>
-                                            <th>"Hostname"</th>
+                                            <th>"Name"</th>
                                             <th>"IP"</th>
                                             <th>"MAC"</th>
                                             <th>"Group"</th>
@@ -82,8 +82,13 @@ pub fn DeviceList() -> impl IntoView {
                                                 <tr>
                                                     <td>
                                                         <a href={format!("/devices/{}", mac)}>
-                                                            {d.hostname.clone().unwrap_or_else(|| "(unknown)".to_string())}
+                                                            {d.nickname.clone()
+                                                                .or_else(|| d.hostname.clone())
+                                                                .unwrap_or_else(|| "(unknown)".to_string())}
                                                         </a>
+                                                        {d.nickname.as_ref().and_then(|_| d.hostname.as_ref()).map(|h| {
+                                                            view! { <br /><span style="color: var(--text-muted); font-size: 0.75rem">{h.clone()}</span> }
+                                                        })}
                                                     </td>
                                                     <td>{d.ip.clone().unwrap_or_default()}</td>
                                                     <td style="color: var(--text-muted); font-size: 0.8125rem;">{mac.clone()}</td>
