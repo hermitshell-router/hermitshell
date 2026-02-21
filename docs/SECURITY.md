@@ -28,6 +28,8 @@ This document tracks security compromises made during implementation, why they w
 
 **Note:** Session creation and verification moved from the web UI to the agent (`socket.rs` `create_session`/`verify_session`). The expiration gap persists — the agent's `verify_session` verifies the HMAC but does not check the embedded timestamp.
 
+**Status: Fixed.** Token format changed to `admin:CREATED:LAST_ACTIVE.HMAC`. The agent enforces a 30-minute idle timeout and 8-hour absolute timeout per OWASP Session Management Cheat Sheet guidance. The auth middleware issues a refreshed token on every authenticated request, resetting the idle clock. Non-persistent session cookies (no `Max-Age`) per OWASP recommendation.
+
 ## 3. Session cookie comparison is not constant-time
 
 **What:** The agent's `verify_session` handler compares the HMAC signature using `==` (string equality), which is vulnerable to timing attacks.
@@ -113,6 +115,8 @@ This document tracks security compromises made during implementation, why they w
 **Why:** The HTTP listener only serves redirects to HTTPS, so the cookie should never be sent over plain HTTP in practice. However, without the `Secure` flag, a MITM could potentially intercept it if the user is tricked into visiting an HTTP URL.
 
 **Proper fix:** Add `Secure` to the cookie: `session=...; HttpOnly; Secure; SameSite=Strict; Path=/`.
+
+**Status: Fixed.** `Secure` flag added to login, logout, and rolling-refresh `Set-Cookie` headers.
 
 ## 11. Single admin account with no username
 
