@@ -44,6 +44,9 @@ assert_match "$result" '"false"' "verify_password rejects wrong password"
 result=$(vm_exec router "echo '{\"method\":\"verify_password\"}' | socat - $SOCK")
 assert_match "$result" '"ok":false' "verify_password requires value"
 
+# --- Reset rate limit counter before setup_password tests ---
+vm_exec router "echo '{\"method\":\"verify_password\",\"value\":\"testpass123\"}' | socat - $SOCK" >/dev/null
+
 # --- setup_password rejects short password ---
 result=$(vm_exec router "echo '{\"method\":\"setup_password\",\"value\":\"short\",\"key\":\"testpass123\"}' | socat - $SOCK")
 assert_match "$result" '"ok":false' "setup_password rejects short password"
@@ -63,6 +66,10 @@ assert_match "$result" 'current password' "setup_password error mentions current
 # --- setup_password rejects wrong current password ---
 result=$(vm_exec router "echo '{\"method\":\"setup_password\",\"value\":\"newpass12345\",\"key\":\"wrongpass\"}' | socat - $SOCK")
 assert_match "$result" '"ok":false' "setup_password rejects wrong current password"
+
+# --- Reset rate limit counter (wrong current password above triggered backoff) ---
+sleep 2
+vm_exec router "echo '{\"method\":\"verify_password\",\"value\":\"testpass123\"}' | socat - $SOCK" >/dev/null
 
 # --- setup_password succeeds with correct current password ---
 result=$(vm_exec router "echo '{\"method\":\"setup_password\",\"value\":\"newpass12345\",\"key\":\"testpass123\"}' | socat - $SOCK")

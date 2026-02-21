@@ -1164,15 +1164,15 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             resp
         }
         "verify_password" => {
-            if let Some(msg) = check_login_rate_limit(login_rate_limit) {
-                warn!("verify_password rate-limited");
-                return Response::err(&msg);
-            }
             let Some(value) = req.value else {
                 return Response::err("value required");
             };
             if value.len() > 128 {
                 return Response::err("password too long");
+            }
+            if let Some(msg) = check_login_rate_limit(login_rate_limit) {
+                warn!("verify_password rate-limited");
+                return Response::err(&msg);
             }
             let db = db.lock().unwrap();
             let hash_str = match db.get_config("admin_password_hash").ok().flatten() {
@@ -1222,13 +1222,13 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             let existing_hash = db.get_config("admin_password_hash").ok().flatten();
             if let Some(ref hash_str) = existing_hash {
                 // Current password required to change
+                let Some(current) = req.key else {
+                    return Response::err("key required (current password)");
+                };
                 if let Some(msg) = check_login_rate_limit(login_rate_limit) {
                     warn!("setup_password rate-limited");
                     return Response::err(&msg);
                 }
-                let Some(current) = req.key else {
-                    return Response::err("key required (current password)");
-                };
                 let parsed_hash = match PasswordHash::new(hash_str) {
                     Ok(h) => h,
                     Err(_) => return Response::err("stored hash corrupt"),

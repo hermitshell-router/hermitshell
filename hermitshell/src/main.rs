@@ -70,7 +70,7 @@ async fn rate_limit_middleware(
 ) -> axum::response::Response {
     let path = req.uri().path().to_string();
 
-    if !path.starts_with("/api/login") && !path.starts_with("/api/setup_password") {
+    if !path.starts_with("/api/login") {
         return next.run(req).await;
     }
 

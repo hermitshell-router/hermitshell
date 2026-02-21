@@ -185,6 +185,13 @@ vm_sudo router "chmod 666 /run/hermitshell/agent.sock" || true
 run_phase "qos" \
     "cases/29-qos.sh"
 
+# Ensure socket is accessible after QoS restart
+vm_sudo router "chmod 666 /run/hermitshell/agent.sock" || true
+
+# Rate limiting runs last (leaves rate limit state dirty, needs clean agent)
+run_phase "rate-limit" \
+    "cases/30-login-rate-limiting.sh"
+
 test_time=$((SECONDS - test_start_time))
 
 # Cleanup
