@@ -25,7 +25,7 @@ pub async fn login(password: String) -> Result<(), ServerFnError> {
     response.insert_header(
         axum::http::header::SET_COOKIE,
         axum::http::HeaderValue::from_str(
-            &format!("session={}; HttpOnly; SameSite=Strict; Path=/", cookie)
+            &format!("session={}; HttpOnly; Secure; SameSite=Strict; Path=/", cookie)
         ).unwrap(),
     );
     leptos_axum::redirect("/");
@@ -38,7 +38,7 @@ pub async fn logout() -> Result<(), ServerFnError> {
     response.insert_header(
         axum::http::header::SET_COOKIE,
         axum::http::HeaderValue::from_str(
-            "session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"
+            "session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0"
         ).unwrap(),
     );
     leptos_axum::redirect("/login");

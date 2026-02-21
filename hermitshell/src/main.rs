@@ -52,13 +52,23 @@ async fn auth_middleware(
             s.strip_prefix("session=")
         })
         .next()
-        .unwrap_or("");
+        .unwrap_or("")
+        .to_string();
 
-    if client::verify_session(session).unwrap_or(false) {
-        next.run(req).await
-    } else {
-        axum::response::Redirect::to("/login").into_response()
+    if !client::verify_session(&session).unwrap_or(false) {
+        return axum::response::Redirect::to("/login").into_response();
     }
+
+    // Rolling refresh: update LAST_ACTIVE timestamp
+    let mut response = next.run(req).await;
+    if let Ok(refreshed) = client::refresh_session(&session) {
+        if let Ok(hv) = axum::http::HeaderValue::from_str(
+            &format!("session={}; HttpOnly; Secure; SameSite=Strict; Path=/", refreshed)
+        ) {
+            response.headers_mut().insert(axum::http::header::SET_COOKIE, hv);
+        }
+    }
+    response
 }
 
 type RateLimitState = Arc<Mutex<(u32, Option<Instant>)>>;
