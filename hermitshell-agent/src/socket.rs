@@ -35,6 +35,9 @@ fn is_blocked_config_key(key: &str) -> bool {
     BLOCKED_CONFIG_KEYS.contains(&key)
 }
 
+const SESSION_IDLE_TIMEOUT_SECS: u64 = 1800;     // 30 minutes
+const SESSION_ABSOLUTE_TIMEOUT_SECS: u64 = 28800; // 8 hours
+
 type LoginRateLimit = Arc<Mutex<(u32, Option<std::time::Instant>)>>;
 
 /// Check if login is currently rate-limited. Returns error message if blocked.
@@ -1291,14 +1294,35 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                     return resp;
                 }
             };
-            // Cookie format: "admin:TIMESTAMP.SIGNATURE"
+            // Cookie format: "admin:CREATED:LAST_ACTIVE.SIGNATURE"
             let valid = if let Some(dot_pos) = value.rfind('.') {
                 let payload = &value[..dot_pos];
                 let sig = &value[dot_pos + 1..];
                 let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
                 mac.update(payload.as_bytes());
                 let expected = hex::encode(mac.finalize().into_bytes());
-                sig == expected
+                if sig != expected {
+                    false
+                } else {
+                    // Parse timestamps: "admin:CREATED:LAST_ACTIVE"
+                    let parts: Vec<&str> = payload.splitn(3, ':').collect();
+                    if parts.len() != 3 {
+                        false
+                    } else {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs();
+                        match (parts[1].parse::<u64>(), parts[2].parse::<u64>()) {
+                            (Ok(created), Ok(last_active)) => {
+                                let absolute_ok = now.saturating_sub(created) <= SESSION_ABSOLUTE_TIMEOUT_SECS;
+                                let idle_ok = now.saturating_sub(last_active) <= SESSION_IDLE_TIMEOUT_SECS;
+                                absolute_ok && idle_ok
+                            }
+                            _ => false,
+                        }
+                    }
+                }
             } else {
                 false
             };
