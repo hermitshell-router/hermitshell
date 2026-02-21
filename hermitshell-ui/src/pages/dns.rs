@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
+use crate::server_fns::ToggleAdBlocking;
 
 #[component]
 pub fn Dns() -> impl IntoView {
@@ -20,6 +21,8 @@ pub fn Dns() -> impl IntoView {
                         let toggle_value = if enabled { "false" } else { "true" };
                         let toggle_label = if enabled { "Disable" } else { "Enable" };
 
+                        let ad_action = ServerAction::<ToggleAdBlocking>::new();
+
                         view! {
                             <div class="settings-section">
                                 <h3>"Ad Blocking"</h3>
@@ -33,10 +36,10 @@ pub fn Dns() -> impl IntoView {
                                 </div>
                                 <div class="settings-row">
                                     <span class="settings-label">"Toggle"</span>
-                                    <form method="post" action="/api/ad-blocking" style="display:inline">
+                                    <ActionForm action=ad_action attr:style="display:inline">
                                         <input type="hidden" name="enabled" value={toggle_value} />
                                         <button type="submit" class="btn btn-sm">{toggle_label}</button>
-                                    </form>
+                                    </ActionForm>
                                 </div>
                             </div>
 

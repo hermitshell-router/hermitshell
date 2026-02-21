@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
+use crate::server_fns::{AcknowledgeAlert, AcknowledgeAllAlerts};
 
 fn format_timestamp(ts: i64) -> String {
     let now = std::time::SystemTime::now()
@@ -46,12 +47,14 @@ pub fn Alerts() -> impl IntoView {
         |_| async { client::list_alerts(None, 200) },
     );
 
+    let ack_all_action = ServerAction::<AcknowledgeAllAlerts>::new();
+
     view! {
         <Layout title="Alerts" active_page="alerts">
             <div class="actions-bar">
-                <form method="post" action="/api/acknowledge-all-alerts" style="display:inline">
+                <ActionForm action=ack_all_action attr:style="display:inline">
                     <button type="submit" class="btn btn-sm">"Acknowledge All"</button>
-                </form>
+                </ActionForm>
             </div>
             <Suspense fallback=move || view! { <p>"Loading..."</p> }>
                 {move || alerts.get().map(|result| match result {
@@ -70,24 +73,28 @@ pub fn Alerts() -> impl IntoView {
                                         <th>"Actions"</th>
                                     </tr></thead>
                                     <tbody>
-                                        {alert_list.iter().map(|a| {
+                                        {alert_list.into_iter().map(|a| {
                                             let sev_class = severity_class(&a.severity);
                                             let ack_class = if a.acknowledged { "muted" } else { "" };
                                             let rule_name = rule_display(&a.rule);
+                                            let ack_action = ServerAction::<AcknowledgeAlert>::new();
+                                            let id_str = a.id.to_string();
+                                            let acknowledged = a.acknowledged;
+                                            let device_link = format!("/devices/{}", a.device_mac);
                                             view! {
                                                 <tr class={ack_class}>
                                                     <td>{format_timestamp(a.created_at)}</td>
-                                                    <td><a href={format!("/devices/{}", a.device_mac)}>{a.device_mac.clone()}</a></td>
+                                                    <td><a href={device_link}>{a.device_mac}</a></td>
                                                     <td>{rule_name}</td>
-                                                    <td><span class={sev_class}>{a.severity.clone()}</span></td>
-                                                    <td>{a.message.clone()}</td>
+                                                    <td><span class={sev_class}>{a.severity}</span></td>
+                                                    <td>{a.message}</td>
                                                     <td>
-                                                        {if !a.acknowledged {
+                                                        {if !acknowledged {
                                                             view! {
-                                                                <form method="post" action="/api/acknowledge-alert" style="display:inline">
-                                                                    <input type="hidden" name="id" value={a.id.to_string()} />
+                                                                <ActionForm action=ack_action attr:style="display:inline">
+                                                                    <input type="hidden" name="id" value={id_str} />
                                                                     <button type="submit" class="btn btn-sm">"Ack"</button>
-                                                                </form>
+                                                                </ActionForm>
                                                             }.into_any()
                                                         } else {
                                                             view! { <span class="muted">"acked"</span> }.into_any()

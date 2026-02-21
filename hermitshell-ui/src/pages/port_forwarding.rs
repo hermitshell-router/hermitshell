@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
+use crate::server_fns::{AddPortForward, RemovePortForward};
 
 #[component]
 pub fn PortForwarding() -> impl IntoView {
@@ -16,6 +17,8 @@ pub fn PortForwarding() -> impl IntoView {
                     Ok(info) => {
                         let forwards = info.port_forwards;
                         let dmz_ip = info.dmz_ip.clone();
+
+                        let add_action = ServerAction::<AddPortForward>::new();
 
                         view! {
                             <h2 class="section-header">"Rules"</h2>
@@ -38,6 +41,7 @@ pub fn PortForwarding() -> impl IntoView {
                                         } else {
                                             format!("{}-{}", fwd.external_port_start, fwd.external_port_end)
                                         };
+                                        let remove_action = ServerAction::<RemovePortForward>::new();
                                         view! {
                                             <tr>
                                                 <td>{fwd.protocol.clone()}</td>
@@ -46,10 +50,10 @@ pub fn PortForwarding() -> impl IntoView {
                                                 <td>{fwd.internal_port}</td>
                                                 <td>{fwd.description.clone()}</td>
                                                 <td>
-                                                    <form method="post" action="/api/remove-port-forward" style="display:inline">
+                                                    <ActionForm action=remove_action attr:style="display:inline">
                                                         <input type="hidden" name="id" value={id.to_string()} />
                                                         <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
-                                                    </form>
+                                                    </ActionForm>
                                                 </td>
                                             </tr>
                                         }
@@ -58,7 +62,7 @@ pub fn PortForwarding() -> impl IntoView {
                             </table>
 
                             <h2 class="section-header">"Add Rule"</h2>
-                            <form method="post" action="/api/add-port-forward" class="form-inline">
+                            <ActionForm action=add_action attr:class="form-inline">
                                 <label>"Protocol"
                                     <select name="protocol">
                                         <option value="both">"TCP+UDP"</option>
@@ -82,7 +86,7 @@ pub fn PortForwarding() -> impl IntoView {
                                     <input type="text" name="description" placeholder="optional" />
                                 </label>
                                 <button type="submit" class="btn btn-primary">"Add"</button>
-                            </form>
+                            </ActionForm>
 
                             <h2 class="section-header">"DMZ Host"</h2>
                             <p>"Current DMZ: " {if dmz_ip.is_empty() { "None".to_string() } else { dmz_ip }}</p>

@@ -3,6 +3,7 @@ use leptos_router::hooks::*;
 use crate::client;
 use crate::components::layout::Layout;
 use crate::format_bytes;
+use crate::server_fns::{ApproveDevice, BlockDevice, UnblockDevice};
 
 const GROUPS: &[&str] = &["all", "quarantine", "trusted", "iot", "guest", "servers", "blocked"];
 
@@ -72,6 +73,10 @@ pub fn DeviceList() -> impl IntoView {
                                             let group = d.device_group.clone();
                                             let badge_class = format!("badge badge-{}", group);
 
+                                            let approve_action = ServerAction::<ApproveDevice>::new();
+                                            let unblock_action = ServerAction::<UnblockDevice>::new();
+                                            let block_action = ServerAction::<BlockDevice>::new();
+
                                             view! {
                                                 <tr>
                                                     <td>
@@ -87,7 +92,7 @@ pub fn DeviceList() -> impl IntoView {
                                                     <td>
                                                         {if group == "quarantine" {
                                                             view! {
-                                                                <form method="post" action="/api/approve" style="display:inline">
+                                                                <ActionForm action=approve_action attr:style="display:inline">
                                                                     <input type="hidden" name="mac" value={mac.clone()} />
                                                                     <select name="group">
                                                                         <option value="trusted">"Trusted"</option>
@@ -97,21 +102,21 @@ pub fn DeviceList() -> impl IntoView {
                                                                     </select>
                                                                     " "
                                                                     <button type="submit" class="btn btn-primary btn-sm">"Approve"</button>
-                                                                </form>
+                                                                </ActionForm>
                                                             }.into_any()
                                                         } else if group == "blocked" {
                                                             view! {
-                                                                <form method="post" action="/api/unblock" style="display:inline">
+                                                                <ActionForm action=unblock_action attr:style="display:inline">
                                                                     <input type="hidden" name="mac" value={mac.clone()} />
                                                                     <button type="submit" class="btn btn-primary btn-sm">"Unblock"</button>
-                                                                </form>
+                                                                </ActionForm>
                                                             }.into_any()
                                                         } else {
                                                             view! {
-                                                                <form method="post" action="/api/block" style="display:inline">
+                                                                <ActionForm action=block_action attr:style="display:inline">
                                                                     <input type="hidden" name="mac" value={mac.clone()} />
                                                                     <button type="submit" class="btn btn-danger btn-sm">"Block"</button>
-                                                                </form>
+                                                                </ActionForm>
                                                             }.into_any()
                                                         }}
                                                     </td>

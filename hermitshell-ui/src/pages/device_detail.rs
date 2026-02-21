@@ -3,6 +3,7 @@ use leptos_router::hooks::*;
 use crate::client;
 use crate::components::layout::Layout;
 use crate::format_bytes;
+use crate::server_fns::{SetGroup, BlockDevice, UnblockDevice, SetReservation};
 
 fn format_timestamp(ts: i64) -> String {
     let now = std::time::SystemTime::now()
@@ -38,12 +39,30 @@ pub fn DeviceDetail() -> impl IntoView {
                         let mac = d.mac.clone();
                         let group = d.device_group.clone();
                         let badge_class = format!("badge badge-{}", group);
+                        let is_blocked = group == "blocked";
+                        let group_trusted = group == "trusted";
+                        let group_iot = group == "iot";
+                        let group_guest = group == "guest";
+                        let group_servers = group == "servers";
+                        let group_quarantine = group == "quarantine";
+
+                        let set_group_action = ServerAction::<SetGroup>::new();
+                        let unblock_action = ServerAction::<UnblockDevice>::new();
+                        let block_action = ServerAction::<BlockDevice>::new();
+                        let reserve_action = ServerAction::<SetReservation>::new();
+
+                        let mac_display = mac.clone();
+                        let mac_for_group = mac.clone();
+                        let mac_redirect = mac.clone();
+                        let mac_for_block_unblock = mac.clone();
+                        let mac_for_reserve = mac.clone();
+                        let mac_for_alerts = mac.clone();
 
                         view! {
                             <div class="detail-grid">
                                 <div class="detail-item">
                                     <div class="detail-label">"MAC Address"</div>
-                                    <div class="detail-value">{mac.clone()}</div>
+                                    <div class="detail-value">{mac_display}</div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label">"IP Address"</div>
@@ -55,7 +74,7 @@ pub fn DeviceDetail() -> impl IntoView {
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label">"Group"</div>
-                                    <div class="detail-value"><span class={badge_class}>{group.clone()}</span></div>
+                                    <div class="detail-value"><span class={badge_class}>{group}</span></div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label">"First Seen"</div>
@@ -103,46 +122,46 @@ pub fn DeviceDetail() -> impl IntoView {
 
                             <h2 class="section-header">"Actions"</h2>
                             <div class="actions-bar">
-                                {if group != "blocked" {
+                                {if !is_blocked {
                                     view! {
-                                        <form method="post" action="/api/set-group" style="display:inline">
-                                            <input type="hidden" name="mac" value={mac.clone()} />
-                                            <input type="hidden" name="redirect" value={format!("/devices/{}", mac)} />
+                                        <ActionForm action=set_group_action attr:style="display:inline">
+                                            <input type="hidden" name="mac" value={mac_for_group} />
+                                            <input type="hidden" name="redirect" value={format!("/devices/{}", mac_redirect)} />
                                             <select name="group">
-                                                <option value="trusted" selected={group == "trusted"}>"Trusted"</option>
-                                                <option value="iot" selected={group == "iot"}>"IoT"</option>
-                                                <option value="guest" selected={group == "guest"}>"Guest"</option>
-                                                <option value="servers" selected={group == "servers"}>"Servers"</option>
-                                                <option value="quarantine" selected={group == "quarantine"}>"Quarantine"</option>
+                                                <option value="trusted" selected={group_trusted}>"Trusted"</option>
+                                                <option value="iot" selected={group_iot}>"IoT"</option>
+                                                <option value="guest" selected={group_guest}>"Guest"</option>
+                                                <option value="servers" selected={group_servers}>"Servers"</option>
+                                                <option value="quarantine" selected={group_quarantine}>"Quarantine"</option>
                                             </select>
                                             " "
                                             <button type="submit" class="btn btn-primary btn-sm">"Change Group"</button>
-                                        </form>
+                                        </ActionForm>
                                     }.into_any()
                                 } else {
                                     view! { <span></span> }.into_any()
                                 }}
 
-                                {if group == "blocked" {
+                                {if is_blocked {
                                     view! {
-                                        <form method="post" action="/api/unblock" style="display:inline">
-                                            <input type="hidden" name="mac" value={mac.clone()} />
+                                        <ActionForm action=unblock_action attr:style="display:inline">
+                                            <input type="hidden" name="mac" value={mac_for_block_unblock} />
                                             <button type="submit" class="btn btn-primary btn-sm">"Unblock"</button>
-                                        </form>
+                                        </ActionForm>
                                     }.into_any()
                                 } else {
                                     view! {
-                                        <form method="post" action="/api/block" style="display:inline">
-                                            <input type="hidden" name="mac" value={mac.clone()} />
+                                        <ActionForm action=block_action attr:style="display:inline">
+                                            <input type="hidden" name="mac" value={mac_for_block_unblock} />
                                             <button type="submit" class="btn btn-danger btn-sm">"Block"</button>
-                                        </form>
+                                        </ActionForm>
                                     }.into_any()
                                 }}
 
-                                <form method="post" action="/api/set-reservation" style="display:inline">
-                                    <input type="hidden" name="mac" value={mac.clone()} />
+                                <ActionForm action=reserve_action attr:style="display:inline">
+                                    <input type="hidden" name="mac" value={mac_for_reserve} />
                                     <button type="submit" class="btn btn-sm">"Reserve IP"</button>
-                                </form>
+                                </ActionForm>
                             </div>
 
                             {
@@ -212,7 +231,7 @@ pub fn DeviceDetail() -> impl IntoView {
                             }
 
                             {
-                                let device_alerts = client::list_alerts(Some(&mac), 50).unwrap_or_default();
+                                let device_alerts = client::list_alerts(Some(&mac_for_alerts), 50).unwrap_or_default();
                                 view! {
                                     <h2 class="section-header">"Recent Alerts"</h2>
                                     {if device_alerts.is_empty() {

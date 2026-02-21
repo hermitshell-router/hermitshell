@@ -1,7 +1,10 @@
 use leptos::prelude::*;
+use crate::server_fns::SetupPassword;
 
 #[component]
 pub fn Setup() -> impl IntoView {
+    let setup_action = ServerAction::<SetupPassword>::new();
+
     view! {
         <html lang="en">
             <head>
@@ -14,13 +17,13 @@ pub fn Setup() -> impl IntoView {
                 <div class="login-container">
                     <h1>"HermitShell Setup"</h1>
                     <p>"Set an admin password to secure your router."</p>
-                    <form method="post" action="/api/setup">
+                    <ActionForm action=setup_action>
                         <label for="password">"Password"</label>
                         <input type="password" name="password" id="password" required autofocus minlength="8" />
                         <label for="confirm">"Confirm Password"</label>
                         <input type="password" name="confirm" id="confirm" required minlength="8" />
                         <button type="submit" class="btn btn-primary">"Set Password"</button>
-                    </form>
+                    </ActionForm>
                 </div>
             </body>
         </html>

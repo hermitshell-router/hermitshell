@@ -946,10 +946,13 @@ dependencies = [
 name = "hermitshell-ui"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "leptos",
+ "leptos_axum",
  "leptos_router",
  "serde",
  "serde_json",
+ "server_fn",
 ]
 
 [[package]]

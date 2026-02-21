@@ -2,6 +2,10 @@ use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
 use crate::format_uptime;
+use crate::server_fns::{
+    RemoveReservation, SetLogConfig, SetRunzeroConfig, SyncRunzero,
+    SetQosConfig, SetQosTestUrl, RunSpeedTest,
+};
 
 #[component]
 pub fn Settings() -> impl IntoView {
@@ -97,15 +101,16 @@ pub fn Settings() -> impl IntoView {
                                     <tbody>
                                         {res.iter().map(|r| {
                                             let mac = r.mac.clone();
+                                            let remove_action = ServerAction::<RemoveReservation>::new();
                                             view! {
                                                 <tr>
                                                     <td>{r.mac.clone()}</td>
                                                     <td>{r.subnet_id}</td>
                                                     <td>
-                                                        <form method="post" action="/api/remove-reservation" style="display:inline">
+                                                        <ActionForm action=remove_action attr:style="display:inline">
                                                             <input type="hidden" name="mac" value={mac} />
                                                             <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
-                                                        </form>
+                                                        </ActionForm>
                                                     </td>
                                                 </tr>
                                             }
@@ -127,10 +132,12 @@ pub fn Settings() -> impl IntoView {
                         let webhook_url = config.get("webhook_url").and_then(|v| v.as_str()).unwrap_or("").to_string();
                         let retention = config.get("log_retention_days").and_then(|v| v.as_str()).unwrap_or("7").to_string();
 
+                        let log_action = ServerAction::<SetLogConfig>::new();
+
                         view! {
                             <div class="settings-section">
                                 <h3>"Log Export"</h3>
-                                <form method="post" action="/api/set-log-config">
+                                <ActionForm action=log_action>
                                     <div class="settings-row">
                                         <span class="settings-label">"Log Format"</span>
                                         <span class="settings-value">
@@ -167,7 +174,7 @@ pub fn Settings() -> impl IntoView {
                                     <div class="actions-bar">
                                         <button type="submit" class="btn btn-primary btn-sm">"Save Log Settings"</button>
                                     </div>
-                                </form>
+                                </ActionForm>
                             </div>
                         }.into_any()
                     }
@@ -184,10 +191,13 @@ pub fn Settings() -> impl IntoView {
                         let has_token = config.get("has_token").and_then(|v| v.as_bool()).unwrap_or(false);
                         let token_placeholder = if has_token { "(configured)" } else { "XT-..." };
 
+                        let runzero_action = ServerAction::<SetRunzeroConfig>::new();
+                        let sync_action = ServerAction::<SyncRunzero>::new();
+
                         view! {
                             <div class="settings-section">
                                 <h3>"runZero Integration"</h3>
-                                <form method="post" action="/api/set-runzero-config">
+                                <ActionForm action=runzero_action>
                                     <div class="settings-row">
                                         <span class="settings-label">"Console URL"</span>
                                         <span class="settings-value">
@@ -218,10 +228,10 @@ pub fn Settings() -> impl IntoView {
                                     <div class="actions-bar">
                                         <button type="submit" class="btn btn-primary btn-sm">"Save runZero Settings"</button>
                                     </div>
-                                </form>
-                                <form method="post" action="/api/sync-runzero" style="margin-top: 0.5rem;">
+                                </ActionForm>
+                                <ActionForm action=sync_action attr:style="margin-top: 0.5rem;">
                                     <button type="submit" class="btn btn-sm">"Sync Now"</button>
-                                </form>
+                                </ActionForm>
                             </div>
                         }.into_any()
                     }
@@ -311,11 +321,15 @@ pub fn Settings() -> impl IntoView {
                         let download_mbps = config.get("download_mbps").and_then(|v| v.as_u64()).map(|v| v.to_string()).unwrap_or_default();
                         let test_url = config.get("test_url").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
+                        let qos_action = ServerAction::<SetQosConfig>::new();
+                        let test_url_action = ServerAction::<SetQosTestUrl>::new();
+                        let speed_test_action = ServerAction::<RunSpeedTest>::new();
+
                         view! {
                             <div class="settings-section">
                                 <h3>"QoS / Bufferbloat Prevention"</h3>
                                 <p class="hint">"CAKE qdisc with per-device fair queuing. Set bandwidth to ~85-90% of your ISP speed."</p>
-                                <form method="post" action="/api/set-qos-config">
+                                <ActionForm action=qos_action>
                                     <div class="settings-row">
                                         <span class="settings-label">"Enabled"</span>
                                         <span class="settings-value">
@@ -340,8 +354,8 @@ pub fn Settings() -> impl IntoView {
                                     <div class="actions-bar">
                                         <button type="submit" class="btn btn-primary btn-sm">"Save"</button>
                                     </div>
-                                </form>
-                                <form method="post" action="/api/set-qos-test-url" style="margin-top: 0.5rem;">
+                                </ActionForm>
+                                <ActionForm action=test_url_action attr:style="margin-top: 0.5rem;">
                                     <div class="settings-row">
                                         <span class="settings-label">"Speed Test URL"</span>
                                         <span class="settings-value">
@@ -351,10 +365,10 @@ pub fn Settings() -> impl IntoView {
                                     <div class="actions-bar">
                                         <button type="submit" class="btn btn-primary btn-sm">"Save Test URL"</button>
                                     </div>
-                                </form>
-                                <form method="post" action="/api/run-speed-test" style="margin-top: 0.5rem;">
+                                </ActionForm>
+                                <ActionForm action=speed_test_action attr:style="margin-top: 0.5rem;">
                                     <button type="submit" class="btn btn-sm">"Run Speed Test"</button>
-                                </form>
+                                </ActionForm>
                             </div>
                         }.into_any()
                     }

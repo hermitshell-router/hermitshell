@@ -1,7 +1,10 @@
 use leptos::prelude::*;
+use crate::server_fns::Login;
 
 #[component]
 pub fn Login() -> impl IntoView {
+    let login_action = ServerAction::<Login>::new();
+
     view! {
         <html lang="en">
             <head>
@@ -13,11 +16,11 @@ pub fn Login() -> impl IntoView {
             <body>
                 <div class="login-container">
                     <h1>"HermitShell"</h1>
-                    <form method="post" action="/api/login">
+                    <ActionForm action=login_action>
                         <label for="password">"Admin Password"</label>
                         <input type="password" name="password" id="password" required autofocus />
                         <button type="submit" class="btn btn-primary">"Login"</button>
-                    </form>
+                    </ActionForm>
                 </div>
             </body>
         </html>

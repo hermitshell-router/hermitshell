@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
 use crate::components::stat_card::StatCard;
+use crate::server_fns::ToggleAdBlocking;
 use crate::types::{Device, Status};
 use crate::format_uptime;
 
@@ -49,6 +50,8 @@ fn render_dashboard(status: Status, mut devices: Vec<Device>) -> AnyView {
     let ad_blocking_class = if ad_blocking { "success" } else { "warning" };
     let toggle_value = if ad_blocking { "false" } else { "true" };
 
+    let ad_action = ServerAction::<ToggleAdBlocking>::new();
+
     devices.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
     let recent: Vec<Device> = devices.into_iter().take(5).collect();
 
@@ -63,12 +66,12 @@ fn render_dashboard(status: Status, mut devices: Vec<Device>) -> AnyView {
         </div>
 
         <div class="actions-bar">
-            <form method="post" action="/api/ad-blocking">
+            <ActionForm action=ad_action>
                 <input type="hidden" name="enabled" value={toggle_value} />
                 <button type="submit" class={if ad_blocking { "btn btn-danger btn-sm" } else { "btn btn-primary btn-sm" }}>
                     {if ad_blocking { "Disable Ad Blocking" } else { "Enable Ad Blocking" }}
                 </button>
-            </form>
+            </ActionForm>
         </div>
 
         <h2 class="section-header">"Recent Devices"</h2>

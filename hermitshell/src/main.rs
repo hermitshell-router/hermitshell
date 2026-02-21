@@ -1,9 +1,7 @@
 use axum::response::IntoResponse;
-use axum::extract::Form;
 use axum::Router;
 use leptos::config::get_configuration;
 use leptos_axum::{generate_route_list, LeptosRoutes};
-use serde::Deserialize;
 
 use hermitshell_ui::App;
 use hermitshell_ui::client;
@@ -12,237 +10,6 @@ const STYLE_CSS: &str = include_str!("../../hermitshell-ui/style/style.css");
 
 async fn serve_css() -> impl IntoResponse {
     ([("content-type", "text/css")], STYLE_CSS)
-}
-
-#[derive(Deserialize)]
-struct ApproveForm {
-    mac: String,
-    group: String,
-}
-
-#[derive(Deserialize)]
-struct DeviceForm {
-    mac: String,
-}
-
-#[derive(Deserialize)]
-struct SetGroupForm {
-    mac: String,
-    group: String,
-    redirect: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct AdBlockingForm {
-    enabled: String,
-}
-
-#[derive(Deserialize)]
-struct LoginForm {
-    password: String,
-}
-
-#[derive(Deserialize)]
-struct SetupForm {
-    password: String,
-    confirm: String,
-}
-
-async fn handle_ad_blocking(Form(form): Form<AdBlockingForm>) -> impl IntoResponse {
-    let enabled = form.enabled == "true";
-    let _ = client::set_ad_blocking(enabled);
-    axum::response::Redirect::to("/")
-}
-
-async fn handle_set_group(Form(form): Form<SetGroupForm>) -> impl IntoResponse {
-    let _ = client::set_device_group(&form.mac, &form.group);
-    let redirect = form.redirect
-        .filter(|r| r.starts_with('/') && !r.starts_with("//"))
-        .unwrap_or_else(|| "/devices".to_string());
-    axum::response::Redirect::to(&redirect)
-}
-
-async fn handle_approve(Form(form): Form<ApproveForm>) -> impl IntoResponse {
-    let _ = client::set_device_group(&form.mac, &form.group);
-    axum::response::Redirect::to("/devices")
-}
-
-async fn handle_block(Form(form): Form<DeviceForm>) -> impl IntoResponse {
-    let _ = client::block_device(&form.mac);
-    axum::response::Redirect::to("/devices")
-}
-
-async fn handle_unblock(Form(form): Form<DeviceForm>) -> impl IntoResponse {
-    let _ = client::unblock_device(&form.mac);
-    axum::response::Redirect::to("/devices")
-}
-
-async fn handle_setup(Form(form): Form<SetupForm>) -> impl IntoResponse {
-    if form.password != form.confirm || form.password.len() < 8 || form.password.len() > 128 {
-        return axum::response::Redirect::to("/setup").into_response();
-    }
-    match client::setup_password(&form.password, None) {
-        Ok(()) => axum::response::Redirect::to("/login").into_response(),
-        Err(_) => axum::response::Redirect::to("/setup").into_response(),
-    }
-}
-
-async fn handle_login(Form(form): Form<LoginForm>) -> impl IntoResponse {
-    match client::verify_password(&form.password) {
-        Ok(true) => {}
-        _ => return axum::response::Redirect::to("/login").into_response(),
-    }
-    let cookie = match client::create_session() {
-        Ok(c) => c,
-        Err(_) => return axum::response::Redirect::to("/login").into_response(),
-    };
-    let mut response = axum::response::Redirect::to("/").into_response();
-    response.headers_mut().insert(
-        axum::http::header::SET_COOKIE,
-        format!("session={}; HttpOnly; SameSite=Strict; Path=/", cookie).parse().unwrap(),
-    );
-    response
-}
-
-async fn handle_logout() -> impl IntoResponse {
-    let mut response = axum::response::Redirect::to("/login").into_response();
-    response.headers_mut().insert(
-        axum::http::header::SET_COOKIE,
-        "session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0".parse().unwrap(),
-    );
-    response
-}
-
-#[derive(Deserialize)]
-struct PortForwardForm {
-    protocol: String,
-    external_port_start: u16,
-    external_port_end: u16,
-    internal_ip: String,
-    internal_port: u16,
-    description: String,
-}
-
-#[derive(Deserialize)]
-struct PortForwardIdForm {
-    id: i64,
-}
-
-#[derive(Deserialize)]
-struct ReservationForm {
-    mac: String,
-}
-
-async fn handle_add_port_forward(Form(form): Form<PortForwardForm>) -> impl IntoResponse {
-    let _ = client::add_port_forward(&form.protocol, form.external_port_start, form.external_port_end, &form.internal_ip, form.internal_port, &form.description);
-    axum::response::Redirect::to("/port-forwarding")
-}
-
-async fn handle_remove_port_forward(Form(form): Form<PortForwardIdForm>) -> impl IntoResponse {
-    let _ = client::remove_port_forward(form.id);
-    axum::response::Redirect::to("/port-forwarding")
-}
-
-async fn handle_set_reservation(Form(form): Form<ReservationForm>) -> impl IntoResponse {
-    let _ = client::set_dhcp_reservation(&form.mac, None);
-    axum::response::Redirect::to("/settings")
-}
-
-async fn handle_remove_reservation(Form(form): Form<ReservationForm>) -> impl IntoResponse {
-    let _ = client::remove_dhcp_reservation(&form.mac);
-    axum::response::Redirect::to("/settings")
-}
-
-#[derive(Deserialize)]
-struct LogConfigForm {
-    log_format: String,
-    syslog_target: String,
-    webhook_url: String,
-    webhook_secret: String,
-    log_retention_days: String,
-}
-
-#[derive(Deserialize)]
-struct RunZeroConfigForm {
-    runzero_url: String,
-    runzero_token: String,
-    runzero_sync_interval: String,
-    runzero_enabled: String,
-}
-
-#[derive(Deserialize)]
-struct AlertIdForm {
-    id: i64,
-}
-
-#[derive(Deserialize)]
-struct QosConfigForm {
-    qos_enabled: String,
-    upload_mbps: Option<String>,
-    download_mbps: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct QosTestUrlForm {
-    url: String,
-}
-
-async fn handle_set_runzero_config(Form(form): Form<RunZeroConfigForm>) -> impl IntoResponse {
-    let mut config = serde_json::json!({
-        "runzero_url": form.runzero_url,
-        "runzero_sync_interval": form.runzero_sync_interval,
-        "runzero_enabled": form.runzero_enabled,
-    });
-    if !form.runzero_token.is_empty() {
-        config["runzero_token"] = serde_json::Value::String(form.runzero_token);
-    }
-    let _ = client::set_runzero_config(&config);
-    axum::response::Redirect::to("/settings")
-}
-
-async fn handle_sync_runzero() -> impl IntoResponse {
-    let _ = client::sync_runzero();
-    axum::response::Redirect::to("/settings")
-}
-
-async fn handle_acknowledge_alert(Form(form): Form<AlertIdForm>) -> impl IntoResponse {
-    let _ = client::acknowledge_alert(form.id);
-    axum::response::Redirect::to("/alerts")
-}
-
-async fn handle_acknowledge_all_alerts() -> impl IntoResponse {
-    let _ = client::acknowledge_all_alerts(None);
-    axum::response::Redirect::to("/alerts")
-}
-
-async fn handle_set_qos_config(Form(form): Form<QosConfigForm>) -> impl IntoResponse {
-    let enabled = form.qos_enabled == "true";
-    let upload: Option<u32> = form.upload_mbps.as_deref().and_then(|s| s.parse().ok());
-    let download: Option<u32> = form.download_mbps.as_deref().and_then(|s| s.parse().ok());
-    let _ = client::set_qos_config(enabled, upload, download);
-    axum::response::Redirect::to("/settings")
-}
-
-async fn handle_set_qos_test_url(Form(form): Form<QosTestUrlForm>) -> impl IntoResponse {
-    let _ = client::set_qos_test_url(&form.url);
-    axum::response::Redirect::to("/settings")
-}
-
-async fn handle_run_speed_test() -> impl IntoResponse {
-    let _ = client::run_speed_test();
-    axum::response::Redirect::to("/settings")
-}
-
-async fn handle_set_log_config(Form(form): Form<LogConfigForm>) -> impl IntoResponse {
-    let config = serde_json::json!({
-        "log_format": form.log_format,
-        "syslog_target": form.syslog_target,
-        "webhook_url": form.webhook_url,
-        "webhook_secret": form.webhook_secret,
-        "log_retention_days": form.log_retention_days,
-    });
-    let _ = client::set_log_config(&config);
-    axum::response::Redirect::to("/settings")
 }
 
 async fn handle_backup_config() -> impl IntoResponse {
@@ -262,7 +29,9 @@ async fn auth_middleware(
 ) -> axum::response::Response {
     let path = req.uri().path().to_string();
 
-    if path == "/login" || path == "/api/login" || path == "/setup" || path == "/api/setup" || path == "/style.css" {
+    if path == "/login" || path == "/setup" || path == "/style.css"
+        || path == "/api/login" || path == "/api/setup_password"
+    {
         return next.run(req).await;
     }
 
@@ -301,27 +70,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/style.css", axum::routing::get(serve_css))
-        .route("/api/setup", axum::routing::post(handle_setup))
-        .route("/api/login", axum::routing::post(handle_login))
-        .route("/api/logout", axum::routing::post(handle_logout))
-        .route("/api/ad-blocking", axum::routing::post(handle_ad_blocking))
-        .route("/api/set-group", axum::routing::post(handle_set_group))
-        .route("/api/approve", axum::routing::post(handle_approve))
-        .route("/api/block", axum::routing::post(handle_block))
-        .route("/api/unblock", axum::routing::post(handle_unblock))
-        .route("/api/add-port-forward", axum::routing::post(handle_add_port_forward))
-        .route("/api/remove-port-forward", axum::routing::post(handle_remove_port_forward))
-        .route("/api/set-reservation", axum::routing::post(handle_set_reservation))
-        .route("/api/remove-reservation", axum::routing::post(handle_remove_reservation))
         .route("/api/backup/config", axum::routing::get(handle_backup_config))
-        .route("/api/set-log-config", axum::routing::post(handle_set_log_config))
-        .route("/api/set-runzero-config", axum::routing::post(handle_set_runzero_config))
-        .route("/api/sync-runzero", axum::routing::post(handle_sync_runzero))
-        .route("/api/acknowledge-alert", axum::routing::post(handle_acknowledge_alert))
-        .route("/api/acknowledge-all-alerts", axum::routing::post(handle_acknowledge_all_alerts))
-        .route("/api/set-qos-config", axum::routing::post(handle_set_qos_config))
-        .route("/api/set-qos-test-url", axum::routing::post(handle_set_qos_test_url))
-        .route("/api/run-speed-test", axum::routing::post(handle_run_speed_test))
         .leptos_routes(&leptos_options, routes, App)
         .layer(axum::middleware::from_fn(auth_middleware))
         .with_state(leptos_options);
