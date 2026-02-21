@@ -66,3 +66,11 @@ pub struct PortForwardsInfo {
     pub port_forwards: Vec<PortForward>,
     pub dmz_ip: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditEntry {
+    pub id: i64,
+    pub action: String,
+    pub detail: String,
+    pub created_at: i64,
+}

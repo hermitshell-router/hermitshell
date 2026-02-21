@@ -66,6 +66,7 @@ pub struct Response {
     pub analyzer_status: Option<serde_json::Value>,
     #[serde(default)]
     pub qos_config: Option<serde_json::Value>,
+    pub audit_logs: Option<Vec<crate::types::AuditEntry>>,
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
@@ -354,6 +355,16 @@ pub fn set_qos_test_url(url: &str) -> Result<(), String> {
 pub fn run_speed_test() -> Result<serde_json::Value, String> {
     let resp = ok_or_err(send(json!({"method": "run_speed_test"}))?)?;
     Ok(resp.qos_config.unwrap_or(json!({})))
+}
+
+pub fn log_audit(action: &str, detail: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "log_audit", "value": action, "key": detail}))?)?;
+    Ok(())
+}
+
+pub fn list_audit_logs(limit: i64) -> Result<Vec<crate::types::AuditEntry>, String> {
+    let resp = ok_or_err(send(json!({"method": "list_audit_logs", "limit": limit}))?)?;
+    Ok(resp.audit_logs.unwrap_or_default())
 }
 
 #[cfg(test)]

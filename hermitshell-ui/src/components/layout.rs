@@ -20,6 +20,7 @@ pub fn Layout(
         ("WireGuard", "/wireguard"),
         ("Port Forwarding", "/port-forwarding"),
         ("Settings", "/settings"),
+        ("Audit", "/audit"),
     ];
 
     view! {

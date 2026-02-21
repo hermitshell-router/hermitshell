@@ -50,6 +50,7 @@ pub async fn toggle_wireguard(enabled: String) -> Result<(), ServerFnError> {
     let enabled = enabled == "true";
     crate::client::set_wireguard_enabled(enabled)
         .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("set_wireguard_enabled", &enabled.to_string());
     leptos_axum::redirect("/wireguard");
     Ok(())
 }
@@ -59,6 +60,7 @@ pub async fn toggle_ad_blocking(enabled: String) -> Result<(), ServerFnError> {
     let enabled = enabled == "true";
     crate::client::set_ad_blocking(enabled)
         .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("set_ad_blocking", &enabled.to_string());
     leptos_axum::redirect("/");
     Ok(())
 }
@@ -67,6 +69,7 @@ pub async fn toggle_ad_blocking(enabled: String) -> Result<(), ServerFnError> {
 pub async fn set_group(mac: String, group: String, redirect: Option<String>) -> Result<(), ServerFnError> {
     crate::client::set_device_group(&mac, &group)
         .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("set_device_group", &format!("{}: {}", mac, group));
     let target = redirect
         .filter(|r| r.starts_with('/') && !r.starts_with("//"))
         .unwrap_or_else(|| "/devices".to_string());
@@ -78,6 +81,7 @@ pub async fn set_group(mac: String, group: String, redirect: Option<String>) -> 
 pub async fn approve_device(mac: String, group: String) -> Result<(), ServerFnError> {
     crate::client::set_device_group(&mac, &group)
         .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("approve_device", &format!("{}: {}", mac, group));
     leptos_axum::redirect("/devices");
     Ok(())
 }
@@ -86,6 +90,7 @@ pub async fn approve_device(mac: String, group: String) -> Result<(), ServerFnEr
 pub async fn block_device(mac: String) -> Result<(), ServerFnError> {
     crate::client::block_device(&mac)
         .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("block_device", &mac);
     leptos_axum::redirect("/devices");
     Ok(())
 }
@@ -94,6 +99,7 @@ pub async fn block_device(mac: String) -> Result<(), ServerFnError> {
 pub async fn unblock_device(mac: String) -> Result<(), ServerFnError> {
     crate::client::unblock_device(&mac)
         .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("unblock_device", &mac);
     leptos_axum::redirect("/devices");
     Ok(())
 }
@@ -116,6 +122,7 @@ pub async fn add_port_forward(
         &description,
     )
     .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("add_port_forward", &format!("{}:{}-{}", internal_ip, external_port_start, external_port_end));
     leptos_axum::redirect("/port-forwarding");
     Ok(())
 }
@@ -124,6 +131,7 @@ pub async fn add_port_forward(
 pub async fn remove_port_forward(id: i64) -> Result<(), ServerFnError> {
     crate::client::remove_port_forward(id)
         .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("remove_port_forward", &id.to_string());
     leptos_axum::redirect("/port-forwarding");
     Ok(())
 }
@@ -161,6 +169,7 @@ pub async fn set_log_config(
     });
     crate::client::set_log_config(&config)
         .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("set_log_config", "");
     leptos_axum::redirect("/settings");
     Ok(())
 }
@@ -182,6 +191,7 @@ pub async fn set_runzero_config(
     }
     crate::client::set_runzero_config(&config)
         .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("set_runzero_config", "");
     leptos_axum::redirect("/settings");
     Ok(())
 }
@@ -221,6 +231,7 @@ pub async fn set_qos_config(
     let download: Option<u32> = download_mbps.as_deref().and_then(|s| s.parse().ok());
     crate::client::set_qos_config(enabled, upload, download)
         .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("set_qos_config", &format!("enabled={}", enabled));
     leptos_axum::redirect("/settings");
     Ok(())
 }

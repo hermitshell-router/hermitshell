@@ -1,4 +1,5 @@
 pub mod alerts;
+pub mod audit;
 pub mod dashboard;
 pub mod device_detail;
 pub mod devices;
