@@ -140,6 +140,7 @@ pub struct Device {
     pub runzero_device_type: Option<String>,
     pub runzero_manufacturer: Option<String>,
     pub runzero_last_sync: Option<i64>,
+    pub nickname: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -232,6 +233,7 @@ impl Db {
             "runzero_device_type TEXT",
             "runzero_manufacturer TEXT",
             "runzero_last_sync INTEGER",
+            "nickname TEXT",
         ] {
             let _ = conn.execute_batch(&format!("ALTER TABLE devices ADD COLUMN {col}"));
         }
@@ -273,7 +275,7 @@ impl Db {
 
     pub fn list_devices(&self) -> Result<Vec<Device>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync FROM devices"
+            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname FROM devices"
         )?;
         let devices = stmt.query_map([], |row| {
             Ok(Device {
@@ -293,6 +295,7 @@ impl Db {
                 runzero_device_type: row.get(13)?,
                 runzero_manufacturer: row.get(14)?,
                 runzero_last_sync: row.get(15)?,
+                nickname: row.get(16)?,
             })
         })?;
         Ok(devices.filter_map(|d| d.ok()).collect())
@@ -300,7 +303,7 @@ impl Db {
 
     pub fn get_device(&self, mac: &str) -> Result<Option<Device>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync FROM devices WHERE mac = ?1"
+            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname FROM devices WHERE mac = ?1"
         )?;
         let mut rows = stmt.query([mac])?;
         if let Some(row) = rows.next()? {
@@ -321,6 +324,7 @@ impl Db {
                 runzero_device_type: row.get(13)?,
                 runzero_manufacturer: row.get(14)?,
                 runzero_last_sync: row.get(15)?,
+                nickname: row.get(16)?,
             }))
         } else {
             Ok(None)
@@ -407,7 +411,7 @@ impl Db {
     /// List all devices that have subnet_id set (for state restoration on startup)
     pub fn list_assigned_devices(&self) -> Result<Vec<Device>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync FROM devices WHERE subnet_id IS NOT NULL"
+            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname FROM devices WHERE subnet_id IS NOT NULL"
         )?;
         let devices = stmt.query_map([], |row| {
             Ok(Device {
@@ -427,6 +431,7 @@ impl Db {
                 runzero_device_type: row.get(13)?,
                 runzero_manufacturer: row.get(14)?,
                 runzero_last_sync: row.get(15)?,
+                nickname: row.get(16)?,
             })
         })?;
         Ok(devices.filter_map(|d| d.ok()).collect())
@@ -1070,5 +1075,17 @@ impl Db {
             })
         })?.filter_map(|r| r.ok()).collect();
         Ok(entries)
+    }
+
+    pub fn set_device_nickname(&self, mac: &str, nickname: &str) -> Result<()> {
+        if nickname.len() > 64 {
+            anyhow::bail!("nickname too long (max 64 characters)");
+        }
+        let val = if nickname.is_empty() { None } else { Some(nickname) };
+        self.conn.execute(
+            "UPDATE devices SET nickname = ?1 WHERE mac = ?2",
+            (val, mac),
+        )?;
+        Ok(())
     }
 }

@@ -1544,6 +1544,17 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 Err(e) => Response::err(&e.to_string()),
             }
         }
+        "set_device_nickname" => {
+            let Some(ref mac) = req.mac else {
+                return Response::err("mac required");
+            };
+            let nickname = req.nickname.as_deref().unwrap_or("");
+            let db = db.lock().unwrap();
+            match db.set_device_nickname(mac, nickname) {
+                Ok(()) => Response::ok(),
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
         _ => Response::err("unknown method"),
     }
 }
