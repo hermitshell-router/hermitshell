@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
+use crate::components::toast::ErrorToast;
 use crate::server_fns::{AddPortForward, RemovePortForward};
 
 #[component]
@@ -54,6 +55,7 @@ pub fn PortForwarding() -> impl IntoView {
                                                         <input type="hidden" name="id" value={id.to_string()} />
                                                         <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
                                                     </ActionForm>
+                                                    <ErrorToast value=remove_action.value() />
                                                 </td>
                                             </tr>
                                         }
@@ -87,6 +89,7 @@ pub fn PortForwarding() -> impl IntoView {
                                 </label>
                                 <button type="submit" class="btn btn-primary">"Add"</button>
                             </ActionForm>
+                            <ErrorToast value=add_action.value() />
 
                             <h2 class="section-header">"DMZ Host"</h2>
                             <p>"Current DMZ: " {if dmz_ip.is_empty() { "None".to_string() } else { dmz_ip }}</p>

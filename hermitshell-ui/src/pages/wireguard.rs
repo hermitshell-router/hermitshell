@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
+use crate::components::toast::ErrorToast;
 use crate::server_fns::ToggleWireguard;
 
 #[component]
@@ -44,6 +45,7 @@ pub fn Wireguard() -> impl IntoView {
                                         <button type="submit" class="btn btn-sm">{toggle_label}</button>
                                     </ActionForm>
                                 </div>
+                                <ErrorToast value=wg_action.value() />
                             </div>
 
                             <div class="settings-section">

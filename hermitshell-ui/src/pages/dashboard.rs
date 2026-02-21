@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
 use crate::components::stat_card::StatCard;
+use crate::components::toast::ErrorToast;
 use crate::server_fns::ToggleAdBlocking;
 use crate::types::{Device, Status};
 use crate::format_uptime;
@@ -72,6 +73,7 @@ fn render_dashboard(status: Status, mut devices: Vec<Device>) -> AnyView {
                     {if ad_blocking { "Disable Ad Blocking" } else { "Enable Ad Blocking" }}
                 </button>
             </ActionForm>
+            <ErrorToast value=ad_action.value() />
         </div>
 
         <h2 class="section-header">"Recent Devices"</h2>

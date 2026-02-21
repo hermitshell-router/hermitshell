@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use crate::components::toast::SuccessToast;
 use crate::server_fns::Logout;
 
 #[component]
@@ -55,6 +56,7 @@ pub fn Layout(
                         {children()}
                     </main>
                 </div>
+                <SuccessToast />
             </body>
         </html>
     }

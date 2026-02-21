@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use crate::components::toast::ErrorToast;
 use crate::server_fns::SetupPassword;
 
 #[component]
@@ -24,6 +25,7 @@ pub fn Setup() -> impl IntoView {
                         <input type="password" name="confirm" id="confirm" required minlength="8" />
                         <button type="submit" class="btn btn-primary">"Set Password"</button>
                     </ActionForm>
+                    <ErrorToast value=setup_action.value() />
                 </div>
             </body>
         </html>

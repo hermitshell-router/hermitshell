@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use crate::components::toast::ErrorToast;
 use crate::server_fns::Login;
 
 #[component]
@@ -21,6 +22,7 @@ pub fn Login() -> impl IntoView {
                         <input type="password" name="password" id="password" required autofocus />
                         <button type="submit" class="btn btn-primary">"Login"</button>
                     </ActionForm>
+                    <ErrorToast value=login_action.value() />
                 </div>
             </body>
         </html>

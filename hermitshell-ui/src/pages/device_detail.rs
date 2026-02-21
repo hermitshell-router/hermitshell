@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use leptos_router::hooks::*;
 use crate::client;
 use crate::components::layout::Layout;
+use crate::components::toast::ErrorToast;
 use crate::format_bytes;
 use crate::server_fns::{SetGroup, BlockDevice, UnblockDevice, SetReservation};
 
@@ -163,6 +164,10 @@ pub fn DeviceDetail() -> impl IntoView {
                                     <button type="submit" class="btn btn-sm">"Reserve IP"</button>
                                 </ActionForm>
                             </div>
+                            <ErrorToast value=set_group_action.value() />
+                            <ErrorToast value=unblock_action.value() />
+                            <ErrorToast value=block_action.value() />
+                            <ErrorToast value=reserve_action.value() />
 
                             {
                                 let device_ip = d.ip.clone();

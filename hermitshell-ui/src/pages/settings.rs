@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
+use crate::components::toast::ErrorToast;
 use crate::format_uptime;
 use crate::server_fns::{
     RemoveReservation, SetLogConfig, SetRunzeroConfig, SyncRunzero,
@@ -111,6 +112,7 @@ pub fn Settings() -> impl IntoView {
                                                             <input type="hidden" name="mac" value={mac} />
                                                             <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
                                                         </ActionForm>
+                                                        <ErrorToast value=remove_action.value() />
                                                     </td>
                                                 </tr>
                                             }
@@ -175,6 +177,7 @@ pub fn Settings() -> impl IntoView {
                                         <button type="submit" class="btn btn-primary btn-sm">"Save Log Settings"</button>
                                     </div>
                                 </ActionForm>
+                                <ErrorToast value=log_action.value() />
                             </div>
                         }.into_any()
                     }
@@ -232,6 +235,8 @@ pub fn Settings() -> impl IntoView {
                                 <ActionForm action=sync_action attr:style="margin-top: 0.5rem;">
                                     <button type="submit" class="btn btn-sm">"Sync Now"</button>
                                 </ActionForm>
+                                <ErrorToast value=runzero_action.value() />
+                                <ErrorToast value=sync_action.value() />
                             </div>
                         }.into_any()
                     }
@@ -369,6 +374,9 @@ pub fn Settings() -> impl IntoView {
                                 <ActionForm action=speed_test_action attr:style="margin-top: 0.5rem;">
                                     <button type="submit" class="btn btn-sm">"Run Speed Test"</button>
                                 </ActionForm>
+                                <ErrorToast value=qos_action.value() />
+                                <ErrorToast value=test_url_action.value() />
+                                <ErrorToast value=speed_test_action.value() />
                             </div>
                         }.into_any()
                     }

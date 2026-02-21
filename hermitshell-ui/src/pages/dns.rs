@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
+use crate::components::toast::ErrorToast;
 use crate::server_fns::ToggleAdBlocking;
 
 #[component]
@@ -41,6 +42,7 @@ pub fn Dns() -> impl IntoView {
                                         <button type="submit" class="btn btn-sm">{toggle_label}</button>
                                     </ActionForm>
                                 </div>
+                                <ErrorToast value=ad_action.value() />
                             </div>
 
                             <div class="settings-section">

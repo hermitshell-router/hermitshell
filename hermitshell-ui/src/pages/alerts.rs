@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
+use crate::components::toast::ErrorToast;
 use crate::server_fns::{AcknowledgeAlert, AcknowledgeAllAlerts};
 
 fn format_timestamp(ts: i64) -> String {
@@ -56,6 +57,7 @@ pub fn Alerts() -> impl IntoView {
                     <button type="submit" class="btn btn-sm">"Acknowledge All"</button>
                 </ActionForm>
             </div>
+            <ErrorToast value=ack_all_action.value() />
             <Suspense fallback=move || view! { <p>"Loading..."</p> }>
                 {move || alerts.get().map(|result| match result {
                     Ok(alert_list) => {
@@ -99,6 +101,7 @@ pub fn Alerts() -> impl IntoView {
                                                         } else {
                                                             view! { <span class="muted">"acked"</span> }.into_any()
                                                         }}
+                                                        <ErrorToast value=ack_action.value() />
                                                     </td>
                                                 </tr>
                                             }
