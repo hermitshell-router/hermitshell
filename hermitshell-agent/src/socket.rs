@@ -35,6 +35,39 @@ fn is_blocked_config_key(key: &str) -> bool {
     BLOCKED_CONFIG_KEYS.contains(&key)
 }
 
+type LoginRateLimit = Arc<Mutex<(u32, Option<std::time::Instant>)>>;
+
+fn check_login_rate_limit(rate_limit: &LoginRateLimit) -> Option<String> {
+    let state = rate_limit.lock().unwrap();
+    let (failures, last_failure) = &*state;
+    if *failures == 0 {
+        return None;
+    }
+    let Some(last) = last_failure else {
+        return None;
+    };
+    let backoff_secs = std::cmp::min(1u64 << (failures - 1), 60);
+    let elapsed = last.elapsed().as_secs();
+    if elapsed < backoff_secs {
+        let remaining = backoff_secs - elapsed;
+        Some(format!("Too many attempts. Try again in {}s.", remaining))
+    } else {
+        None
+    }
+}
+
+fn record_login_failure(rate_limit: &LoginRateLimit) {
+    let mut state = rate_limit.lock().unwrap();
+    state.0 += 1;
+    state.1 = Some(std::time::Instant::now());
+}
+
+fn reset_login_rate_limit(rate_limit: &LoginRateLimit) {
+    let mut state = rate_limit.lock().unwrap();
+    state.0 = 0;
+    state.1 = None;
+}
+
 #[derive(Debug, Deserialize)]
 struct Request {
     method: String,
@@ -178,6 +211,8 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
 
     info!(path = socket_path, "socket server listening");
 
+    let login_rate_limit: LoginRateLimit = Arc::new(Mutex::new((0, None)));
+
     loop {
         let (stream, _) = listener.accept().await?;
         let db = db.clone();
@@ -186,23 +221,24 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
         let wan = wan_iface.clone();
         let lan = lan_iface.clone();
         let ltx = log_tx.clone();
+        let lrl = login_rate_limit.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_client(stream, db, start, blocky, wan, lan, ltx).await {
+            if let Err(e) = handle_client(stream, db, start, blocky, wan, lan, ltx, lrl).await {
                 warn!(error = %e, "client error");
             }
         });
     }
 }
 
-async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>) -> Result<()> {
+async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: LoginRateLimit) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
 
     while reader.read_line(&mut line).await? > 0 {
         let response = match serde_json::from_str::<Request>(&line) {
-            Ok(req) => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx),
+            Ok(req) => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit),
             Err(e) => Response::err(&format!("Invalid JSON: {}", e)),
         };
 
@@ -215,7 +251,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
     Ok(())
 }
 
-fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: &Arc<Mutex<BlockyManager>>, wan_iface: &str, lan_iface: &str, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>) -> Response {
+fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: &Arc<Mutex<BlockyManager>>, wan_iface: &str, lan_iface: &str, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: &LoginRateLimit) -> Response {
     // Validate MAC early if provided (before any DB lookups)
     if let Some(ref mac) = req.mac {
         if let Err(e) = nftables::validate_mac(mac) {
@@ -1124,6 +1160,10 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             resp
         }
         "verify_password" => {
+            if let Some(msg) = check_login_rate_limit(login_rate_limit) {
+                warn!("verify_password rate-limited");
+                return Response::err(&msg);
+            }
             let Some(value) = req.value else {
                 return Response::err("value required");
             };
@@ -1135,6 +1175,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 Some(h) => h,
                 None => {
                     warn!("password verification failed");
+                    record_login_failure(login_rate_limit);
                     let mut resp = Response::ok();
                     resp.config_value = Some("false".to_string());
                     return resp;
@@ -1144,6 +1185,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 Ok(h) => h,
                 Err(_) => {
                     warn!("password verification failed");
+                    record_login_failure(login_rate_limit);
                     let mut resp = Response::ok();
                     resp.config_value = Some("false".to_string());
                     return resp;
@@ -1154,6 +1196,9 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 .is_ok();
             if !valid {
                 warn!("password verification failed");
+                record_login_failure(login_rate_limit);
+            } else {
+                reset_login_rate_limit(login_rate_limit);
             }
             let mut resp = Response::ok();
             resp.config_value = Some(if valid { "true" } else { "false" }.to_string());
@@ -1173,6 +1218,10 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             let existing_hash = db.get_config("admin_password_hash").ok().flatten();
             if let Some(ref hash_str) = existing_hash {
                 // Current password required to change
+                if let Some(msg) = check_login_rate_limit(login_rate_limit) {
+                    warn!("setup_password rate-limited");
+                    return Response::err(&msg);
+                }
                 let Some(current) = req.key else {
                     return Response::err("key required (current password)");
                 };
@@ -1185,8 +1234,10 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                     .is_err()
                 {
                     warn!("setup_password rejected: wrong current password");
+                    record_login_failure(login_rate_limit);
                     return Response::err("wrong current password");
                 }
+                reset_login_rate_limit(login_rate_limit);
             }
             let salt = SaltString::generate(&mut rand::rngs::OsRng);
             let new_hash = match Argon2::default().hash_password(value.as_bytes(), &salt) {
