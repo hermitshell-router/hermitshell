@@ -1,5 +1,5 @@
-use leptos::*;
-use leptos_router::*;
+use leptos::prelude::*;
+use leptos_router::hooks::*;
 use crate::client;
 use crate::components::layout::Layout;
 use crate::format_bytes;
@@ -25,8 +25,8 @@ fn format_timestamp(ts: i64) -> String {
 pub fn DeviceDetail() -> impl IntoView {
     let params = use_params_map();
 
-    let device = create_resource(
-        move || params.with(|p| p.get("mac").cloned().unwrap_or_default()),
+    let device = Resource::new(
+        move || params.with(|p| p.get("mac").unwrap_or_default()),
         |mac| async move { client::get_device(&mac) },
     );
 
@@ -96,9 +96,9 @@ pub fn DeviceDetail() -> impl IntoView {
                                             <div class="detail-value">{d.runzero_manufacturer.clone().unwrap_or_else(|| "\u{2014}".to_string())}</div>
                                         </div>
                                     </div>
-                                }.into_view()
+                                }.into_any()
                             } else {
-                                view! { <span></span> }.into_view()
+                                view! { <span></span> }.into_any()
                             }}
 
                             <h2 class="section-header">"Actions"</h2>
@@ -118,9 +118,9 @@ pub fn DeviceDetail() -> impl IntoView {
                                             " "
                                             <button type="submit" class="btn btn-primary btn-sm">"Change Group"</button>
                                         </form>
-                                    }.into_view()
+                                    }.into_any()
                                 } else {
-                                    view! { <span></span> }.into_view()
+                                    view! { <span></span> }.into_any()
                                 }}
 
                                 {if group == "blocked" {
@@ -129,14 +129,14 @@ pub fn DeviceDetail() -> impl IntoView {
                                             <input type="hidden" name="mac" value={mac.clone()} />
                                             <button type="submit" class="btn btn-primary btn-sm">"Unblock"</button>
                                         </form>
-                                    }.into_view()
+                                    }.into_any()
                                 } else {
                                     view! {
                                         <form method="post" action="/api/block" style="display:inline">
                                             <input type="hidden" name="mac" value={mac.clone()} />
                                             <button type="submit" class="btn btn-danger btn-sm">"Block"</button>
                                         </form>
-                                    }.into_view()
+                                    }.into_any()
                                 }}
 
                                 <form method="post" action="/api/set-reservation" style="display:inline">
@@ -159,7 +159,7 @@ pub fn DeviceDetail() -> impl IntoView {
                                 view! {
                                     <h2 class="section-header">"Recent Connections"</h2>
                                     {if conn_logs.is_empty() {
-                                        view! { <p class="muted">"No connections recorded."</p> }.into_view()
+                                        view! { <p class="muted">"No connections recorded."</p> }.into_any()
                                     } else {
                                         view! {
                                             <table class="data-table">
@@ -182,12 +182,12 @@ pub fn DeviceDetail() -> impl IntoView {
                                                     }).collect_view()}
                                                 </tbody>
                                             </table>
-                                        }.into_view()
+                                        }.into_any()
                                     }}
 
                                     <h2 class="section-header">"Recent DNS Queries"</h2>
                                     {if dns_logs.is_empty() {
-                                        view! { <p class="muted">"No DNS queries recorded."</p> }.into_view()
+                                        view! { <p class="muted">"No DNS queries recorded."</p> }.into_any()
                                     } else {
                                         view! {
                                             <table class="data-table">
@@ -206,7 +206,7 @@ pub fn DeviceDetail() -> impl IntoView {
                                                     }).collect_view()}
                                                 </tbody>
                                             </table>
-                                        }.into_view()
+                                        }.into_any()
                                     }}
                                 }
                             }
@@ -216,7 +216,7 @@ pub fn DeviceDetail() -> impl IntoView {
                                 view! {
                                     <h2 class="section-header">"Recent Alerts"</h2>
                                     {if device_alerts.is_empty() {
-                                        view! { <p class="muted">"No alerts for this device."</p> }.into_view()
+                                        view! { <p class="muted">"No alerts for this device."</p> }.into_any()
                                     } else {
                                         view! {
                                             <table class="data-table">
@@ -241,13 +241,13 @@ pub fn DeviceDetail() -> impl IntoView {
                                                     }).collect_view()}
                                                 </tbody>
                                             </table>
-                                        }.into_view()
+                                        }.into_any()
                                     }}
                                 }
                             }
-                        }.into_view()
+                        }.into_any()
                     }
-                    Err(e) => view! { <p>"Error: " {e}</p> }.into_view(),
+                    Err(e) => view! { <p>"Error: " {e}</p> }.into_any(),
                 })}
             </Suspense>
         </Layout>

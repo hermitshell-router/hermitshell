@@ -1,31 +1,31 @@
-use leptos::*;
+use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
 use crate::format_uptime;
 
 #[component]
 pub fn Settings() -> impl IntoView {
-    let data = create_resource(
+    let data = Resource::new(
         || (),
         |_| async { client::get_status() },
     );
-    let reservations = create_resource(
+    let reservations = Resource::new(
         || (),
         |_| async { client::list_dhcp_reservations() },
     );
-    let log_config = create_resource(
+    let log_config = Resource::new(
         || (),
         |_| async { client::get_log_config() },
     );
-    let runzero_config = create_resource(
+    let runzero_config = Resource::new(
         || (),
         |_| async { client::get_runzero_config() },
     );
-    let analyzer_status = create_resource(
+    let analyzer_status = Resource::new(
         || (),
         |_| async { client::get_analyzer_status() },
     );
-    let qos_config = create_resource(
+    let qos_config = Resource::new(
         || (),
         |_| async { client::get_qos_config() },
     );
@@ -74,9 +74,9 @@ pub fn Settings() -> impl IntoView {
                                     <span class="settings-value">"0.1.0"</span>
                                 </div>
                             </div>
-                        }.into_view()
+                        }.into_any()
                     }
-                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_view(),
+                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
                 })}
             </Suspense>
 
@@ -113,9 +113,9 @@ pub fn Settings() -> impl IntoView {
                                     </tbody>
                                 </table>
                             </div>
-                        }.into_view()
+                        }.into_any()
                     }
-                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_view(),
+                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
                 })}
             </Suspense>
 
@@ -169,9 +169,9 @@ pub fn Settings() -> impl IntoView {
                                     </div>
                                 </form>
                             </div>
-                        }.into_view()
+                        }.into_any()
                     }
-                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_view(),
+                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
                 })}
             </Suspense>
 
@@ -223,9 +223,9 @@ pub fn Settings() -> impl IntoView {
                                     <button type="submit" class="btn btn-sm">"Sync Now"</button>
                                 </form>
                             </div>
-                        }.into_view()
+                        }.into_any()
                     }
-                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_view(),
+                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
                 })}
             </Suspense>
 
@@ -279,9 +279,9 @@ pub fn Settings() -> impl IntoView {
                                                 {counts_text}
                                             </span>
                                         </div>
-                                    }.into_view()
+                                    }.into_any()
                                 } else {
-                                    view! { <span></span> }.into_view()
+                                    view! { <span></span> }.into_any()
                                 }}
                                 {if !rule_statuses.is_empty() {
                                     view! {
@@ -293,14 +293,14 @@ pub fn Settings() -> impl IntoView {
                                                 </div>
                                             }
                                         }).collect_view()}
-                                    }.into_view()
+                                    }.into_any()
                                 } else {
-                                    view! { <span></span> }.into_view()
+                                    view! { <span></span> }.into_any()
                                 }}
                             </div>
-                        }.into_view()
+                        }.into_any()
                     }
-                    Err(_) => view! { <span></span> }.into_view(),
+                    Err(_) => view! { <span></span> }.into_any(),
                 })}
             </Suspense>
             <Suspense fallback=move || view! { <p>"Loading QoS config..."</p> }>
@@ -356,9 +356,9 @@ pub fn Settings() -> impl IntoView {
                                     <button type="submit" class="btn btn-sm">"Run Speed Test"</button>
                                 </form>
                             </div>
-                        }.into_view()
+                        }.into_any()
                     }
-                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_view(),
+                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
                 })}
             </Suspense>
         </Layout>

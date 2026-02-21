@@ -1,10 +1,10 @@
-use leptos::*;
+use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
 
 #[component]
 pub fn Wireguard() -> impl IntoView {
-    let data = create_resource(
+    let data = Resource::new(
         || (),
         |_| async { client::get_wireguard() },
     );
@@ -47,7 +47,7 @@ pub fn Wireguard() -> impl IntoView {
                             <div class="settings-section">
                                 <h3>"Peers"</h3>
                                 {if wg.peers.is_empty() {
-                                    view! { <p class="text-muted">"No peers configured."</p> }.into_view()
+                                    view! { <p class="text-muted">"No peers configured."</p> }.into_any()
                                 } else {
                                     view! {
                                         <table class="device-table">
@@ -64,21 +64,21 @@ pub fn Wireguard() -> impl IntoView {
                                                     let short_key = format!("{}...", &peer.public_key[..12]);
                                                     view! {
                                                         <tr>
-                                                            <td>{&peer.name}</td>
-                                                            <td>{&peer.ip}</td>
-                                                            <td><span class="group-badge">{&peer.device_group}</span></td>
+                                                            <td>{peer.name.clone()}</td>
+                                                            <td>{peer.ip.clone()}</td>
+                                                            <td><span class="group-badge">{peer.device_group.clone()}</span></td>
                                                             <td style="font-family:monospace;font-size:0.85em">{short_key}</td>
                                                         </tr>
                                                     }
                                                 }).collect_view()}
                                             </tbody>
                                         </table>
-                                    }.into_view()
+                                    }.into_any()
                                 }}
                             </div>
-                        }.into_view()
+                        }.into_any()
                     }
-                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_view(),
+                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
                 })}
             </Suspense>
         </Layout>

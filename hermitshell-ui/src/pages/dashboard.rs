@@ -1,4 +1,4 @@
-use leptos::*;
+use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
 use crate::components::stat_card::StatCard;
@@ -7,7 +7,7 @@ use crate::format_uptime;
 
 #[component]
 pub fn Dashboard() -> impl IntoView {
-    let data = create_resource(
+    let data = Resource::new(
         || (),
         |_| async move {
             let status = client::get_status();
@@ -29,7 +29,7 @@ pub fn Dashboard() -> impl IntoView {
                                 <div class="error">
                                     <p>{format!("Error loading dashboard: {}", e)}</p>
                                 </div>
-                            }.into_view()
+                            }.into_any()
                         }
                     }
                 })}
@@ -38,7 +38,7 @@ pub fn Dashboard() -> impl IntoView {
     }
 }
 
-fn render_dashboard(status: Status, mut devices: Vec<Device>) -> View {
+fn render_dashboard(status: Status, mut devices: Vec<Device>) -> AnyView {
     let total = devices.len();
     let quarantined = devices.iter().filter(|d| d.device_group == "quarantine").count();
     let blocked = devices.iter().filter(|d| d.device_group == "blocked").count();
@@ -91,12 +91,12 @@ fn render_dashboard(status: Status, mut devices: Vec<Device>) -> View {
                             <tr>
                                 <td><a href={device_link}>{hostname}</a></td>
                                 <td>{ip}</td>
-                                <td><span class={badge_class}>{&device.device_group}</span></td>
-                                <td><code>{&device.mac}</code></td>
+                                <td><span class={badge_class}>{device.device_group.clone()}</span></td>
+                                <td><code>{device.mac.clone()}</code></td>
                             </tr>
                         }
                     }).collect_view()}
                 </tbody>
             </table>
-    }.into_view()
+    }.into_any()
 }

@@ -1,4 +1,4 @@
-use leptos::*;
+use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
 
@@ -41,7 +41,7 @@ fn rule_display(rule: &str) -> &'static str {
 
 #[component]
 pub fn Alerts() -> impl IntoView {
-    let alerts = create_resource(
+    let alerts = Resource::new(
         || (),
         |_| async { client::list_alerts(None, 200) },
     );
@@ -57,7 +57,7 @@ pub fn Alerts() -> impl IntoView {
                 {move || alerts.get().map(|result| match result {
                     Ok(alert_list) => {
                         if alert_list.is_empty() {
-                            view! { <p class="muted">"No alerts."</p> }.into_view()
+                            view! { <p class="muted">"No alerts."</p> }.into_any()
                         } else {
                             view! {
                                 <table class="data-table">
@@ -88,9 +88,9 @@ pub fn Alerts() -> impl IntoView {
                                                                     <input type="hidden" name="id" value={a.id.to_string()} />
                                                                     <button type="submit" class="btn btn-sm">"Ack"</button>
                                                                 </form>
-                                                            }.into_view()
+                                                            }.into_any()
                                                         } else {
-                                                            view! { <span class="muted">"acked"</span> }.into_view()
+                                                            view! { <span class="muted">"acked"</span> }.into_any()
                                                         }}
                                                     </td>
                                                 </tr>
@@ -98,10 +98,10 @@ pub fn Alerts() -> impl IntoView {
                                         }).collect_view()}
                                     </tbody>
                                 </table>
-                            }.into_view()
+                            }.into_any()
                         }
                     }
-                    Err(e) => view! { <p>"Error: " {e}</p> }.into_view(),
+                    Err(e) => view! { <p>"Error: " {e}</p> }.into_any(),
                 })}
             </Suspense>
         </Layout>

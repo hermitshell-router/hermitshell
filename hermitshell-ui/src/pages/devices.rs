@@ -1,5 +1,5 @@
-use leptos::*;
-use leptos_router::*;
+use leptos::prelude::*;
+use leptos_router::hooks::*;
 use crate::client;
 use crate::components::layout::Layout;
 use crate::format_bytes;
@@ -10,7 +10,7 @@ const GROUPS: &[&str] = &["all", "quarantine", "trusted", "iot", "guest", "serve
 pub fn DeviceList() -> impl IntoView {
     let query = use_query_map();
 
-    let data = create_resource(
+    let data = Resource::new(
         || (),
         |_| async { client::list_devices() },
     );
@@ -19,7 +19,7 @@ pub fn DeviceList() -> impl IntoView {
         <Layout title="Devices" active_page="devices">
             <Suspense fallback=move || view! { <p>"Loading..."</p> }>
                 {move || {
-                    let filter = query.with(|q| q.get("group").cloned().unwrap_or_else(|| "all".to_string()));
+                    let filter = query.with(|q| q.get("group").unwrap_or_else(|| "all".to_string()));
 
                     data.get().map(|result| match result {
                         Ok(devices) => {
@@ -98,21 +98,21 @@ pub fn DeviceList() -> impl IntoView {
                                                                     " "
                                                                     <button type="submit" class="btn btn-primary btn-sm">"Approve"</button>
                                                                 </form>
-                                                            }.into_view()
+                                                            }.into_any()
                                                         } else if group == "blocked" {
                                                             view! {
                                                                 <form method="post" action="/api/unblock" style="display:inline">
                                                                     <input type="hidden" name="mac" value={mac.clone()} />
                                                                     <button type="submit" class="btn btn-primary btn-sm">"Unblock"</button>
                                                                 </form>
-                                                            }.into_view()
+                                                            }.into_any()
                                                         } else {
                                                             view! {
                                                                 <form method="post" action="/api/block" style="display:inline">
                                                                     <input type="hidden" name="mac" value={mac.clone()} />
                                                                     <button type="submit" class="btn btn-danger btn-sm">"Block"</button>
                                                                 </form>
-                                                            }.into_view()
+                                                            }.into_any()
                                                         }}
                                                     </td>
                                                 </tr>
@@ -120,9 +120,9 @@ pub fn DeviceList() -> impl IntoView {
                                         }).collect_view()}
                                     </tbody>
                                 </table>
-                            }.into_view()
+                            }.into_any()
                         }
-                        Err(e) => view! { <p>"Error: " {e}</p> }.into_view(),
+                        Err(e) => view! { <p>"Error: " {e}</p> }.into_any(),
                     })
                 }}
             </Suspense>

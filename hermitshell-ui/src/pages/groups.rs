@@ -1,4 +1,4 @@
-use leptos::*;
+use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
 
@@ -19,7 +19,7 @@ const GROUPS: &[GroupInfo] = &[
 
 #[component]
 pub fn Groups() -> impl IntoView {
-    let data = create_resource(
+    let data = Resource::new(
         || (),
         |_| async { client::list_devices() },
     );
@@ -31,14 +31,14 @@ pub fn Groups() -> impl IntoView {
                     Ok(devices) => {
                         render_groups(devices)
                     }
-                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_view(),
+                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
                 })}
             </Suspense>
         </Layout>
     }
 }
 
-fn render_groups(devices: Vec<crate::types::Device>) -> View {
+fn render_groups(devices: Vec<crate::types::Device>) -> AnyView {
     view! {
         <div class="group-grid">
             {GROUPS.iter().map(|g| {
@@ -133,5 +133,5 @@ fn render_groups(devices: Vec<crate::types::Device>) -> View {
                 </tbody>
             </table>
         </div>
-    }.into_view()
+    }.into_any()
 }

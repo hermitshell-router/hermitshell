@@ -1,10 +1,10 @@
-use leptos::*;
+use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
 
 #[component]
 pub fn PortForwarding() -> impl IntoView {
-    let data = create_resource(
+    let data = Resource::new(
         || (),
         |_| async { client::list_port_forwards() },
     );
@@ -86,9 +86,9 @@ pub fn PortForwarding() -> impl IntoView {
 
                             <h2 class="section-header">"DMZ Host"</h2>
                             <p>"Current DMZ: " {if dmz_ip.is_empty() { "None".to_string() } else { dmz_ip }}</p>
-                        }.into_view()
+                        }.into_any()
                     }
-                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_view(),
+                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
                 })}
             </Suspense>
         </Layout>

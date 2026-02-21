@@ -1,11 +1,11 @@
-use leptos::*;
+use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
 use crate::format_bytes;
 
 #[component]
 pub fn Traffic() -> impl IntoView {
-    let data = create_resource(
+    let data = Resource::new(
         || (),
         |_| async { client::list_devices() },
     );
@@ -17,14 +17,14 @@ pub fn Traffic() -> impl IntoView {
                     Ok(devices) => {
                         render_traffic(devices)
                     }
-                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_view(),
+                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
                 })}
             </Suspense>
         </Layout>
     }
 }
 
-fn render_traffic(mut devices: Vec<crate::types::Device>) -> View {
+fn render_traffic(mut devices: Vec<crate::types::Device>) -> AnyView {
     let total_rx: i64 = devices.iter().map(|d| d.rx_bytes).sum();
     let total_tx: i64 = devices.iter().map(|d| d.tx_bytes).sum();
 
@@ -70,7 +70,7 @@ fn render_traffic(mut devices: Vec<crate::types::Device>) -> View {
                             <tr>
                                 <td><a href={device_link}>{hostname}</a></td>
                                 <td>{ip}</td>
-                                <td><span class={badge_class}>{&d.device_group}</span></td>
+                                <td><span class={badge_class}>{d.device_group.clone()}</span></td>
                                 <td>{format_bytes(d.rx_bytes)}</td>
                                 <td>{format_bytes(d.tx_bytes)}</td>
                                 <td>{format_bytes(total)}</td>
@@ -80,5 +80,5 @@ fn render_traffic(mut devices: Vec<crate::types::Device>) -> View {
                 </tbody>
             </table>
         </div>
-    }.into_view()
+    }.into_any()
 }

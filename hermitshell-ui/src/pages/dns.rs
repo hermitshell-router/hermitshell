@@ -1,10 +1,10 @@
-use leptos::*;
+use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
 
 #[component]
 pub fn Dns() -> impl IntoView {
-    let data = create_resource(
+    let data = Resource::new(
         || (),
         |_| async { client::get_status() },
     );
@@ -51,9 +51,9 @@ pub fn Dns() -> impl IntoView {
                                     <span class="settings-value">"Active"</span>
                                 </div>
                             </div>
-                        }.into_view()
+                        }.into_any()
                     }
-                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_view(),
+                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
                 })}
             </Suspense>
         </Layout>

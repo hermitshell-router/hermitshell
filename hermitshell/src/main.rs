@@ -1,7 +1,7 @@
 use axum::response::IntoResponse;
 use axum::extract::Form;
 use axum::Router;
-use leptos::*;
+use leptos::config::get_configuration;
 use leptos_axum::{generate_route_list, LeptosRoutes};
 use serde::Deserialize;
 
@@ -295,7 +295,7 @@ async fn main() {
         .install_default()
         .expect("failed to install rustls crypto provider");
 
-    let conf = get_configuration(None).await.unwrap();
+    let conf = get_configuration(None).unwrap();
     let leptos_options = conf.leptos_options;
     let routes = generate_route_list(App);
 
@@ -338,19 +338,36 @@ async fn main() {
         .expect("failed to parse TLS key")
         .expect("no private key found");
 
-    let tls_config = axum_server::tls_rustls::RustlsConfig::from_der(
-        certs.into_iter().map(|c| c.to_vec()).collect(),
-        key.secret_der().to_vec(),
-    ).await.expect("invalid TLS config");
+    let tls_config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .expect("invalid TLS config");
+    let tls_acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(tls_config));
 
     // HTTPS on port 443
     let https_addr = std::net::SocketAddr::from(([0, 0, 0, 0], 443));
     let https_app = app.clone();
     tokio::spawn(async move {
-        axum_server::bind_rustls(https_addr, tls_config)
-            .serve(https_app.into_make_service())
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind(https_addr).await.unwrap();
+        loop {
+            let (stream, _addr) = match listener.accept().await {
+                Ok(conn) => conn,
+                Err(_) => continue,
+            };
+            let acceptor = tls_acceptor.clone();
+            let app = https_app.clone();
+            tokio::spawn(async move {
+                let tls_stream = match acceptor.accept(stream).await {
+                    Ok(s) => s,
+                    Err(_) => return,
+                };
+                let io = hyper_util::rt::TokioIo::new(tls_stream);
+                let service = hyper_util::service::TowerToHyperService::new(app);
+                let builder = hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new());
+                let conn = builder.serve_connection(io, service);
+                let _ = conn.await;
+            });
+        }
     });
 
     // HTTP on port 80 -- redirect to HTTPS
