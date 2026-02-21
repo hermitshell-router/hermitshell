@@ -46,6 +46,15 @@ pub async fn logout() -> Result<(), ServerFnError> {
 }
 
 #[server]
+pub async fn toggle_wireguard(enabled: String) -> Result<(), ServerFnError> {
+    let enabled = enabled == "true";
+    crate::client::set_wireguard_enabled(enabled)
+        .map_err(|e| ServerFnError::new(e))?;
+    leptos_axum::redirect("/wireguard");
+    Ok(())
+}
+
+#[server]
 pub async fn toggle_ad_blocking(enabled: String) -> Result<(), ServerFnError> {
     let enabled = enabled == "true";
     crate::client::set_ad_blocking(enabled)

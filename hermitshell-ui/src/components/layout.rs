@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use crate::server_fns::Logout;
 
 #[component]
 pub fn Layout(
@@ -6,6 +7,8 @@ pub fn Layout(
     #[prop(into)] active_page: String,
     children: Children,
 ) -> impl IntoView {
+    let logout_action = ServerAction::<Logout>::new();
+
     let pages = vec![
         ("Dashboard", "/"),
         ("Devices", "/devices"),
@@ -41,6 +44,11 @@ pub fn Layout(
                                 }
                             }).collect_view()}
                         </ul>
+                        <div class="sidebar-footer">
+                            <ActionForm action=logout_action>
+                                <button type="submit" class="btn btn-sm btn-logout">"Logout"</button>
+                            </ActionForm>
+                        </div>
                     </nav>
                     <main class="main-content">
                         <h1 class="page-title">{title}</h1>

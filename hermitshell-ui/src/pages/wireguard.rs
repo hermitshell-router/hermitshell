@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
+use crate::server_fns::ToggleWireguard;
 
 #[component]
 pub fn Wireguard() -> impl IntoView {
@@ -19,6 +20,7 @@ pub fn Wireguard() -> impl IntoView {
                         let toggle_value = if wg.enabled { "false" } else { "true" };
                         let toggle_label = if wg.enabled { "Disable" } else { "Enable" };
                         let pubkey_display = wg.public_key.clone().unwrap_or_else(|| "\u{2014}".to_string());
+                        let wg_action = ServerAction::<ToggleWireguard>::new();
 
                         view! {
                             <div class="settings-section">
@@ -37,10 +39,10 @@ pub fn Wireguard() -> impl IntoView {
                                 </div>
                                 <div class="settings-row">
                                     <span class="settings-label">"Toggle"</span>
-                                    <form method="post" action="/api/wireguard" style="display:inline">
+                                    <ActionForm action=wg_action attr:style="display:inline">
                                         <input type="hidden" name="enabled" value={toggle_value} />
                                         <button type="submit" class="btn btn-sm">{toggle_label}</button>
-                                    </form>
+                                    </ActionForm>
                                 </div>
                             </div>
 
