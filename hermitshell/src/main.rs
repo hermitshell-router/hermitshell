@@ -30,7 +30,7 @@ async fn auth_middleware(
     let path = req.uri().path().to_string();
 
     if path == "/login" || path == "/setup" || path == "/style.css"
-        || path == "/api/login" || path == "/api/setup_password"
+        || path.starts_with("/api/login") || path.starts_with("/api/setup_password")
     {
         return next.run(req).await;
     }

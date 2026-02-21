@@ -44,10 +44,10 @@ Items tracked in `docs/SECURITY.md` with issue numbers.
 
 ### Web UI Improvements
 
-- [ ] Error flash messages on form submissions (#26)
-- [ ] Audit trail for admin actions
-- [ ] Device nicknames / tagging
-- [ ] Confirmation dialogs for destructive actions (block, delete)
+- [x] Error flash messages on form submissions (#26)
+- [x] Audit trail for admin actions
+- [x] Device nicknames / tagging
+- [x] Confirmation dialogs for destructive actions (block, delete)
 
 ### Operational Features
 

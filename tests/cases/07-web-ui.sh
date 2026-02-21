@@ -15,11 +15,23 @@ assert_match "$response" "200|30[0-9]" "HTTPS responds"
 response=$(vm_exec router "curl -s -o /dev/null -w '%{http_code}' http://localhost/" 2>/dev/null || echo "000")
 assert_match "$response" "30[0-9]|000" "HTTP redirects or refused"
 
+# Get the setup form action URL (Leptos appends a hash to server fn paths)
+setup_action=$(vm_exec router "curl -s -k -L https://localhost/setup | grep -oP 'action=\"[^\"]*setup_password[^\"]*\"' | head -1 | grep -oP '/api/[^\"]*'")
+if [ -z "$setup_action" ]; then
+    setup_action="/api/setup_password"
+fi
+
 # Setup: set password first
-vm_exec router "curl -s -k -X POST -d 'password=testpass123&confirm=testpass123' https://localhost/api/setup" >/dev/null 2>&1
+vm_exec router "curl -s -k -X POST -d 'password=testpass123&confirm=testpass123' https://localhost${setup_action}" >/dev/null 2>&1
+
+# Get the login form action URL
+login_action=$(vm_exec router "curl -s -k -L https://localhost/login | grep -oP 'action=\"[^\"]*login[^\"]*\"' | head -1 | grep -oP '/api/[^\"]*'")
+if [ -z "$login_action" ]; then
+    login_action="/api/login"
+fi
 
 # Login to get session cookie
-vm_exec router "curl -s -k -c /tmp/cookies -X POST -d 'password=testpass123' https://localhost/api/login" >/dev/null 2>&1
+vm_exec router "curl -s -k -c /tmp/cookies -X POST -d 'password=testpass123' https://localhost${login_action}" >/dev/null 2>&1
 
 # Check pages with session cookie
 response=$(vm_exec router "curl -s -k -b /tmp/cookies https://localhost/")
