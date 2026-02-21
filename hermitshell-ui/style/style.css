@@ -307,3 +307,32 @@ select {
     80% { opacity: 1; transform: translateX(0); }
     100% { opacity: 0; transform: translateX(100%); }
 }
+
+.confirm-dialog {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    max-width: 400px;
+}
+
+.confirm-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.confirm-dialog h3 {
+    margin-bottom: 0.75rem;
+}
+
+.confirm-dialog p {
+    margin-bottom: 1rem;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+.confirm-dialog .dialog-actions {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
+}

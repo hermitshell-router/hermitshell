@@ -166,10 +166,21 @@ pub fn DeviceDetail() -> impl IntoView {
                                     }.into_any()
                                 } else {
                                     view! {
-                                        <ActionForm action=block_action attr:style="display:inline">
-                                            <input type="hidden" name="mac" value={mac_for_block_unblock} />
-                                            <button type="submit" class="btn btn-danger btn-sm">"Block"</button>
-                                        </ActionForm>
+                                        <button type="button"
+                                            class="btn btn-danger btn-sm"
+                                            onclick="this.nextElementSibling.showModal()">"Block"</button>
+                                        <dialog class="confirm-dialog">
+                                            <h3>"Block Device?"</h3>
+                                            <p>"This device will lose all network access."</p>
+                                            <div class="dialog-actions">
+                                                <button type="button" class="btn btn-sm"
+                                                    onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                <ActionForm action=block_action>
+                                                    <input type="hidden" name="mac" value={mac_for_block_unblock} />
+                                                    <button type="submit" class="btn btn-danger btn-sm">"Confirm Block"</button>
+                                                </ActionForm>
+                                            </div>
+                                        </dialog>
                                     }.into_any()
                                 }}
 
