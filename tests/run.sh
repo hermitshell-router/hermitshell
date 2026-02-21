@@ -192,6 +192,12 @@ vm_sudo router "chmod 666 /run/hermitshell/agent.sock" || true
 run_phase "rate-limit" \
     "cases/30-login-rate-limiting.sh"
 
+# Session TTL — restart container to clear web UI rate limit state
+vm_sudo router "docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --network host -v /run/hermitshell:/run/hermitshell hermitshell:latest" || true
+vm_sudo router "chmod 666 /run/hermitshell/agent.sock" || true
+run_phase "session-ttl" \
+    "cases/31-session-ttl.sh"
+
 test_time=$((SECONDS - test_start_time))
 
 # Cleanup

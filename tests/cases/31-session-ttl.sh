@@ -52,6 +52,12 @@ assert_contains "$result" '"ok":false' "refresh_session requires value"
 # --- Web UI integration tests ---
 require_docker
 
+# Reset agent rate limit (may be dirty from prior rate-limit test)
+_reset_rate_limit() {
+    vm_exec router "echo '{\"method\":\"verify_password\",\"value\":\"testpass123\"}' | socat - UNIX-CONNECT:$SOCK" 2>/dev/null | grep -q '"config_value":"true"'
+}
+wait_for 15 "Agent rate limit cleared" _reset_rate_limit
+
 # Get the login form action URL
 login_action=$(vm_exec router "curl -s -k -L https://localhost/login | grep -oP 'action=\"[^\"]*login[^\"]*\"' | head -1 | grep -oP '/api/[^\"]*'")
 if [ -z "$login_action" ]; then
