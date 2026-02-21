@@ -63,6 +63,7 @@ struct Request {
     upload_mbps: Option<u32>,
     download_mbps: Option<u32>,
     url: Option<String>,
+    nickname: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -118,6 +119,8 @@ struct Response {
     analyzer_status: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     qos_config: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    audit_logs: Option<Vec<crate::db::AuditEntry>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -147,10 +150,10 @@ struct WgPeerInfo {
 
 impl Response {
     fn ok() -> Self {
-        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None, tls_cert_pem: None, tls_key_pem: None, runzero_config: None, alerts: None, alert: None, analyzer_status: None, qos_config: None }
+        Self { ok: true, error: None, devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None, tls_cert_pem: None, tls_key_pem: None, runzero_config: None, alerts: None, alert: None, analyzer_status: None, qos_config: None, audit_logs: None }
     }
     fn err(msg: &str) -> Self {
-        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None, tls_cert_pem: None, tls_key_pem: None, runzero_config: None, alerts: None, alert: None, analyzer_status: None, qos_config: None }
+        Self { ok: false, error: Some(msg.to_string()), devices: None, device: None, status: None, ad_blocking_enabled: None, subnet_id: None, device_ipv4: None, device_ipv6_ula: None, is_new: None, wireguard: None, dhcp_reservations: None, port_forwards: None, dmz_ip: None, config_value: None, connection_logs: None, dns_logs: None, log_config: None, ipv6_pinholes: None, tls_cert_pem: None, tls_key_pem: None, runzero_config: None, alerts: None, alert: None, analyzer_status: None, qos_config: None, audit_logs: None }
     }
 }
 
@@ -1516,6 +1519,29 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                     resp
                 }
                 Err(e) => Response::err(&format!("speed test failed: {}", e)),
+            }
+        }
+        "log_audit" => {
+            let Some(ref action) = req.value else {
+                return Response::err("value required (action name)");
+            };
+            let detail = req.key.as_deref().unwrap_or("");
+            let db = db.lock().unwrap();
+            match db.log_audit(action, detail) {
+                Ok(()) => Response::ok(),
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
+        "list_audit_logs" => {
+            let limit = req.limit.unwrap_or(200).min(1000);
+            let db = db.lock().unwrap();
+            match db.list_audit_logs(limit) {
+                Ok(entries) => {
+                    let mut resp = Response::ok();
+                    resp.audit_logs = Some(entries);
+                    resp
+                }
+                Err(e) => Response::err(&e.to_string()),
             }
         }
         _ => Response::err("unknown method"),

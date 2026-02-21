@@ -112,6 +112,14 @@ CREATE INDEX IF NOT EXISTS idx_alerts_device ON alerts(device_mac);
 CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at);
 CREATE INDEX IF NOT EXISTS idx_conn_logs_device_started ON connection_logs(device_ip, started_at);
 CREATE INDEX IF NOT EXISTS idx_dns_logs_device_ts ON dns_logs(device_ip, ts);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    action TEXT NOT NULL,
+    detail TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
 "#;
 
 #[derive(Debug, Clone, Serialize)]
@@ -194,6 +202,14 @@ pub struct Alert {
     pub details: Option<String>,
     pub created_at: i64,
     pub acknowledged: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditEntry {
+    pub id: i64,
+    pub action: String,
+    pub detail: String,
+    pub created_at: i64,
 }
 
 pub struct Db {
@@ -1029,5 +1045,30 @@ impl Db {
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs() as i64 - retention_secs;
         Ok(self.conn.execute("DELETE FROM alerts WHERE created_at < ?1", [cutoff])?)
+    }
+
+    pub fn log_audit(&self, action: &str, detail: &str) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?.as_secs() as i64;
+        self.conn.execute(
+            "INSERT INTO audit_log (action, detail, created_at) VALUES (?1, ?2, ?3)",
+            (action, detail, now),
+        )?;
+        Ok(())
+    }
+
+    pub fn list_audit_logs(&self, limit: i64) -> Result<Vec<AuditEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, action, detail, created_at FROM audit_log ORDER BY created_at DESC LIMIT ?1"
+        )?;
+        let entries = stmt.query_map([limit], |row| {
+            Ok(AuditEntry {
+                id: row.get(0)?,
+                action: row.get(1)?,
+                detail: row.get(2)?,
+                created_at: row.get(3)?,
+            })
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(entries)
     }
 }
