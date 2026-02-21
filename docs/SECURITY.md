@@ -40,7 +40,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Use `mac.verify_slice(&hex::decode(sig))` instead of comparing hex strings.
 
-**Note:** This logic moved from the web UI to the agent (`socket.rs` `verify_session`). The non-constant-time comparison was carried forward. The attack surface is now a Unix socket (`0660 root:root`) rather than an HTTPS endpoint, making timing attacks even less practical.
+**Note:** This logic moved from the web UI to the agent (`socket.rs` `verify_session`). The non-constant-time comparison was carried forward and also exists in the new `refresh_session` handler. The attack surface is now a Unix socket (`0660 root:root`) rather than an HTTPS endpoint, making timing attacks even less practical.
 
 ## 4. Self-signed TLS certificate
 
@@ -83,6 +83,8 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** Older browsers that don't enforce `SameSite` are vulnerable. A malicious page could trick the user into submitting forms (blocking devices, changing groups, adding port forwards).
 
 **Proper fix:** Add a per-session CSRF token to all forms and validate it server-side.
+
+**Status: Fixed.** Origin-based CSRF protection middleware validates `Sec-Fetch-Site` header (preferred) and `Origin` vs `Host` header (fallback) on all non-safe HTTP methods. Same-origin requests are allowed; cross-origin requests return 403. Requests with neither header (non-browser clients like curl) are allowed through. This provides equivalent protection to CSRF tokens for all browsers that send `Sec-Fetch-Site` (Chrome 76+, Firefox 90+, Safari 16.4+) or `Origin` headers.
 
 ## 8. No rate limiting on login
 
@@ -440,7 +442,27 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** The IP validation is sufficient for the threat model. The admin already has full router access, so SSRF provides no privilege escalation. The validation prevents accidental misconfiguration rather than a real attack vector.
 
-## 39. Login rate limit state is in-memory only
+## 39. refresh_session only checks absolute timeout, not idle timeout
+
+**What:** The `refresh_session` IPC method verifies the HMAC and checks the absolute timeout (8 hours), but does not check the idle timeout (30 minutes). It will reissue a token for any session that hasn't exceeded its absolute lifetime, regardless of how long it has been idle.
+
+**Why:** The auth middleware always calls `verify_session` (which checks both idle and absolute timeouts) before calling `refresh_session`. An idle-expired token is rejected at the `verify_session` step and never reaches `refresh_session`.
+
+**Risk:** A direct IPC caller (not going through the web UI middleware) could refresh an idle-expired token by calling `refresh_session` directly, bypassing the idle timeout. The caller would need Unix socket access (`0660 root:root`).
+
+**Proper fix:** Add idle timeout checking to `refresh_session` so it is self-contained. This would make the IPC API consistent — both methods enforce both timeouts.
+
+## 40. Stateless sessions cannot be individually revoked
+
+**What:** Sessions are stateless HMAC tokens with no server-side session store. There is no way to revoke a specific session — the only mechanism is rotating `session_secret`, which invalidates all sessions.
+
+**Why:** Stateless tokens were chosen to avoid per-request database writes for session tracking. The router admin panel has a single admin user, so per-session revocation is less critical than for multi-user systems.
+
+**Risk:** If a session token is stolen, it remains valid until it expires (up to 8 hours absolute). Logout clears the client's cookie but the token itself is still valid if replayed. On a LAN-only appliance with a single admin, the practical risk is low.
+
+**Proper fix:** Add a server-side session revocation list (a small in-memory set of revoked token prefixes checked during `verify_session`). Or switch to server-side session storage if multi-user support is added.
+
+## 41. Login rate limit state is in-memory only
 
 **What:** The exponential backoff counters for `verify_password` and `setup_password` are stored in process memory. Restarting the agent or web UI container resets all rate limiting state.
 
@@ -450,7 +472,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Acceptable for the threat model — root access is already game over. If persistence is needed later, store failure counts in SQLite with a TTL column.
 
-## 40. Web UI rate limiting uses global counter, not per-IP
+## 42. Web UI rate limiting uses global counter, not per-IP
 
 **What:** The web UI rate limit middleware uses a single global `(failures, last_failure)` counter rather than tracking per source IP.
 
@@ -460,7 +482,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Add `X-Forwarded-For` support: configure the HTTPS listener to inject the real client IP, then switch the middleware to per-IP tracking. Alternatively, move the web UI out of Docker to access peer addresses directly.
 
-## 41. setup_password not rate-limited at web UI layer
+## 43. setup_password not rate-limited at web UI layer
 
 **What:** The web UI rate limit middleware only applies to `/api/login*` paths, not `/api/setup_password*`. The agent-side rate limiter still protects `setup_password`.
 
