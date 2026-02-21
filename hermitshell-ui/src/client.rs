@@ -197,6 +197,11 @@ pub fn verify_session(cookie: &str) -> Result<bool, String> {
     Ok(resp.config_value.as_deref() == Some("true"))
 }
 
+pub fn refresh_session(cookie: &str) -> Result<String, String> {
+    let resp = ok_or_err(send(json!({"method": "refresh_session", "value": cookie}))?)?;
+    resp.config_value.ok_or_else(|| "no cookie in response".to_string())
+}
+
 pub fn get_tls_config() -> Result<(String, String), String> {
     let resp = ok_or_err(send(json!({"method": "get_tls_config"}))?)?;
     let cert = resp.tls_cert_pem.ok_or("no cert in response")?;
