@@ -198,6 +198,9 @@ vm_sudo router "chmod 666 /run/hermitshell/agent.sock" || true
 run_phase "session-ttl" \
     "cases/31-session-ttl.sh"
 
+run_phase "csrf" \
+    "cases/32-csrf-protection.sh"
+
 test_time=$((SECONDS - test_start_time))
 
 # Cleanup
