@@ -435,3 +435,33 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** SSRF — if the admin configures a URL pointing to an internal service (e.g., `http://10.0.0.5:8080/admin`), the router will make a request to it on the admin's behalf. Mitigated by rejecting private/loopback IP ranges (10.x, 172.16-31.x, 192.168.x, 127.x, ::1, fd00::) in the URL.
 
 **Proper fix:** The IP validation is sufficient for the threat model. The admin already has full router access, so SSRF provides no privilege escalation. The validation prevents accidental misconfiguration rather than a real attack vector.
+
+## 39. Login rate limit state is in-memory only
+
+**What:** The exponential backoff counters for `verify_password` and `setup_password` are stored in process memory. Restarting the agent or web UI container resets all rate limiting state.
+
+**Why:** Avoids DB schema changes, prevents permanent lockout on a single-admin appliance, and keeps the implementation simple.
+
+**Risk:** An attacker with the ability to restart the agent process (requires root or systemd access) can clear the rate limit and resume brute-forcing. Also, a legitimate DoS of the agent (e.g., crashing it) would reset protection.
+
+**Proper fix:** Acceptable for the threat model — root access is already game over. If persistence is needed later, store failure counts in SQLite with a TTL column.
+
+## 40. Web UI rate limiting uses global counter, not per-IP
+
+**What:** The web UI rate limit middleware uses a single global `(failures, last_failure)` counter rather than tracking per source IP.
+
+**Why:** The web UI runs inside Docker. All connections arrive from the container's localhost — real client IPs are not available without `X-Forwarded-For` headers, which nothing in this architecture sets.
+
+**Risk:** A brute-force attack from one client locks out all clients, including the legitimate admin. On a single-admin LAN appliance this is low risk, but it means a malicious LAN device could DoS the admin UI by sending repeated wrong passwords.
+
+**Proper fix:** Add `X-Forwarded-For` support: configure the HTTPS listener to inject the real client IP, then switch the middleware to per-IP tracking. Alternatively, move the web UI out of Docker to access peer addresses directly.
+
+## 41. setup_password not rate-limited at web UI layer
+
+**What:** The web UI rate limit middleware only applies to `/api/login*` paths, not `/api/setup_password*`. The agent-side rate limiter still protects `setup_password`.
+
+**Why:** `setup_password` returns HTTP 500 for multiple non-brute-force reasons (password already set without current password, too short, too long). Counting these as failed login attempts caused false-positive lockouts during normal operation and broke integration tests.
+
+**Risk:** An attacker can brute-force the current password via `setup_password` without web UI rate limiting. The agent-side rate limiter still applies (shared counter with `verify_password`), so this is defense-in-depth reduction, not a bypass.
+
+**Proper fix:** Distinguish brute-force failures (wrong current password → HTTP 422) from validation errors (HTTP 500) in the middleware, and only count 422 responses as failures.
