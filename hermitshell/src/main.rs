@@ -1,3 +1,6 @@
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
 use axum::response::IntoResponse;
 use axum::Router;
 use leptos::config::get_configuration;
@@ -58,6 +61,56 @@ async fn auth_middleware(
     }
 }
 
+type RateLimitState = Arc<Mutex<(u32, Option<Instant>)>>;
+
+async fn rate_limit_middleware(
+    axum::extract::State(rate_limit): axum::extract::State<RateLimitState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let path = req.uri().path().to_string();
+
+    if !path.starts_with("/api/login") && !path.starts_with("/api/setup_password") {
+        return next.run(req).await;
+    }
+
+    // Check cooldown
+    {
+        let state = rate_limit.lock().unwrap();
+        let (failures, last) = &*state;
+        if *failures > 0 {
+            if let Some(last) = last {
+                let shift = std::cmp::min(*failures - 1, 63);
+                let backoff_secs = std::cmp::min(1u64 << shift, 60);
+                let elapsed = last.elapsed().as_secs();
+                if elapsed < backoff_secs {
+                    let remaining = backoff_secs - elapsed;
+                    return (
+                        axum::http::StatusCode::TOO_MANY_REQUESTS,
+                        [(axum::http::header::RETRY_AFTER, remaining.to_string())],
+                        format!("Too many attempts. Try again in {}s.", remaining),
+                    ).into_response();
+                }
+            }
+        }
+    }
+
+    let response = next.run(req).await;
+
+    let status = response.status();
+    {
+        let mut state = rate_limit.lock().unwrap();
+        if status.is_success() || status.is_redirection() {
+            *state = (0, None);
+        } else {
+            state.0 = state.0.saturating_add(1);
+            state.1 = Some(Instant::now());
+        }
+    }
+
+    response
+}
+
 #[tokio::main]
 async fn main() {
     rustls::crypto::ring::default_provider()
@@ -68,11 +121,17 @@ async fn main() {
     let leptos_options = conf.leptos_options;
     let routes = generate_route_list(App);
 
+    let rate_limit_state: RateLimitState = Arc::new(Mutex::new((0, None)));
+
     let app = Router::new()
         .route("/style.css", axum::routing::get(serve_css))
         .route("/api/backup/config", axum::routing::get(handle_backup_config))
         .leptos_routes(&leptos_options, routes, App)
         .layer(axum::middleware::from_fn(auth_middleware))
+        .layer(axum::middleware::from_fn_with_state(
+            rate_limit_state,
+            rate_limit_middleware,
+        ))
         .with_state(leptos_options);
 
     // Load TLS cert from agent
