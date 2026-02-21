@@ -37,6 +37,7 @@ fn is_blocked_config_key(key: &str) -> bool {
 
 type LoginRateLimit = Arc<Mutex<(u32, Option<std::time::Instant>)>>;
 
+/// Check if login is currently rate-limited. Returns error message if blocked.
 fn check_login_rate_limit(rate_limit: &LoginRateLimit) -> Option<String> {
     let state = rate_limit.lock().unwrap();
     let (failures, last_failure) = &*state;
@@ -46,7 +47,8 @@ fn check_login_rate_limit(rate_limit: &LoginRateLimit) -> Option<String> {
     let Some(last) = last_failure else {
         return None;
     };
-    let backoff_secs = std::cmp::min(1u64 << (failures - 1), 60);
+    let shift = std::cmp::min(*failures - 1, 63);
+    let backoff_secs = std::cmp::min(1u64 << shift, 60);
     let elapsed = last.elapsed().as_secs();
     if elapsed < backoff_secs {
         let remaining = backoff_secs - elapsed;
@@ -56,12 +58,14 @@ fn check_login_rate_limit(rate_limit: &LoginRateLimit) -> Option<String> {
     }
 }
 
+/// Record a failed login attempt.
 fn record_login_failure(rate_limit: &LoginRateLimit) {
     let mut state = rate_limit.lock().unwrap();
-    state.0 += 1;
+    state.0 = state.0.saturating_add(1);
     state.1 = Some(std::time::Instant::now());
 }
 
+/// Reset login rate limit on success.
 fn reset_login_rate_limit(rate_limit: &LoginRateLimit) {
     let mut state = rate_limit.lock().unwrap();
     state.0 = 0;
