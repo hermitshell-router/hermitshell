@@ -65,17 +65,17 @@ tc_eth1=$(vm_exec router "sudo tc qdisc show dev eth1")
 assert_contains "$tc_eth1" 'cake' "CAKE on eth1 before restart"
 
 # --- 10. Restart agent ---
-vagrant ssh router -c "sudo systemctl stop hermitshell-agent 2>/dev/null; sudo killall hermitshell-age hermitshell-dhc 2>/dev/null; true" 2>/dev/null || true
+vm_sudo router "systemctl stop hermitshell-agent 2>/dev/null; killall hermitshell-age hermitshell-dhc 2>/dev/null; true"
 
 agent_dead() {
     ! vm_exec router "pgrep -x hermitshell-age" | grep -q '[0-9]'
 }
 wait_for 5 "Agent stopped" agent_dead
 
-vagrant ssh router -c "sudo rm -f /run/hermitshell/*.sock && sudo systemctl restart hermitshell-agent" 2>/dev/null || true
+vm_sudo router "rm -f /run/hermitshell/*.sock && systemctl restart hermitshell-agent"
 
 socket_ready() {
-    vagrant ssh router -c "sudo chmod 666 /run/hermitshell/agent.sock" 2>/dev/null
+    vm_sudo router "chmod 666 /run/hermitshell/agent.sock"
     vm_exec router "echo '{\"method\":\"get_status\"}' | socat - $SOCK" | grep -q '"ok":true'
 }
 wait_for 15 "Agent socket ready after restart" socket_ready

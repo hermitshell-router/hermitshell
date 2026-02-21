@@ -31,8 +31,8 @@ assert_match "$device" '"tx_bytes":[1-9]' "tx_bytes tied to correct device MAC"
 assert_contains "$device" "\"ipv4\":\"$device_ip\"" "Device IP matches in record"
 
 # Verify nftables counter sets actually contain the device IP
-tx_set=$(vagrant ssh router -c "sudo nft list set inet traffic tx_devices" 2>/dev/null || echo "")
+tx_set=$(vm_sudo router "nft list set inet traffic tx_devices" || echo "")
 assert_contains "$tx_set" "$device_ip" "Device IP in nftables tx_devices counter set"
 
-rx_set=$(vagrant ssh router -c "sudo nft list set inet traffic rx_devices" 2>/dev/null || echo "")
+rx_set=$(vm_sudo router "nft list set inet traffic rx_devices" || echo "")
 assert_contains "$rx_set" "$device_ip" "Device IP in nftables rx_devices counter set"

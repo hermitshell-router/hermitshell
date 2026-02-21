@@ -10,7 +10,7 @@ assert_match "$lan_mac" "^[0-9a-f]" "Got LAN MAC address"
 device_ip=$(vm_exec lan "ip -4 addr show eth1 | grep inet | awk '{print \$2}' | cut -d/ -f1")
 
 # Verify device starts in quarantine nftables map
-vmap_before=$(vagrant ssh router -c "sudo nft list map inet filter device_groups_v4" 2>/dev/null || echo "")
+vmap_before=$(vm_sudo router "nft list map inet filter device_groups_v4" || echo "")
 assert_contains "$vmap_before" "${device_ip} : jump quarantine_fwd" "Device in quarantine_fwd before approval"
 
 # Approve device to trusted group
@@ -22,7 +22,7 @@ devices=$(vm_exec router 'echo "{\"method\":\"list_devices\"}" | socat - UNIX-CO
 assert_match "$devices" '"device_group":"trusted"' "Device group updated to trusted"
 
 # Verify nftables verdict map changed to trusted_fwd
-vmap_after=$(vagrant ssh router -c "sudo nft list map inet filter device_groups_v4" 2>/dev/null || echo "")
+vmap_after=$(vm_sudo router "nft list map inet filter device_groups_v4" || echo "")
 assert_contains "$vmap_after" "${device_ip} : jump trusted_fwd" "nftables map updated to trusted_fwd"
 
 # Trusted device should still reach internet

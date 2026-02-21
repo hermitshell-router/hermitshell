@@ -37,8 +37,8 @@ assert_match "$fwd_rules" "ip daddr ${device_ip} tcp dport 80 accept" "Forward c
 
 # Test actual traffic through the port forward:
 # Start a TCP listener on LAN VM port 80 that echoes a marker
-vagrant ssh lan -c "sudo bash -c 'echo PORT_FWD_OK | ncat -l -p 80 -w 5 &'" 2>/dev/null || \
-    vagrant ssh lan -c "sudo bash -c '(echo PORT_FWD_OK | socat - TCP-LISTEN:80,reuseaddr) &'" 2>/dev/null || true
+vm_sudo lan "echo PORT_FWD_OK | ncat -l -p 80 -w 5 &" || \
+    vm_sudo lan "(echo PORT_FWD_OK | socat - TCP-LISTEN:80,reuseaddr) &" || true
 
 # Connect from WAN VM through the router's WAN IP to test the forward
 router_wan_ip=$(vm_exec router "ip -4 addr show eth1 | grep inet | awk '{print \$2}' | cut -d/ -f1")

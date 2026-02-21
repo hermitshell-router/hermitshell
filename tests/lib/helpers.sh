@@ -5,15 +5,49 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-# Run command on VM (filters out Vagrant noise, preserves exit code)
+# --- SSH multiplexing setup ---
+# Use raw SSH with ControlMaster instead of vagrant ssh (~0.02s vs ~5s per call)
+TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SSH_SOCK_DIR="$HOME/.ssh/sockets"
+mkdir -p "$SSH_SOCK_DIR"
+SSH_COMMON="-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o LogLevel=ERROR -o ControlMaster=auto -o ControlPath=$SSH_SOCK_DIR/%r@%h:%p -o ControlPersist=300"
+
+# Resolve VM SSH connection details from vagrant ssh-config (cached to file)
+_SSH_CACHE_DIR="/tmp/hermit-ssh-cache"
+mkdir -p "$_SSH_CACHE_DIR"
+
+_vm_ssh_args() {
+    local vm=$1
+    local cache_file="$_SSH_CACHE_DIR/$vm"
+    if [ ! -f "$cache_file" ]; then
+        local cfg
+        cfg=$(cd "$TESTS_DIR" && vagrant ssh-config "$vm" 2>/dev/null)
+        local host port key user
+        host=$(echo "$cfg" | awk '/HostName/ {print $2}')
+        port=$(echo "$cfg" | awk '/Port/ {print $2}')
+        key=$(echo "$cfg" | awk '/IdentityFile/ {print $2}')
+        user=$(echo "$cfg" | awk '/User / {print $2}')
+        echo "-i $key -p $port ${user}@${host}" > "$cache_file"
+    fi
+    cat "$cache_file"
+}
+
+# Run command on VM via fast multiplexed SSH
 vm_exec() {
     local vm=$1
     shift
-    local output
-    output=$(vagrant ssh "$vm" -c "$*" 2>/dev/null)
-    local rc=$?
-    echo "$output" | grep -v "^==>" | grep -v "^\[fog\]"
-    return $rc
+    local args
+    args=$(_vm_ssh_args "$vm")
+    ssh $SSH_COMMON $args "$*" 2>/dev/null
+}
+
+# Run command on VM as root via fast multiplexed SSH
+vm_sudo() {
+    local vm=$1
+    shift
+    local args
+    args=$(_vm_ssh_args "$vm")
+    ssh $SSH_COMMON $args "sudo bash -c '$*'" 2>/dev/null
 }
 
 # Assert string matches regex
@@ -131,7 +165,7 @@ require_blocky() {
 
 require_nftables() {
     _check_ready() {
-        vagrant ssh router -c "sudo nft list tables" 2>/dev/null | grep -q 'inet filter'
+        vm_sudo router "nft list tables" 2>/dev/null | grep -q 'inet filter'
     }
     wait_for 10 "nftables inet filter loaded" _check_ready
 }

@@ -27,7 +27,8 @@ fi
 
 # --- Test import_config round-trip ---
 # Run entirely on router VM to avoid shell quoting issues with nested JSON
-round_trip=$(vagrant ssh router -c 'bash -s' 2>/dev/null <<'SCRIPT'
+args=$(_vm_ssh_args router)
+round_trip=$(ssh $SSH_COMMON $args 'bash -s' 2>/dev/null <<'SCRIPT'
 SOCK=/run/hermitshell/agent.sock
 
 # 1. Create test data

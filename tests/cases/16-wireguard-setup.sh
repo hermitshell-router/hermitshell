@@ -6,7 +6,7 @@ result=$(vm_exec router 'echo "{\"method\":\"set_wireguard_enabled\",\"enabled\"
 assert_match "$result" '"ok":true' "Enable WireGuard"
 
 # Verify wg0 interface exists
-wg_iface=$(vagrant ssh router -c "sudo ip link show wg0" 2>/dev/null || echo "")
+wg_iface=$(vm_sudo router "ip link show wg0" || echo "")
 assert_match "$wg_iface" "wg0" "wg0 interface exists"
 
 # Get WireGuard status
@@ -16,8 +16,8 @@ assert_match "$status" '"public_key"' "WireGuard has public key"
 assert_match "$status" '"listen_port":51820' "WireGuard listen port is 51820"
 
 # Generate a peer keypair on lan-vm
-peer_privkey=$(vagrant ssh lan -c "wg genkey" 2>/dev/null | tr -d '\r\n')
-peer_pubkey=$(vagrant ssh lan -c "echo '$peer_privkey' | wg pubkey" 2>/dev/null | tr -d '\r\n')
+peer_privkey=$(vm_exec lan "wg genkey" | tr -d '\r\n')
+peer_pubkey=$(vm_exec lan "echo '$peer_privkey' | wg pubkey" | tr -d '\r\n')
 assert_match "$peer_pubkey" "^[A-Za-z0-9+/]" "Generated peer public key"
 
 # Add peer
@@ -35,7 +35,7 @@ assert_match "$status" '"name":"test-laptop"' "Peer appears in status"
 assert_match "$status" '"device_group":"trusted"' "Peer group is trusted"
 
 # Verify peer is in wg show (use fixed-string match; pubkey has regex metacharacters)
-wg_show=$(vagrant ssh router -c "sudo wg show wg0" 2>/dev/null)
+wg_show=$(vm_sudo router "wg show wg0")
 if echo "$wg_show" | grep -qF "$peer_pubkey"; then
     echo -e "${GREEN}PASS${NC}: Peer in wg show output"
 else
@@ -45,7 +45,7 @@ else
 fi
 
 # Verify nftables has the peer in verdict map
-nft_map=$(vagrant ssh router -c "sudo nft list map inet filter device_groups_v4" 2>/dev/null)
+nft_map=$(vm_sudo router "nft list map inet filter device_groups_v4")
 assert_match "$nft_map" "$peer_ip" "Peer IP in verdict map"
 
 # Remove peer
@@ -53,7 +53,7 @@ result=$(vm_exec router "echo '{\"method\":\"remove_wg_peer\",\"public_key\":\"$
 assert_match "$result" '"ok":true' "Remove WireGuard peer"
 
 # Verify wg0 still exists after peer removal
-wg_show=$(vagrant ssh router -c "sudo wg show wg0" 2>/dev/null)
+wg_show=$(vm_sudo router "wg show wg0")
 assert_match "$wg_show" "wg0" "wg0 still exists after peer removal"
 
 # Disable WireGuard
@@ -61,5 +61,5 @@ result=$(vm_exec router 'echo "{\"method\":\"set_wireguard_enabled\",\"enabled\"
 assert_match "$result" '"ok":true' "Disable WireGuard"
 
 # Verify wg0 is gone
-wg_gone=$(vagrant ssh router -c "sudo ip link show wg0 2>&1" 2>/dev/null || echo "not found")
+wg_gone=$(vm_sudo router "ip link show wg0 2>&1" || echo "not found")
 assert_match "$wg_gone" "does not exist|not found" "wg0 interface removed"

@@ -14,7 +14,8 @@ assert_match "$device" '"ok":true' "get_device succeeds for LAN device"
 # Test hostname capture end-to-end on router VM
 # DHCP socket needs sudo, agent socket is world-readable (chmod 666 in run.sh)
 # Run as heredoc on router to avoid shell quoting issues
-result=$(vagrant ssh router -c "sudo bash -s" 2>/dev/null <<EOTEST
+args=$(_vm_ssh_args router)
+result=$(ssh $SSH_COMMON $args "sudo bash -s" 2>/dev/null <<EOTEST
 DSOCK=/run/hermitshell/dhcp.sock
 ASOCK=/run/hermitshell/agent.sock
 MAC="$lan_mac"

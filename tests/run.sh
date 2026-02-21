@@ -2,6 +2,9 @@
 set -e
 cd "$(dirname "$0")"
 
+# Clear stale SSH config cache from prior VM sessions
+rm -rf /tmp/hermit-ssh-cache
+
 source lib/helpers.sh
 
 SUITE_START=$SECONDS
@@ -21,46 +24,46 @@ echo
 echo "Deploying to router..."
 deploy_start=$SECONDS
 vagrant rsync router
-vagrant ssh router -c "sudo systemctl stop hermitshell-agent 2>/dev/null; sudo killall hermitshell-age hermitshell-dhc blocky 2>/dev/null; true" 2>/dev/null || true
+vm_sudo router "systemctl stop hermitshell-agent 2>/dev/null; killall hermitshell-age hermitshell-dhc blocky 2>/dev/null; true" || true
 sleep 2
-vagrant ssh router -c "sudo rm -f /run/hermitshell/*.sock && sudo cp /opt/hermitshell/hermitshell-agent.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart hermitshell-agent" 2>&1 || true
+vm_sudo router "rm -f /run/hermitshell/*.sock && cp /opt/hermitshell/hermitshell-agent.service /etc/systemd/system/ && systemctl daemon-reload && systemctl restart hermitshell-agent" || true
 
 # Reload web UI container if image tar exists
-vagrant ssh router -c "sudo bash -c 'if [ -f /opt/hermitshell/hermitshell-container.tar ]; then docker load -i /opt/hermitshell/hermitshell-container.tar; docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --network host -v /run/hermitshell:/run/hermitshell hermitshell:latest; fi'" 2>/dev/null || true
+vm_sudo router "if [ -f /opt/hermitshell/hermitshell-container.tar ]; then docker load -i /opt/hermitshell/hermitshell-container.tar; docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --network host -v /run/hermitshell:/run/hermitshell hermitshell:latest; fi" || true
 
 # Deploy dhclient hook so DHCP renewals set the default route via hermitshell router
-cat lib/rfc3442-classless-routes | vagrant ssh lan -c "sudo tee /etc/dhcp/dhclient-exit-hooks.d/rfc3442-classless-routes > /dev/null" 2>/dev/null || true
+cat lib/rfc3442-classless-routes | vm_sudo lan "tee /etc/dhcp/dhclient-exit-hooks.d/rfc3442-classless-routes > /dev/null" || true
 # Renew DHCP lease so the new hook takes effect and sets the default route
-vagrant ssh lan -c "sudo dhclient -r eth1 2>/dev/null; sudo dhclient eth1 2>/dev/null" 2>/dev/null || true
+vm_sudo lan "dhclient -r eth1 2>/dev/null; dhclient eth1 2>/dev/null" || true
 
 # Batch readiness polling: check all services in parallel per iteration
 echo "Waiting for services..."
 agent_sock=false; agent_ok=false; blocky_ok=false; docker_ok=false; lan_ok=false
 for i in $(seq 1 45); do
     if ! $agent_sock; then
-        if vagrant ssh router -c "test -S /run/hermitshell/agent.sock" 2>/dev/null; then
+        if vm_exec router "test -S /run/hermitshell/agent.sock" 2>/dev/null; then
             agent_sock=true
-            vagrant ssh router -c "sudo chmod 666 /run/hermitshell/agent.sock" 2>/dev/null || true
+            vm_sudo router "chmod 666 /run/hermitshell/agent.sock" || true
         fi
     fi
     if $agent_sock && ! $agent_ok; then
-        result=$(vagrant ssh router -c 'echo "{\"method\":\"get_status\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' 2>/dev/null || true)
+        result=$(vm_exec router 'echo "{\"method\":\"get_status\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' 2>/dev/null || true)
         if echo "$result" | grep -q '"ok":true'; then
             agent_ok=true
         fi
     fi
     if ! $blocky_ok; then
-        if vagrant ssh router -c "dig +short +time=1 +tries=1 @10.0.0.1 example.com" 2>/dev/null | grep -q '[0-9]'; then
+        if vm_exec router "dig +short +time=1 +tries=1 @10.0.0.1 example.com" 2>/dev/null | grep -q '[0-9]'; then
             blocky_ok=true
         fi
     fi
     if ! $docker_ok; then
-        if vagrant ssh router -c "docker inspect -f '{{.State.Running}}' hermitshell 2>/dev/null" 2>/dev/null | grep -q true; then
+        if vm_exec router "docker inspect -f '{{.State.Running}}' hermitshell 2>/dev/null" 2>/dev/null | grep -q true; then
             docker_ok=true
         fi
     fi
     if ! $lan_ok; then
-        if vagrant ssh lan -c "ip -4 addr show eth1 | grep -q '10\.0\.'" 2>/dev/null; then
+        if vm_exec lan "ip -4 addr show eth1 | grep -q '10\.0\.'" 2>/dev/null; then
             lan_ok=true
         fi
     fi
@@ -75,10 +78,10 @@ echo "Deploy+wait: ${deploy_time}s"
 echo
 
 # Reset all devices to quarantine so tests start with clean state
-vagrant ssh router -c 'for mac in $(echo "{\"method\":\"list_devices\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock 2>/dev/null | grep -oP "\"mac\":\"[^\"]+\"" | grep -oP "[0-9a-f:]+"); do echo "{\"method\":\"set_device_group\",\"mac\":\"$mac\",\"group\":\"quarantine\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock >/dev/null 2>&1; done' 2>/dev/null || true
+vm_exec router 'for mac in $(echo "{\"method\":\"list_devices\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock 2>/dev/null | grep -oP "\"mac\":\"[^\"]+\"" | grep -oP "[0-9a-f:]+"); do echo "{\"method\":\"set_device_group\",\"mac\":\"$mac\",\"group\":\"quarantine\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock >/dev/null 2>&1; done' || true
 
 # Disable QoS if left enabled from a prior run
-vagrant ssh router -c 'echo "{\"method\":\"set_qos_config\",\"enabled\":false}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' 2>/dev/null || true
+vm_exec router 'echo "{\"method\":\"set_qos_config\",\"enabled\":false}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' || true
 
 # Check VMs are running
 echo "Checking VM status..."
@@ -176,7 +179,7 @@ run_phase "all" \
     "cases/01-wan-connectivity.sh cases/02-lan-dhcp.sh cases/03-lan-internet.sh cases/04-agent-socket.sh cases/05-device-discovery.sh cases/06-bandwidth-tracking.sh cases/10-subnet-assignment.sh cases/18-hostname-capture.sh cases/07-web-ui.sh cases/21-auth-https.sh cases/12-ad-blocking.sh cases/13-dns-redirect.sh cases/23-connection-logging.sh cases/24-dns-query-logging.sh cases/25-log-export-config.sh cases/08-device-quarantine.sh cases/09-device-approval.sh cases/11-device-block.sh cases/15-device-groups.sh cases/16-wireguard-setup.sh cases/17-wireguard-peer-traffic.sh cases/22-backup-restore.sh cases/26-config-key-protection.sh cases/27-runzero-config.sh cases/28-behavioral-analysis.sh cases/19-port-forwarding.sh cases/20-dhcp-reservation.sh cases/14-agent-restart.sh"
 
 # Ensure socket is accessible after restart
-vagrant ssh router -c "sudo chmod 666 /run/hermitshell/agent.sock" 2>/dev/null || true
+vm_sudo router "chmod 666 /run/hermitshell/agent.sock" || true
 
 # QoS runs after restart since it does its own agent restart internally
 run_phase "qos" \
