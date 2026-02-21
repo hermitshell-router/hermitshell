@@ -1269,7 +1269,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs();
-            let payload = format!("admin:{}", timestamp);
+            let payload = format!("admin:{}:{}", timestamp, timestamp);
             let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
             mac.update(payload.as_bytes());
             let sig = hex::encode(mac.finalize().into_bytes());
