@@ -31,11 +31,12 @@ wait_for 15 "Port 23 connection logged" port23_logged
 result=$(vm_exec router "echo '{\"method\":\"list_connection_logs\",\"internal_ip\":\"$device_ip\",\"limit\":50}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock")
 assert_contains "$result" '"dest_port":23' "Port 23 connection logged in database"
 
-# Wait for the analyzer cycle (runs every 60s) to detect the suspicious port
+# Trigger immediate analysis instead of waiting for 60s cycle
+vm_exec router 'echo "{\"method\":\"run_analysis\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' > /dev/null
 alert_fired() {
     vm_exec router 'echo "{\"method\":\"list_alerts\",\"limit\":50}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' | grep -q '"suspicious_ports"'
 }
-wait_for 90 "Suspicious ports alert fired" alert_fired
+wait_for 10 "Suspicious ports alert fired" alert_fired
 
 # Verify the alert has correct fields
 alerts=$(vm_exec router 'echo "{\"method\":\"list_alerts\",\"limit\":50}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')

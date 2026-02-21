@@ -380,8 +380,9 @@ async fn main() -> Result<()> {
     let blocky_clone = blocky_mgr.clone();
     let wan_for_socket = wan_iface.to_string();
     let lan_for_socket = lan_iface.to_string();
+    let log_tx_socket = log_tx.clone();
     tokio::spawn(async move {
-        if let Err(e) = socket::run_server(SOCKET_PATH, db_clone, start_time, blocky_clone, wan_for_socket, lan_for_socket).await {
+        if let Err(e) = socket::run_server(SOCKET_PATH, db_clone, start_time, blocky_clone, wan_for_socket, lan_for_socket, log_tx_socket).await {
             error!(error = %e, "socket server error");
         }
     });

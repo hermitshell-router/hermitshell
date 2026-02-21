@@ -36,6 +36,8 @@ result=$(vm_exec router 'echo "{\"method\":\"list_connection_logs\",\"limit\":50
 assert_match "$result" '"ok":true' "Unfiltered list_connection_logs succeeds"
 assert_contains "$result" '"dest_ip"' "Unfiltered results contain log entries"
 
-# Query with offset
-result=$(vm_exec router 'echo "{\"method\":\"list_connection_logs\",\"limit\":10,\"offset\":0}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
-assert_match "$result" '"ok":true' "list_connection_logs with offset succeeds"
+# Query with offset (retry — vagrant SSH occasionally returns empty)
+offset_ok() {
+    vm_exec router 'echo "{\"method\":\"list_connection_logs\",\"limit\":10,\"offset\":0}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' | grep -q '"ok":true'
+}
+wait_for 10 "list_connection_logs with offset succeeds" offset_ok

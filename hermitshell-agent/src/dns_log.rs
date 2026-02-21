@@ -67,6 +67,97 @@ fn parse_log_line(line: &str) -> Option<DnsLogEntry<'_>> {
     Some(DnsLogEntry { client_ip: "", domain, query_type: response_reason })
 }
 
+/// Run one ingest cycle: scan Blocky log files, parse and store DNS queries.
+pub fn ingest_once(db: &Arc<Mutex<Db>>, tx: &UnboundedSender<LogEvent>) {
+    let entries = match std::fs::read_dir(LOG_DIR) {
+        Ok(e) => e,
+        Err(e) => {
+            debug!(error = %e, dir = LOG_DIR, "cannot read log dir");
+            return;
+        }
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let filename = entry.file_name();
+        let filename_str = match filename.to_str() {
+            Some(s) => s,
+            None => continue,
+        };
+
+        // Only process .log files (skip .ingest files and others)
+        if !filename_str.ends_with(".log") {
+            continue;
+        }
+
+        // Extract device IP from filename (may be None for _none.log files)
+        let filename_ip = extract_ip_from_filename(filename_str).map(|s| s.to_string());
+
+        let log_path = entry.path();
+        let ingest_path = log_path.with_extension("log.ingest");
+
+        // Atomic rename: Blocky opens/closes per write, so this is safe
+        if let Err(e) = std::fs::rename(&log_path, &ingest_path) {
+            warn!(error = %e, file = ?log_path, "failed to rename log file");
+            continue;
+        }
+
+        let contents = match std::fs::read_to_string(&ingest_path) {
+            Ok(c) => c,
+            Err(e) => {
+                error!(error = %e, file = ?ingest_path, "failed to read ingest file");
+                continue;
+            }
+        };
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+
+        for line in contents.lines() {
+            if let Some(entry) = parse_log_line(line) {
+                // Use client IP from log line, fall back to filename IP
+                let device_ip = if !entry.client_ip.is_empty()
+                    && entry.client_ip != "0.0.0.0"
+                    && entry.client_ip.contains('.')
+                {
+                    entry.client_ip.to_string()
+                } else if let Some(ref ip) = filename_ip {
+                    ip.clone()
+                } else {
+                    // No device IP available; store with empty string
+                    String::new()
+                };
+
+                // Insert into database
+                {
+                    let db_guard = db.lock().unwrap();
+                    if let Err(e) = db_guard.insert_dns_log(&device_ip, entry.domain, entry.query_type, now) {
+                        error!(error = %e, device = %device_ip, domain = entry.domain, "failed to insert DNS log");
+                    }
+                }
+
+                // Send to log export channel
+                let _ = tx.send(LogEvent::DnsQuery {
+                    device_ip: device_ip.clone(),
+                    domain: entry.domain.to_string(),
+                    query_type: entry.query_type.to_string(),
+                });
+            }
+        }
+
+        // Clean up ingest file
+        if let Err(e) = std::fs::remove_file(&ingest_path) {
+            warn!(error = %e, file = ?ingest_path, "failed to remove ingest file");
+        }
+    }
+}
+
 /// Ingest loop: scan Blocky CSV log files every 30 seconds, parse and store DNS queries.
 pub async fn start(
     db: Arc<Mutex<Db>>,
@@ -76,94 +167,7 @@ pub async fn start(
 
     loop {
         interval.tick().await;
-
-        let entries = match std::fs::read_dir(LOG_DIR) {
-            Ok(e) => e,
-            Err(e) => {
-                debug!(error = %e, dir = LOG_DIR, "cannot read log dir");
-                continue;
-            }
-        };
-
-        for entry in entries {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-
-            let filename = entry.file_name();
-            let filename_str = match filename.to_str() {
-                Some(s) => s,
-                None => continue,
-            };
-
-            // Only process .log files (skip .ingest files and others)
-            if !filename_str.ends_with(".log") {
-                continue;
-            }
-
-            // Extract device IP from filename (may be None for _none.log files)
-            let filename_ip = extract_ip_from_filename(filename_str).map(|s| s.to_string());
-
-            let log_path = entry.path();
-            let ingest_path = log_path.with_extension("log.ingest");
-
-            // Atomic rename: Blocky opens/closes per write, so this is safe
-            if let Err(e) = std::fs::rename(&log_path, &ingest_path) {
-                warn!(error = %e, file = ?log_path, "failed to rename log file");
-                continue;
-            }
-
-            let contents = match std::fs::read_to_string(&ingest_path) {
-                Ok(c) => c,
-                Err(e) => {
-                    error!(error = %e, file = ?ingest_path, "failed to read ingest file");
-                    continue;
-                }
-            };
-
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64;
-
-            for line in contents.lines() {
-                if let Some(entry) = parse_log_line(line) {
-                    // Use client IP from log line, fall back to filename IP
-                    let device_ip = if !entry.client_ip.is_empty()
-                        && entry.client_ip != "0.0.0.0"
-                        && entry.client_ip.contains('.')
-                    {
-                        entry.client_ip.to_string()
-                    } else if let Some(ref ip) = filename_ip {
-                        ip.clone()
-                    } else {
-                        // No device IP available; store with empty string
-                        String::new()
-                    };
-
-                    // Insert into database
-                    {
-                        let db_guard = db.lock().unwrap();
-                        if let Err(e) = db_guard.insert_dns_log(&device_ip, entry.domain, entry.query_type, now) {
-                            error!(error = %e, device = %device_ip, domain = entry.domain, "failed to insert DNS log");
-                        }
-                    }
-
-                    // Send to log export channel
-                    let _ = tx.send(LogEvent::DnsQuery {
-                        device_ip: device_ip.clone(),
-                        domain: entry.domain.to_string(),
-                        query_type: entry.query_type.to_string(),
-                    });
-                }
-            }
-
-            // Clean up ingest file
-            if let Err(e) = std::fs::remove_file(&ingest_path) {
-                warn!(error = %e, file = ?ingest_path, "failed to remove ingest file");
-            }
-        }
+        ingest_once(&db, &tx);
     }
 }
 

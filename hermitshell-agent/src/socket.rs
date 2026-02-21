@@ -11,6 +11,7 @@ use tracing::{error, info, warn};
 
 use crate::blocky::BlockyManager;
 use crate::db::Db;
+use crate::log_export::LogEvent;
 use crate::nftables;
 use hermitshell_common::subnet;
 
@@ -157,7 +158,7 @@ impl Response {
     }
 }
 
-pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String) -> Result<()> {
+pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>) -> Result<()> {
     // Remove old socket if exists
     let _ = std::fs::remove_file(socket_path);
 
@@ -184,23 +185,24 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
         let blocky = blocky.clone();
         let wan = wan_iface.clone();
         let lan = lan_iface.clone();
+        let ltx = log_tx.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_client(stream, db, start, blocky, wan, lan).await {
+            if let Err(e) = handle_client(stream, db, start, blocky, wan, lan, ltx).await {
                 warn!(error = %e, "client error");
             }
         });
     }
 }
 
-async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String) -> Result<()> {
+async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
 
     while reader.read_line(&mut line).await? > 0 {
         let response = match serde_json::from_str::<Request>(&line) {
-            Ok(req) => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface),
+            Ok(req) => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx),
             Err(e) => Response::err(&format!("Invalid JSON: {}", e)),
         };
 
@@ -213,7 +215,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
     Ok(())
 }
 
-fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: &Arc<Mutex<BlockyManager>>, wan_iface: &str, lan_iface: &str) -> Response {
+fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: &Arc<Mutex<BlockyManager>>, wan_iface: &str, lan_iface: &str, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>) -> Response {
     // Validate MAC early if provided (before any DB lookups)
     if let Some(ref mac) = req.mac {
         if let Err(e) = nftables::validate_mac(mac) {
@@ -1554,6 +1556,14 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 Ok(()) => Response::ok(),
                 Err(e) => Response::err(&e.to_string()),
             }
+        }
+        "ingest_dns_logs" => {
+            crate::dns_log::ingest_once(db, log_tx);
+            Response::ok()
+        }
+        "run_analysis" => {
+            crate::analyzer::run_analysis_cycle(db, log_tx);
+            Response::ok()
         }
         _ => Response::err("unknown method"),
     }

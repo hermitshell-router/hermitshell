@@ -5,7 +5,7 @@ require_docker
 
 # Check if container is running
 assert_success "Web UI container running" \
-    vm_exec router "docker ps | grep -q hermitshell"
+    vm_exec router "docker inspect -f '{{.State.Running}}' hermitshell 2>/dev/null | grep -q true"
 
 # HTTPS should respond (may redirect to /setup or /login since no password set yet)
 response=$(vm_exec router "curl -s -k -o /dev/null -w '%{http_code}' https://localhost/")
