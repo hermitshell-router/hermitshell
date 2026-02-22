@@ -7,9 +7,10 @@ use dhcproto::v6::{
 use dhcproto::{Decodable, Encodable};
 use ipnet::Ipv4Net;
 use socket2::{Domain, Protocol, Socket, Type};
-use std::collections::HashMap;
+use lru::LruCache;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6, UdpSocket};
+use std::num::NonZeroUsize;
 use std::os::unix::net::UnixStream;
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
@@ -74,7 +75,7 @@ fn main() -> Result<()> {
         .context("failed to spawn DHCPv6 thread")?;
 
     let mut buf = [0u8; 1500];
-    let mut discover_times: HashMap<String, Instant> = HashMap::new();
+    let mut discover_times: LruCache<String, Instant> = LruCache::new(NonZeroUsize::new(10_000).unwrap());
 
     loop {
         let (len, _addr) = match udp.recv_from(&mut buf) {
@@ -122,7 +123,7 @@ fn main() -> Result<()> {
                         continue;
                     }
                 }
-                discover_times.insert(mac.clone(), Instant::now());
+                discover_times.put(mac.clone(), Instant::now());
                 info!(mac = %mac, "DHCPDISCOVER");
                 match handle_discover(&msg, &mac) {
                     Ok(resp) => resp,
@@ -420,7 +421,7 @@ fn run_dhcpv6_server(lan_iface: &str) -> Result<()> {
     info!(iface = %lan_iface, "hermitshell-dhcpv6 listening on [::]:547");
 
     let mut buf = [0u8; 1500];
-    let mut solicit_times: HashMap<String, Instant> = HashMap::new();
+    let mut solicit_times: LruCache<String, Instant> = LruCache::new(NonZeroUsize::new(10_000).unwrap());
 
     loop {
         let (len, src_addr) = match udp.recv_from(&mut buf) {
@@ -477,7 +478,7 @@ fn run_dhcpv6_server(lan_iface: &str) -> Result<()> {
                         continue;
                     }
                 }
-                solicit_times.insert(mac.clone(), Instant::now());
+                solicit_times.put(mac.clone(), Instant::now());
                 info!(mac = %mac, "DHCPv6 SOLICIT");
                 match handle_solicit6(&msg, &mac, &client_id, client_iaid) {
                     Ok(resp) => resp,
