@@ -29,7 +29,7 @@ sleep 2
 vm_sudo router "rm -f /run/hermitshell/*.sock && cp /opt/hermitshell/hermitshell-agent.service /etc/systemd/system/ && systemctl daemon-reload && systemctl restart hermitshell-agent" || true
 
 # Reload web UI container if image tar exists
-vm_sudo router "if [ -f /opt/hermitshell/hermitshell-container.tar ]; then docker load -i /opt/hermitshell/hermitshell-container.tar; docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --network host --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE --security-opt no-new-privileges -v /run/hermitshell:/run/hermitshell hermitshell:latest; fi" || true
+vm_sudo router "if [ -f /opt/hermitshell/hermitshell-container.tar ]; then docker load -i /opt/hermitshell/hermitshell-container.tar; docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --network host --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE -v /run/hermitshell:/run/hermitshell hermitshell:latest; fi" || true
 
 # Deploy dhclient hook so DHCP renewals set the default route via hermitshell router
 cat lib/rfc3442-classless-routes | vm_sudo lan "tee /etc/dhcp/dhclient-exit-hooks.d/rfc3442-classless-routes > /dev/null" || true
@@ -193,7 +193,7 @@ run_phase "rate-limit" \
     "cases/30-login-rate-limiting.sh"
 
 # Session TTL — restart container to clear web UI rate limit state
-vm_sudo router "docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --network host --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE --security-opt no-new-privileges -v /run/hermitshell:/run/hermitshell hermitshell:latest" || true
+vm_sudo router "docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --network host --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE -v /run/hermitshell:/run/hermitshell hermitshell:latest" || true
 vm_sudo router "chmod 666 /run/hermitshell/agent.sock" || true
 run_phase "session-ttl" \
     "cases/31-session-ttl.sh"

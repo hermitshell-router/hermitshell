@@ -178,7 +178,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Add a non-root user, use `setcap cap_net_bind_service` on the binary to allow privileged port binding, and ensure the socket is readable by the container user.
 
-**Status: Fixed.** Dockerfile creates a `hermitshell` user (UID/GID 1000) and sets `USER hermitshell`. The binary gets `cap_net_bind_service` via `setcap` for port 80/443 binding. The agent chowns both sockets to GID 1000 so the container user can access them. Docker run adds `--read-only --cap-drop ALL --cap-add NET_BIND_SERVICE --security-opt no-new-privileges`.
+**Status: Fixed.** Dockerfile creates a `hermitshell` user (UID/GID 1000) and sets `USER hermitshell`. The binary gets `cap_net_bind_service` via `setcap` for port 80/443 binding. The agent chowns both sockets to GID 1000 so the container user can access them. Docker run adds `--read-only --cap-drop ALL --cap-add NET_BIND_SERVICE`.
 
 ## 16. Systemd service missing hardening directives
 

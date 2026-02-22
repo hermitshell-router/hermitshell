@@ -94,7 +94,6 @@ if [ -f /opt/hermitshell/hermitshell-container.tar ]; then
         --read-only \
         --cap-drop ALL \
         --cap-add NET_BIND_SERVICE \
-        --security-opt no-new-privileges \
         -v /run/hermitshell:/run/hermitshell \
         hermitshell:latest
 fi
