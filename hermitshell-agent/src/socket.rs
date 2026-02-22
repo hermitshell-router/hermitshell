@@ -209,11 +209,12 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
 
     let listener = UnixListener::bind(socket_path)?;
 
-    // Set permissions so container can access
+    // Set permissions: root:1000 0660 so the non-root container user (GID 1000) can access
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660))?;
+        nix::unistd::chown(socket_path, None, Some(nix::unistd::Gid::from_raw(1000)))?;
     }
 
     info!(path = socket_path, "socket server listening");
@@ -1710,6 +1711,7 @@ pub async fn run_dhcp_socket(socket_path: &str, db: Arc<Mutex<Db>>, lan_iface: S
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660))?;
+        nix::unistd::chown(socket_path, None, Some(nix::unistd::Gid::from_raw(1000)))?;
     }
 
     info!(path = socket_path, "DHCP IPC socket listening");

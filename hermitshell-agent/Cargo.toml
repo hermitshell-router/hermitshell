@@ -21,6 +21,7 @@ hex = "0.4"
 rand = "0.8"
 rcgen = "0.13"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+nix = { version = "0.29", features = ["fs", "user"] }
 
 [lints]
 workspace = true
