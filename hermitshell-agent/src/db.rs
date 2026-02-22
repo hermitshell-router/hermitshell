@@ -625,12 +625,14 @@ impl Db {
         Ok(())
     }
 
-    pub fn vacuum_into(&self, path: &str) -> Result<()> {
-        self.conn.execute(&format!("VACUUM INTO '{}'", path), [])?;
+    pub const BACKUP_PATH: &str = "/data/hermitshell/hermitshell-backup.db";
+
+    pub fn vacuum_into_backup(&self) -> Result<()> {
+        self.conn.execute(&format!("VACUUM INTO '{}'", Self::BACKUP_PATH), [])?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+            std::fs::set_permissions(Self::BACKUP_PATH, std::fs::Permissions::from_mode(0o600))?;
         }
         Ok(())
     }

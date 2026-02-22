@@ -156,6 +156,8 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Add path validation in `vacuum_into()`: reject paths containing `'`, or whitelist only alphanumeric, `/`, `-`, `_`, `.` characters.
 
+**Status: Fixed.** Eliminated the attack surface entirely: `vacuum_into()` replaced with `vacuum_into_backup()` which takes no path parameter. The backup path is a compile-time constant (`Db::BACKUP_PATH`) embedded in the SQL string literal. No user input reaches the query.
+
 ## 14. Port forwarding description field is unbounded
 
 **What:** The `description` field in `add_port_forward` has no length limit. Stored in SQLite and rendered in the web UI.

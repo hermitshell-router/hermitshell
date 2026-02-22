@@ -1054,12 +1054,11 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         }
         "backup_database" => {
             let db = db.lock().unwrap();
-            let backup_path = "/data/hermitshell/hermitshell-backup.db";
-            let _ = std::fs::remove_file(backup_path);
-            match db.vacuum_into(backup_path) {
+            let _ = std::fs::remove_file(Db::BACKUP_PATH);
+            match db.vacuum_into_backup() {
                 Ok(()) => {
                     let mut resp = Response::ok();
-                    resp.config_value = Some(backup_path.to_string());
+                    resp.config_value = Some(Db::BACKUP_PATH.to_string());
                     resp
                 }
                 Err(e) => Response::err(&format!("backup failed: {}", e)),
