@@ -35,16 +35,16 @@ assert_contains "$resp" '"config_value":"false"' "Wrong attempt after reset not 
 # Web UI rate limiting
 require_docker
 
-login_action=$(vm_exec router "curl -s -k -L https://localhost/login | grep -oP 'action=\"[^\"]*login[^\"]*\"' | head -1 | grep -oP '/api/[^\"]*'")
+login_action=$(vm_exec router "curl -s -k -L https://localhost:8443/login | grep -oP 'action=\"[^\"]*login[^\"]*\"' | head -1 | grep -oP '/api/[^\"]*'")
 if [ -z "$login_action" ]; then
     login_action="/api/login"
 fi
 
 # Send several wrong logins to trigger web UI rate limiting
 for i in 1 2 3; do
-    vm_exec router "curl -s -k -o /dev/null -X POST -d 'password=wrongwebui' https://localhost${login_action}"
+    vm_exec router "curl -s -k -o /dev/null -X POST -d 'password=wrongwebui' https://localhost:8443${login_action}"
 done
 
 # Next attempt should get 429
-http_code=$(vm_exec router "curl -s -k -o /dev/null -w '%{http_code}' -X POST -d 'password=wrongwebui' https://localhost${login_action}")
+http_code=$(vm_exec router "curl -s -k -o /dev/null -w '%{http_code}' -X POST -d 'password=wrongwebui' https://localhost:8443${login_action}")
 assert_match "$http_code" "429" "Web UI returns 429 after repeated failures"

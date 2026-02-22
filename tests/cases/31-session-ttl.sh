@@ -59,13 +59,13 @@ _reset_rate_limit() {
 wait_for 15 "Agent rate limit cleared" _reset_rate_limit
 
 # Get the login form action URL
-login_action=$(vm_exec router "curl -s -k -L https://localhost/login | grep -oP 'action=\"[^\"]*login[^\"]*\"' | head -1 | grep -oP '/api/[^\"]*'")
+login_action=$(vm_exec router "curl -s -k -L https://localhost:8443/login | grep -oP 'action=\"[^\"]*login[^\"]*\"' | head -1 | grep -oP '/api/[^\"]*'")
 if [ -z "$login_action" ]; then
     login_action="/api/login"
 fi
 
 # Login and capture Set-Cookie header
-set_cookie=$(vm_exec router "curl -s -k -D- -o /dev/null -X POST -d 'password=testpass123' https://localhost${login_action}" | grep -i '^Set-Cookie:' | head -1)
+set_cookie=$(vm_exec router "curl -s -k -D- -o /dev/null -X POST -d 'password=testpass123' https://localhost:8443${login_action}" | grep -i '^Set-Cookie:' | head -1)
 assert_contains "$set_cookie" "HttpOnly" "Login cookie has HttpOnly"
 assert_contains "$set_cookie" "Secure" "Login cookie has Secure flag"
 assert_contains "$set_cookie" "SameSite=Strict" "Login cookie has SameSite=Strict"
@@ -78,7 +78,7 @@ else
 fi
 
 # Login with curl cookie jar and access a page — response should have Set-Cookie (rolling refresh)
-vm_exec router "curl -s -k -c /tmp/cookies-ttl -X POST -d 'password=testpass123' https://localhost${login_action}" >/dev/null
-refresh_header=$(vm_exec router "curl -s -k -D- -o /dev/null -b /tmp/cookies-ttl https://localhost/" | grep -i '^Set-Cookie:' | head -1)
+vm_exec router "curl -s -k -c /tmp/cookies-ttl -X POST -d 'password=testpass123' https://localhost:8443${login_action}" >/dev/null
+refresh_header=$(vm_exec router "curl -s -k -D- -o /dev/null -b /tmp/cookies-ttl https://localhost:8443/" | grep -i '^Set-Cookie:' | head -1)
 assert_contains "$refresh_header" "session=" "Authenticated request gets refreshed cookie"
 assert_contains "$refresh_header" "Secure" "Refreshed cookie has Secure flag"
