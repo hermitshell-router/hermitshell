@@ -5,6 +5,9 @@ require_agent
 
 SOCK="UNIX-CONNECT:/run/hermitshell/agent.sock"
 
+# Disable runzero (idempotency: prior run may have left it enabled)
+vm_exec router 'echo "{\"method\":\"set_runzero_config\",\"value\":\"{\\\"runzero_enabled\\\":\\\"false\\\"}\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' >/dev/null 2>&1
+
 # --- runZero config defaults ---
 result=$(vm_exec router "echo '{\"method\":\"get_runzero_config\"}' | socat - $SOCK")
 assert_match "$result" '"ok":true' "get_runzero_config succeeds"

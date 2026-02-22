@@ -9,6 +9,9 @@ assert_match "$lan_mac" "^[0-9a-f]" "Got LAN MAC address"
 
 device_ip=$(vm_exec lan "ip -4 addr show eth1 | grep inet | awk '{print \$2}' | cut -d/ -f1")
 
+# Reset device to quarantine (idempotency: prior run may have left it in trusted)
+vm_exec router "echo '{\"method\":\"set_device_group\",\"mac\":\"$lan_mac\",\"group\":\"quarantine\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock" >/dev/null 2>&1
+
 # Verify device starts in quarantine nftables map
 vmap_before=$(vm_sudo router "nft list map inet filter device_groups_v4" || echo "")
 assert_contains "$vmap_before" "${device_ip} : jump quarantine_fwd" "Device in quarantine_fwd before approval"

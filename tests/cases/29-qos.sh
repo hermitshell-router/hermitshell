@@ -5,6 +5,9 @@ require_agent
 
 SOCK="UNIX-CONNECT:/run/hermitshell/agent.sock"
 
+# Disable QoS (idempotency: prior run may have left it enabled)
+vm_exec router "echo '{\"method\":\"set_qos_config\",\"enabled\":false}' | socat - $SOCK" >/dev/null 2>&1
+
 # --- 1. QoS defaults: disabled ---
 result=$(vm_exec router "echo '{\"method\":\"get_qos_config\"}' | socat - $SOCK")
 assert_match "$result" '"ok":true' "get_qos_config succeeds"

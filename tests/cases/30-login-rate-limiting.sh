@@ -5,6 +5,12 @@ require_agent
 
 SOCK=/run/hermitshell/agent.sock
 
+# Reset rate limit state (idempotency: prior run may have left rate limiter active)
+_clear_rate_limit() {
+    vm_exec router "echo '{\"method\":\"verify_password\",\"value\":\"testpass123\"}' | socat - UNIX-CONNECT:$SOCK" 2>/dev/null | grep -q '"config_value":"true"'
+}
+wait_for 15 "Agent rate limit cleared" _clear_rate_limit
+
 # First wrong attempt: should return false (no rate limit yet)
 resp=$(vm_exec router "echo '{\"method\":\"verify_password\",\"value\":\"wrong1\"}' | socat - UNIX-CONNECT:$SOCK")
 assert_contains "$resp" '"config_value":"false"' "First wrong attempt not rate-limited"

@@ -3,9 +3,13 @@ source "$(dirname "$0")/../lib/helpers.sh"
 
 require_nftables
 
-# LAN VM should be in quarantine group by default
+# Ensure device starts in quarantine (idempotency: prior run may have changed group)
+lan_mac=$(vm_exec lan "ip link show eth1 | grep -oP 'link/ether \K[0-9a-f:]+'" || echo "")
+vm_exec router "echo '{\"method\":\"set_device_group\",\"mac\":\"$lan_mac\",\"group\":\"quarantine\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock" >/dev/null 2>&1
+
+# LAN VM should be in quarantine group
 devices=$(vm_exec router 'echo "{\"method\":\"list_devices\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
-assert_match "$devices" '"device_group":"quarantine"' "New device starts in quarantine"
+assert_match "$devices" '"device_group":"quarantine"' "Device is in quarantine"
 
 # Get LAN device IP for nftables verification
 device_ip=$(vm_exec lan "ip -4 addr show eth1 | grep inet | awk '{print \$2}' | cut -d/ -f1")

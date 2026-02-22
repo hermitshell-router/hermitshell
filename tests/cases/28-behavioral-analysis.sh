@@ -6,6 +6,10 @@ require_wan
 require_lan_ip
 require_blocky
 
+# Reset analyzer state (idempotency: prior run may have left it disabled or rules changed)
+vm_exec router 'echo "{\"method\":\"set_config\",\"key\":\"analyzer_enabled\",\"value\":\"true\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' >/dev/null 2>&1
+vm_exec router 'echo "{\"method\":\"set_config\",\"key\":\"alert_rule_dns_beaconing\",\"value\":\"enabled\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' >/dev/null 2>&1
+
 # Verify analyzer status defaults
 result=$(vm_exec router 'echo "{\"method\":\"get_analyzer_status\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$result" '"ok":true' "get_analyzer_status succeeds"

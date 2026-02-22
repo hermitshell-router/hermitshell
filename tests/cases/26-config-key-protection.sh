@@ -5,6 +5,12 @@ require_agent
 
 SOCK="UNIX-CONNECT:/run/hermitshell/agent.sock"
 
+# Reset rate limit state (idempotency: prior run may have left rate limiter active)
+_clear_rate_limit() {
+    vm_exec router "echo '{\"method\":\"verify_password\",\"value\":\"testpass123\"}' | socat - $SOCK" 2>/dev/null | grep -q '"config_value":"true"'
+}
+wait_for 15 "Agent rate limit cleared" _clear_rate_limit
+
 # --- Blocked config key reads ---
 for key in admin_password_hash session_secret wg_private_key tls_key_pem tls_cert_pem; do
     result=$(vm_exec router "echo '{\"method\":\"get_config\",\"key\":\"$key\"}' | socat - $SOCK")
@@ -68,8 +74,7 @@ result=$(vm_exec router "echo '{\"method\":\"setup_password\",\"value\":\"newpas
 assert_match "$result" '"ok":false' "setup_password rejects wrong current password"
 
 # --- Reset rate limit counter (wrong current password above triggered backoff) ---
-sleep 2
-vm_exec router "echo '{\"method\":\"verify_password\",\"value\":\"testpass123\"}' | socat - $SOCK" >/dev/null
+wait_for 15 "Rate limit cleared after wrong password" _clear_rate_limit
 
 # --- setup_password succeeds with correct current password ---
 result=$(vm_exec router "echo '{\"method\":\"setup_password\",\"value\":\"newpass12345\",\"key\":\"testpass123\"}' | socat - $SOCK")

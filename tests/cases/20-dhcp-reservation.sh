@@ -8,6 +8,9 @@ require_lan_ip
 lan_mac=$(vm_exec lan "cat /sys/class/net/eth1/address")
 assert_match "$lan_mac" "^[0-9a-f]" "LAN MAC is valid"
 
+# Remove any existing reservation (idempotency)
+vm_exec router "echo '{\"method\":\"remove_dhcp_reservation\",\"mac\":\"$lan_mac\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock" >/dev/null 2>&1
+
 original_ip=$(vm_exec lan "ip -4 addr show eth1 | grep inet | awk '{print \$2}' | cut -d/ -f1")
 assert_match "$original_ip" "^10\." "LAN has current IP"
 

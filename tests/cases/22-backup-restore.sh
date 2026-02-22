@@ -3,6 +3,14 @@ source "$(dirname "$0")/../lib/helpers.sh"
 
 require_agent
 
+# Clean up any leftover port forwards from prior runs (idempotency)
+existing_ids=$(vm_exec router 'echo "{\"method\":\"list_port_forwards\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' | grep -oP '"id":\K[0-9]+')
+for id in $existing_ids; do
+    vm_exec router "echo '{\"method\":\"remove_port_forward\",\"id\":$id}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock" >/dev/null 2>&1
+done
+# Reset log config to defaults
+vm_exec router 'echo "{\"method\":\"set_log_config\",\"value\":\"{\\\"log_retention_days\\\":\\\"7\\\",\\\"log_format\\\":\\\"text\\\"}\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' >/dev/null 2>&1
+
 # --- Export Config ---
 # Note: export_config returns config_value as a JSON string, so inner keys are backslash-escaped
 result=$(vm_exec router 'echo "{\"method\":\"export_config\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')

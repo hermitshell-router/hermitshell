@@ -1,6 +1,13 @@
 #!/bin/bash
 source "$(dirname "$0")/../lib/helpers.sh"
 
+# Clean up WireGuard state from prior runs (idempotency)
+wg_status=$(vm_exec router 'echo "{\"method\":\"get_wireguard\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' 2>/dev/null || echo "")
+for pk in $(echo "$wg_status" | grep -oP '"public_key":"[^"]+' | tail -n +2 | cut -d'"' -f4); do
+    vm_exec router "echo '{\"method\":\"remove_wg_peer\",\"public_key\":\"$pk\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock" >/dev/null 2>&1
+done
+vm_exec router 'echo "{\"method\":\"set_wireguard_enabled\",\"enabled\":false}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' >/dev/null 2>&1
+
 # Enable WireGuard
 result=$(vm_exec router 'echo "{\"method\":\"set_wireguard_enabled\",\"enabled\":true}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$result" '"ok":true' "Enable WireGuard"

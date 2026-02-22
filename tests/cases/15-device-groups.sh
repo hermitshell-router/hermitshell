@@ -9,6 +9,9 @@ assert_match "$lan_mac" "^[0-9a-f]" "Got LAN MAC address"
 
 device_ip=$(vm_exec lan "ip -4 addr show eth1 | grep inet | awk '{print \$2}' | cut -d/ -f1")
 
+# Reset device to quarantine (idempotency: prior run may have left it in another group)
+vm_exec router "echo '{\"method\":\"set_device_group\",\"mac\":\"$lan_mac\",\"group\":\"quarantine\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock" >/dev/null 2>&1
+
 # Test each device group: verify API, nftables, and connectivity
 for group in iot guest servers; do
     # Set device to group

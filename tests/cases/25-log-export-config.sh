@@ -3,6 +3,9 @@ source "$(dirname "$0")/../lib/helpers.sh"
 
 require_agent
 
+# Reset log config to defaults (idempotency: prior run may have left non-default values)
+vm_exec router 'echo "{\"method\":\"set_log_config\",\"value\":\"{\\\"log_retention_days\\\":\\\"7\\\",\\\"log_format\\\":\\\"text\\\"}\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' >/dev/null 2>&1
+
 # Get current log config
 result=$(vm_exec router 'echo "{\"method\":\"get_log_config\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$result" '"ok":true' "get_log_config succeeds"
