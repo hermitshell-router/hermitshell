@@ -39,6 +39,7 @@ const SESSION_IDLE_TIMEOUT_SECS: u64 = 1800;     // 30 minutes
 const SESSION_ABSOLUTE_TIMEOUT_SECS: u64 = 28800; // 8 hours
 
 type LoginRateLimit = Arc<Mutex<(u32, Option<std::time::Instant>)>>;
+type PasswordLock = Arc<Mutex<()>>;
 
 /// Check if login is currently rate-limited. Returns error message if blocked.
 fn check_login_rate_limit(rate_limit: &LoginRateLimit) -> Option<String> {
@@ -220,6 +221,7 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
     info!(path = socket_path, "socket server listening");
 
     let login_rate_limit: LoginRateLimit = Arc::new(Mutex::new((0, None)));
+    let password_lock: PasswordLock = Arc::new(Mutex::new(()));
 
     loop {
         let (stream, _) = listener.accept().await?;
@@ -230,23 +232,24 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
         let lan = lan_iface.clone();
         let ltx = log_tx.clone();
         let lrl = login_rate_limit.clone();
+        let pwl = password_lock.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_client(stream, db, start, blocky, wan, lan, ltx, lrl).await {
+            if let Err(e) = handle_client(stream, db, start, blocky, wan, lan, ltx, lrl, pwl).await {
                 warn!(error = %e, "client error");
             }
         });
     }
 }
 
-async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: LoginRateLimit) -> Result<()> {
+async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: LoginRateLimit, password_lock: PasswordLock) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
 
     while reader.read_line(&mut line).await? > 0 {
         let response = match serde_json::from_str::<Request>(&line) {
-            Ok(req) => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit),
+            Ok(req) => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock),
             Err(e) => Response::err(&format!("Invalid JSON: {}", e)),
         };
 
@@ -259,7 +262,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
     Ok(())
 }
 
-fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: &Arc<Mutex<BlockyManager>>, wan_iface: &str, lan_iface: &str, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: &LoginRateLimit) -> Response {
+fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: &Arc<Mutex<BlockyManager>>, wan_iface: &str, lan_iface: &str, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: &LoginRateLimit, password_lock: &PasswordLock) -> Response {
     // Validate MAC early if provided (before any DB lookups)
     if let Some(ref mac) = req.mac {
         if let Err(e) = nftables::validate_mac(mac) {
@@ -1178,8 +1181,14 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 warn!("verify_password rate-limited");
                 return Response::err(&msg);
             }
-            let db = db.lock().unwrap();
-            let hash_str = match db.get_config("admin_password_hash").ok().flatten() {
+            // Serialize against concurrent password changes
+            let _pw_guard = password_lock.lock().unwrap();
+            // Read hash from DB, then drop the lock before expensive Argon2 work
+            let hash_str = {
+                let db = db.lock().unwrap();
+                db.get_config("admin_password_hash").ok().flatten()
+            };
+            let hash_str = match hash_str {
                 Some(h) => h,
                 None => {
                     warn!("password verification failed");
@@ -1199,6 +1208,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                     return resp;
                 }
             };
+            // Argon2 verify with DB lock released
             let valid = Argon2::default()
                 .verify_password(value.as_bytes(), &parsed_hash)
                 .is_ok();
@@ -1222,8 +1232,13 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             if value.len() > 128 {
                 return Response::err("password too long (maximum 128 characters)");
             }
-            let db = db.lock().unwrap();
-            let existing_hash = db.get_config("admin_password_hash").ok().flatten();
+            // Serialize password changes; held until end of scope
+            let _pw_guard = password_lock.lock().unwrap();
+            // Read existing hash, then drop DB lock
+            let existing_hash = {
+                let db = db.lock().unwrap();
+                db.get_config("admin_password_hash").ok().flatten()
+            };
             if let Some(ref hash_str) = existing_hash {
                 // Current password required to change
                 let Some(current) = req.key else {
@@ -1237,6 +1252,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                     Ok(h) => h,
                     Err(_) => return Response::err("stored hash corrupt"),
                 };
+                // Argon2 verify with DB lock released
                 if Argon2::default()
                     .verify_password(current.as_bytes(), &parsed_hash)
                     .is_err()
@@ -1247,11 +1263,14 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 }
                 reset_login_rate_limit(login_rate_limit);
             }
+            // Argon2 hash with DB lock released
             let salt = SaltString::generate(&mut rand::rngs::OsRng);
             let new_hash = match Argon2::default().hash_password(value.as_bytes(), &salt) {
                 Ok(h) => h.to_string(),
                 Err(e) => return Response::err(&format!("hashing failed: {}", e)),
             };
+            // Re-acquire DB lock only for the write
+            let db = db.lock().unwrap();
             match db.set_config("admin_password_hash", &new_hash) {
                 Ok(()) => Response::ok(),
                 Err(e) => Response::err(&e.to_string()),

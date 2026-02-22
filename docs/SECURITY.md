@@ -414,6 +414,8 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Read the hash from the DB, drop the lock, perform Argon2, then re-acquire for writes. This requires splitting the operation but keeps the mutex held for only microseconds.
 
+**Status: Fixed.** Both handlers now scope the DB lock to just `get_config`/`set_config` calls. Argon2 verify and hash run with the DB mutex released. A separate `PasswordLock` (`Mutex<()>`) serializes `setup_password` to prevent TOCTOU races on concurrent password changes without holding the DB lock.
+
 ## 35. No memory zeroization of secret material
 
 **What:** The `session_secret`, `admin_password_hash`, TLS private key, and plaintext passwords during verification are held in standard Rust `String` values. When dropped, the memory is freed but not zeroed — the secret data may linger in the process heap until overwritten by a future allocation.
