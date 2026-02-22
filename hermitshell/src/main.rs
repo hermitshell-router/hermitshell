@@ -1,3 +1,4 @@
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -121,7 +122,7 @@ async fn auth_middleware(
     response
 }
 
-type RateLimitState = Arc<Mutex<(u32, Option<Instant>)>>;
+type RateLimitState = Arc<Mutex<lru::LruCache<IpAddr, (u32, Instant)>>>;
 
 async fn rate_limit_middleware(
     axum::extract::State(rate_limit): axum::extract::State<RateLimitState>,
@@ -130,17 +131,27 @@ async fn rate_limit_middleware(
 ) -> axum::response::Response {
     let path = req.uri().path().to_string();
 
-    if !path.starts_with("/api/login") {
+    if !path.starts_with("/api/login") && !path.starts_with("/api/setup_password") {
         return next.run(req).await;
     }
 
-    // Check cooldown
+    // Extract client IP from ConnectInfo extension (injected by TLS accept loop)
+    let ip = req.extensions().get::<axum::extract::connect_info::ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0.ip());
+
+    let ip = match ip {
+        Some(ip) => ip,
+        None => return next.run(req).await, // fail-open if no IP available
+    };
+
+    // Check cooldown for this IP
     {
-        let state = rate_limit.lock().unwrap();
-        let (failures, last) = &*state;
-        if *failures > 0 {
-            if let Some(last) = last {
-                let shift = std::cmp::min(*failures - 1, 63);
+        let mut state = rate_limit.lock().unwrap();
+        if let Some((failures, last)) = state.get(&ip) {
+            let failures = *failures;
+            let last = *last;
+            if failures > 0 {
+                let shift = std::cmp::min(failures - 1, 63);
                 let backoff_secs = std::cmp::min(1u64 << shift, 60);
                 let elapsed = last.elapsed().as_secs();
                 if elapsed < backoff_secs {
@@ -161,10 +172,11 @@ async fn rate_limit_middleware(
     {
         let mut state = rate_limit.lock().unwrap();
         if status.is_success() || status.is_redirection() {
-            *state = (0, None);
+            state.pop(&ip);
         } else {
-            state.0 = state.0.saturating_add(1);
-            state.1 = Some(Instant::now());
+            let entry = state.get_or_insert_mut(ip, || (0, Instant::now()));
+            entry.0 = entry.0.saturating_add(1);
+            entry.1 = Instant::now();
         }
     }
 
@@ -181,7 +193,9 @@ async fn main() {
     let leptos_options = conf.leptos_options;
     let routes = generate_route_list(App);
 
-    let rate_limit_state: RateLimitState = Arc::new(Mutex::new((0, None)));
+    let rate_limit_state: RateLimitState = Arc::new(Mutex::new(
+        lru::LruCache::new(std::num::NonZeroUsize::new(1000).unwrap()),
+    ));
 
     let app = Router::new()
         .route("/style.css", axum::routing::get(serve_css))
