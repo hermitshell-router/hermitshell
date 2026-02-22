@@ -207,6 +207,14 @@ fn is_valid_mac(chaddr: &[u8]) -> bool {
     true
 }
 
+/// Sanitize a DHCP hostname: keep only safe characters, truncate to 63.
+fn sanitize_hostname(raw: &str) -> String {
+    raw.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '.' || *c == '_')
+        .take(63)
+        .collect()
+}
+
 fn build_response(request: &Message, msg_type: MessageType, yiaddr: Ipv4Addr) -> Message {
     let mut resp = Message::default();
     resp.set_opcode(Opcode::BootReply);
@@ -232,7 +240,10 @@ fn build_response(request: &Message, msg_type: MessageType, yiaddr: Ipv4Addr) ->
 /// Handle DHCPDISCOVER: IPC to agent for subnet allocation, respond with DHCPOFFER.
 fn handle_discover(request: &Message, mac: &str) -> Result<Message> {
     let hostname = match request.opts().get(dhcproto::v4::OptionCode::Hostname) {
-        Some(DhcpOption::Hostname(h)) => Some(h.clone()),
+        Some(DhcpOption::Hostname(h)) => {
+            let clean = sanitize_hostname(h);
+            if clean.is_empty() { None } else { Some(clean) }
+        }
         _ => None,
     };
     let mut req = serde_json::json!({
@@ -284,7 +295,10 @@ fn handle_discover(request: &Message, mac: &str) -> Result<Message> {
 fn handle_request(request: &Message, mac: &str) -> Result<Option<Message>> {
     // Look up device via IPC (same as discover — returns existing assignment)
     let hostname = match request.opts().get(dhcproto::v4::OptionCode::Hostname) {
-        Some(DhcpOption::Hostname(h)) => Some(h.clone()),
+        Some(DhcpOption::Hostname(h)) => {
+            let clean = sanitize_hostname(h);
+            if clean.is_empty() { None } else { Some(clean) }
+        }
         _ => None,
     };
     let mut req = serde_json::json!({
