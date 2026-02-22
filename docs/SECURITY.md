@@ -380,7 +380,7 @@ This document tracks security compromises made during implementation, why they w
 
 **What:** The `get_tls_config` IPC method returns both `tls_cert_pem` and `tls_key_pem` to the caller. The TLS private key crosses the Unix socket boundary.
 
-**Why:** The web UI container terminates TLS (it binds ports 80/443 and handles HTTPS). It needs the private key to configure `rustls`. The agent generates and stores the cert, so the web UI must retrieve it at startup.
+**Why:** The web UI container terminates TLS (it binds ports 8080/8443 and handles HTTPS). It needs the private key to configure `rustls`. The agent generates and stores the cert, so the web UI must retrieve it at startup.
 
 **Risk:** Any process with socket access can obtain the TLS private key. With the key, an attacker can impersonate the router's web UI or decrypt captured traffic. The same socket permissions (`0660 root:root`) that protect other secrets protect this one.
 
@@ -486,11 +486,11 @@ This document tracks security compromises made during implementation, why they w
 
 **What:** The web UI rate limit middleware uses a single global `(failures, last_failure)` counter rather than tracking per source IP.
 
-**Why:** The web UI runs inside Docker. All connections arrive from the container's localhost — real client IPs are not available without `X-Forwarded-For` headers, which nothing in this architecture sets.
+**Why:** Simplicity. Per-IP tracking was not implemented. The container uses `--network host`, so real client IPs are visible on the socket — they are available but not extracted.
 
 **Risk:** A brute-force attack from one client locks out all clients, including the legitimate admin. On a single-admin LAN appliance this is low risk, but it means a malicious LAN device could DoS the admin UI by sending repeated wrong passwords.
 
-**Proper fix:** Add `X-Forwarded-For` support: configure the HTTPS listener to inject the real client IP, then switch the middleware to per-IP tracking. Alternatively, move the web UI out of Docker to access peer addresses directly.
+**Proper fix:** Use Axum's `ConnectInfo<SocketAddr>` extractor to get the client IP, then switch the middleware to a per-IP `HashMap<IpAddr, (u32, Option<Instant>)>` with LRU eviction.
 
 ## 43. setup_password not rate-limited at web UI layer
 

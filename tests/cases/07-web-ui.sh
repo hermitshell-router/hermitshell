@@ -2,63 +2,66 @@
 source "$(dirname "$0")/../lib/helpers.sh"
 
 require_docker
+require_lan_ip
+
+ROUTER=https://10.0.0.1
 
 # Check if container is running
 assert_success "Web UI container running" \
     vm_exec router "docker inspect -f '{{.State.Running}}' hermitshell 2>/dev/null | grep -q true"
 
 # HTTPS should respond (may redirect to /setup or /login since no password set yet)
-response=$(vm_exec router "curl -s -k -o /dev/null -w '%{http_code}' https://localhost:8443/")
+response=$(vm_exec lan "curl -s -k -o /dev/null -w '%{http_code}' $ROUTER/")
 assert_match "$response" "200|30[0-9]" "HTTPS responds"
 
 # HTTP should redirect to HTTPS
-response=$(vm_exec router "curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/" 2>/dev/null || echo "000")
+response=$(vm_exec lan "curl -s -o /dev/null -w '%{http_code}' http://10.0.0.1/" 2>/dev/null || echo "000")
 assert_match "$response" "30[0-9]|000" "HTTP redirects or refused"
 
 # Get the setup form action URL (Leptos appends a hash to server fn paths)
-setup_action=$(vm_exec router "curl -s -k -L https://localhost:8443/setup | grep -oP 'action=\"[^\"]*setup_password[^\"]*\"' | head -1 | grep -oP '/api/[^\"]*'")
+setup_action=$(vm_exec lan "curl -s -k -L $ROUTER/setup | grep -oP 'action=\"[^\"]*setup_password[^\"]*\"' | head -1 | grep -oP '/api/[^\"]*'")
 if [ -z "$setup_action" ]; then
     setup_action="/api/setup_password"
 fi
 
 # Setup: set password first
-vm_exec router "curl -s -k -X POST -d 'password=testpass123&confirm=testpass123' https://localhost:8443${setup_action}" >/dev/null 2>&1
+vm_exec lan "curl -s -k -X POST -d 'password=testpass123&confirm=testpass123' $ROUTER${setup_action}" >/dev/null 2>&1
 
 # Get the login form action URL
-login_action=$(vm_exec router "curl -s -k -L https://localhost:8443/login | grep -oP 'action=\"[^\"]*login[^\"]*\"' | head -1 | grep -oP '/api/[^\"]*'")
+login_action=$(vm_exec lan "curl -s -k -L $ROUTER/login | grep -oP 'action=\"[^\"]*login[^\"]*\"' | head -1 | grep -oP '/api/[^\"]*'")
 if [ -z "$login_action" ]; then
     login_action="/api/login"
 fi
 
 # Login to get session cookie
-vm_exec router "curl -s -k -c /tmp/cookies -X POST -d 'password=testpass123' https://localhost:8443${login_action}" >/dev/null 2>&1
+vm_exec lan "curl -s -k -c /tmp/cookies -X POST -d 'password=testpass123' $ROUTER${login_action}" >/dev/null 2>&1
 
 # Check pages with session cookie
-response=$(vm_exec router "curl -s -k -b /tmp/cookies https://localhost:8443/")
+response=$(vm_exec lan "curl -s -k -b /tmp/cookies $ROUTER/")
 assert_match "$response" "HermitShell" "Dashboard responds with content"
 assert_match "$response" "Dashboard" "Dashboard page renders"
 
-response=$(vm_exec router "curl -s -k -b /tmp/cookies https://localhost:8443/devices")
+response=$(vm_exec lan "curl -s -k -b /tmp/cookies $ROUTER/devices")
 assert_match "$response" "Devices" "Devices page responds"
 
-response=$(vm_exec router "curl -s -k -b /tmp/cookies https://localhost:8443/groups")
+response=$(vm_exec lan "curl -s -k -b /tmp/cookies $ROUTER/groups")
 assert_match "$response" "Groups" "Groups page responds"
 
-response=$(vm_exec router "curl -s -k -b /tmp/cookies https://localhost:8443/traffic")
+response=$(vm_exec lan "curl -s -k -b /tmp/cookies $ROUTER/traffic")
 assert_match "$response" "Traffic" "Traffic page responds"
 
-response=$(vm_exec router "curl -s -k -b /tmp/cookies https://localhost:8443/dns")
+response=$(vm_exec lan "curl -s -k -b /tmp/cookies $ROUTER/dns")
 assert_match "$response" "Ad Blocking" "DNS page responds"
 
-response=$(vm_exec router "curl -s -k -b /tmp/cookies https://localhost:8443/settings")
+response=$(vm_exec lan "curl -s -k -b /tmp/cookies $ROUTER/settings")
 assert_match "$response" "Settings" "Settings page responds"
 
-response=$(vm_exec router "curl -s -k -b /tmp/cookies https://localhost:8443/wireguard")
+response=$(vm_exec lan "curl -s -k -b /tmp/cookies $ROUTER/wireguard")
 assert_match "$response" "WireGuard" "WireGuard page responds"
 
-response=$(vm_exec router "curl -s -k -b /tmp/cookies https://localhost:8443/port-forwarding")
+response=$(vm_exec lan "curl -s -k -b /tmp/cookies $ROUTER/port-forwarding")
 assert_match "$response" "Port Forwarding" "Port Forwarding page responds"
 
 # Check CSS is served (exempt from auth)
-response=$(vm_exec router "curl -s -k -o /dev/null -w '%{http_code}' https://localhost:8443/style.css")
+response=$(vm_exec lan "curl -s -k -o /dev/null -w '%{http_code}' $ROUTER/style.css")
 assert_match "$response" "200" "CSS file served"
