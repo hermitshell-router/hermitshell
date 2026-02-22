@@ -16,6 +16,19 @@ ProtectHome=yes
 ProtectSystem=strict
 ReadWritePaths=/data/hermitshell /run/hermitshell /tmp
 PrivateTmp=yes
+NoNewPrivileges=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictSUIDSGID=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
 
 [Install]
 WantedBy=multi-user.target
