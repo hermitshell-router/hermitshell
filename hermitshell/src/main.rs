@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use axum::response::IntoResponse;
 use axum::Router;
+use tower_service::Service;
 use leptos::config::get_configuration;
 use leptos_axum::{generate_route_list, LeptosRoutes};
 
@@ -233,7 +234,7 @@ async fn main() {
     tokio::spawn(async move {
         let listener = tokio::net::TcpListener::bind(https_addr).await.unwrap();
         loop {
-            let (stream, _addr) = match listener.accept().await {
+            let (stream, addr) = match listener.accept().await {
                 Ok(conn) => conn,
                 Err(_) => continue,
             };
@@ -245,9 +246,17 @@ async fn main() {
                     Err(_) => return,
                 };
                 let io = hyper_util::rt::TokioIo::new(tls_stream);
-                let service = hyper_util::service::TowerToHyperService::new(app);
+                let svc = hyper::service::service_fn(move |mut req: hyper::Request<hyper::body::Incoming>| {
+                    let mut router = app.clone().into_service();
+                    async move {
+                        req.extensions_mut().insert(
+                            axum::extract::connect_info::ConnectInfo(addr),
+                        );
+                        Service::call(&mut router, req).await
+                    }
+                });
                 let builder = hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new());
-                let conn = builder.serve_connection(io, service);
+                let conn = builder.serve_connection(io, svc);
                 let _ = conn.await;
             });
         }

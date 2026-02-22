@@ -18,6 +18,7 @@ tokio-rustls = "0.26"
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "service"] }
 hyper = "1"
 lru = "0.12"
+tower-service = "0.3"
 
 [lints]
 workspace = true
