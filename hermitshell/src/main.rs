@@ -213,8 +213,8 @@ async fn main() {
         .expect("invalid TLS config");
     let tls_acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(tls_config));
 
-    // HTTPS on port 443
-    let https_addr = std::net::SocketAddr::from(([0, 0, 0, 0], 443));
+    // HTTPS on port 8443 (nftables redirects 443 -> 8443)
+    let https_addr = std::net::SocketAddr::from(([0, 0, 0, 0], 8443));
     let https_app = app.clone();
     tokio::spawn(async move {
         let listener = tokio::net::TcpListener::bind(https_addr).await.unwrap();
@@ -239,11 +239,11 @@ async fn main() {
         }
     });
 
-    // HTTP on port 80 -- redirect to HTTPS
+    // HTTP on port 8080 -- redirect to HTTPS (nftables redirects 80 -> 8080)
     let redirect_app = Router::new().fallback(|| async {
         axum::response::Redirect::permanent("https://hermitshell.local/")
     });
-    let http_addr = std::net::SocketAddr::from(([0, 0, 0, 0], 80));
+    let http_addr = std::net::SocketAddr::from(([0, 0, 0, 0], 8080));
     let listener = tokio::net::TcpListener::bind(&http_addr).await.unwrap();
     println!("Listening on https://{} and http://{}", https_addr, http_addr);
     axum::serve(listener, redirect_app.into_make_service()).await.unwrap();

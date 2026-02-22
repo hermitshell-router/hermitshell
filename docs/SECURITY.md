@@ -178,7 +178,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Add a non-root user, use `setcap cap_net_bind_service` on the binary to allow privileged port binding, and ensure the socket is readable by the container user.
 
-**Status: Fixed.** Dockerfile creates a `hermitshell` user (UID/GID 1000) and sets `USER hermitshell`. The binary gets `cap_net_bind_service` via `setcap` for port 80/443 binding. The agent chowns both sockets to GID 1000 so the container user can access them. Docker run adds `--read-only --cap-drop ALL --cap-add NET_BIND_SERVICE`.
+**Status: Fixed.** Dockerfile creates a `hermitshell` user (UID/GID 1000) and sets `USER hermitshell`. The web UI binds high ports (8080/8443) with nftables DNAT redirecting 80→8080 and 443→8443. The agent chowns both sockets to GID 1000 so the container user can access them. Docker run adds `--read-only --cap-drop ALL --security-opt no-new-privileges`.
 
 ## 16. Systemd service missing hardening directives
 
@@ -544,4 +544,4 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Switch to high ports (8080/8443) with nftables DNAT rules on the host redirecting 80/443. This would eliminate the need for `cap_net_bind_service` entirely, allowing `no-new-privileges` to be re-enabled. Alternatively, use Docker's ambient capabilities (`--cap-add` with `--security-opt no-new-privileges`) which requires a Docker runtime that supports ambient capability injection (not yet standard).
 
-**Proper fix:** Reuse a persistent IPC connection with automatic reconnection on failure. Or add a connection semaphore in the DHCP server to cap concurrent agent connections (e.g., 10).
+**Status: Fixed.** Web UI switched to high ports (8080/8443). nftables DNAT redirects 80→8080 and 443→8443 on the LAN interface. `setcap` and `libcap` removed from Dockerfile. `--security-opt no-new-privileges` re-enabled, `--cap-add NET_BIND_SERVICE` removed (no longer needed).

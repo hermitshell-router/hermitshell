@@ -97,7 +97,7 @@ table inet filter {{
         ct state established,related accept
         iifname "lo" accept
         tcp dport 22 accept
-        iifname "{lan_iface}" tcp dport {{ 80, 443 }} accept
+        iifname "{lan_iface}" tcp dport {{ 8080, 8443 }} accept
         iifname "{lan_iface}" udp dport 67 accept
         iifname "{lan_iface}" tcp dport 53 accept
         iifname "{lan_iface}" udp dport 53 accept
@@ -146,6 +146,8 @@ table inet filter {{
 table ip nat {{
     chain prerouting {{
         type nat hook prerouting priority -100;
+        iifname "{lan_iface}" tcp dport 443 redirect to :8443
+        iifname "{lan_iface}" tcp dport 80 redirect to :8080
         iifname "{lan_iface}" udp dport 53 dnat to 10.0.0.1:53
         iifname "{lan_iface}" tcp dport 53 dnat to 10.0.0.1:53
     }}
@@ -379,6 +381,16 @@ pub fn apply_port_forwards(
 
     // Build prerouting chain rules
     let mut prerouting_rules = String::new();
+
+    // Web UI redirect (high ports, so container needs no privileged port binding)
+    prerouting_rules.push_str(&format!(
+        "        iifname \"{}\" tcp dport 443 redirect to :8443\n",
+        lan_iface
+    ));
+    prerouting_rules.push_str(&format!(
+        "        iifname \"{}\" tcp dport 80 redirect to :8080\n",
+        lan_iface
+    ));
 
     // Port forward DNAT rules
     for fwd in forwards {
