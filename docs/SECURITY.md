@@ -144,6 +144,8 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Apply the same validation used by individual handlers: `validate_ip` for port forward IPs, group name whitelist check, `sanitize_hostname()` for hostnames, and port range validation (`ext_end >= ext_start`, ports > 0).
 
+**Status: Fixed.** `import_config` now validates all imported data before modifying the database (validate-then-apply). Validation uses the same checks as individual handlers: `validate_mac()` for all MACs (devices, reservations, pinholes), group name whitelist (`quarantine|trusted|iot|guest|servers`), `sanitize_hostname()` for device hostnames, `validate_ip_pub()` for port forward IPs, protocol whitelist (`tcp|udp|both` for port forwards, `tcp|udp` for pinholes), and port range validation. If any field fails validation, the entire import is rejected with a descriptive error and no data is changed.
+
 ## 13. SQL injection pattern in VACUUM INTO
 
 **What:** `db.rs:vacuum_into()` uses `format!("VACUUM INTO '{}'", path)` to build the SQL query. The path is string-interpolated directly into SQL.
@@ -492,6 +494,8 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Use Axum's `ConnectInfo<SocketAddr>` extractor to get the client IP, then switch the middleware to a per-IP `HashMap<IpAddr, (u32, Option<Instant>)>` with LRU eviction.
 
+**Status: Fixed.** Rate limiting now uses `LruCache<IpAddr, (u32, Instant)>` capped at 1,000 entries. Client IP extracted via `ConnectInfo<SocketAddr>` injected from the HTTPS accept loop. One client's brute-force attempts no longer affect other clients.
+
 ## 43. setup_password not rate-limited at web UI layer
 
 **What:** The web UI rate limit middleware only applies to `/api/login*` paths, not `/api/setup_password*`. The agent-side rate limiter still protects `setup_password`.
@@ -501,6 +505,8 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** An attacker can brute-force the current password via `setup_password` without web UI rate limiting. The agent-side rate limiter still applies (shared counter with `verify_password`), so this is defense-in-depth reduction, not a bypass.
 
 **Proper fix:** Distinguish brute-force failures (wrong current password → HTTP 422) from validation errors (HTTP 500) in the middleware, and only count 422 responses as failures.
+
+**Status: Fixed.** The per-IP rate limit middleware now applies to both `/api/login*` and `/api/setup_password*` paths. All non-success responses count as failures.
 
 ## 44. DHCP server IPC has no read timeout
 
