@@ -858,7 +858,10 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             let reservations = db.list_dhcp_reservations().unwrap_or_default();
             let forwards = db.list_port_forwards().unwrap_or_default();
             let peers = db.list_wg_peers().unwrap_or_default();
-            let pinholes = db.list_ipv6_pinholes().unwrap_or_default();
+            let pinholes: Vec<_> = db.list_ipv6_pinholes().unwrap_or_default()
+                .into_iter()
+                .filter(|p| matches!(p.get("protocol").and_then(|v| v.as_str()), Some("tcp" | "udp")))
+                .collect();
 
             let config_keys = ["ad_blocking_enabled", "wg_listen_port", "dmz_host_ip", "log_format", "syslog_target", "webhook_url", "log_retention_days", "runzero_url", "runzero_sync_interval", "runzero_enabled", "qos_enabled", "qos_upload_mbps", "qos_download_mbps", "qos_test_url"];
             let mut config_map = serde_json::Map::new();
@@ -898,6 +901,43 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             };
             if parsed.get("version").and_then(|v| v.as_i64()) != Some(1) {
                 return Response::err("unsupported config version");
+            }
+
+            // Validate all inputs before mutating any state
+            if let Some(devices) = parsed.get("devices").and_then(|v| v.as_array()) {
+                for dev in devices {
+                    let mac = dev.get("mac").and_then(|v| v.as_str()).unwrap_or("");
+                    if !mac.is_empty() {
+                        if nftables::validate_mac(mac).is_err() {
+                            return Response::err(&format!("invalid device MAC: {}", mac));
+                        }
+                        let group = dev.get("device_group").and_then(|v| v.as_str()).unwrap_or("quarantine");
+                        if nftables::validate_group(group).is_err() {
+                            return Response::err(&format!("invalid device group: {}", group));
+                        }
+                    }
+                }
+            }
+            if let Some(forwards) = parsed.get("port_forwards").and_then(|v| v.as_array()) {
+                for f in forwards {
+                    let protocol = f.get("protocol").and_then(|v| v.as_str()).unwrap_or("both");
+                    match protocol {
+                        "tcp" | "udp" | "both" => {}
+                        _ => return Response::err(&format!("invalid port forward protocol: {}", protocol)),
+                    }
+                    let internal_ip = f.get("internal_ip").and_then(|v| v.as_str()).unwrap_or("");
+                    if !internal_ip.is_empty() && nftables::validate_ip_pub(internal_ip).is_err() {
+                        return Response::err(&format!("invalid port forward IP: {}", internal_ip));
+                    }
+                }
+            }
+            if let Some(pinholes) = parsed.get("ipv6_pinholes").and_then(|v| v.as_array()) {
+                for p in pinholes {
+                    let protocol = p.get("protocol").and_then(|v| v.as_str()).unwrap_or("");
+                    if !protocol.is_empty() && nftables::validate_protocol(protocol).is_err() {
+                        return Response::err(&format!("invalid pinhole protocol: {}", protocol));
+                    }
+                }
             }
 
             let db = db.lock().unwrap();

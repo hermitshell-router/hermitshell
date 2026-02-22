@@ -22,7 +22,7 @@ fi
 
 # Setup: set password (may already be set by test 07, that's ok)
 response=$(vm_exec lan "curl -s -k -o /dev/null -w '%{http_code}' -X POST -d 'password=testpass123&confirm=testpass123' $ROUTER${setup_action}")
-assert_match "$response" "30[0-9]|422|500" "Setup accepts or already configured"
+assert_match "$response" "200|30[0-9]" "Setup accepts or already configured"
 
 # Get the login form action URL
 login_action=$(vm_exec lan "curl -s -k -L $ROUTER/login | grep -oP 'action=\"[^\"]*login[^\"]*\"' | head -1 | grep -oP '/api/[^\"]*'")

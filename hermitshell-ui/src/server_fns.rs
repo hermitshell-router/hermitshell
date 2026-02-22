@@ -4,6 +4,10 @@ use server_fn::ServerFnError;
 
 #[server]
 pub async fn setup_password(password: String, confirm: String) -> Result<(), ServerFnError> {
+    if crate::client::has_password().unwrap_or(false) {
+        leptos_axum::redirect("/login");
+        return Ok(());
+    }
     if password != confirm || password.len() < 8 || password.len() > 128 {
         return Err(ServerFnError::new("Invalid password"));
     }

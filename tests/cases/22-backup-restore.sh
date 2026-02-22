@@ -72,6 +72,32 @@ assert_contains "$round_trip" "PRE_IMPORT_7777:0" "Port forward gone before impo
 assert_contains "$round_trip" "POST_FWD_7777:1" "Port forward restored after import"
 assert_contains "$round_trip" "POST_CONFIG_21:1" "Config value restored after import"
 
+# --- import_config validation ---
+# Invalid MAC
+result=$(vm_exec router 'echo "{\"method\":\"import_config\",\"value\":\"{\\\"version\\\":1,\\\"devices\\\":[{\\\"mac\\\":\\\"BADMAC\\\",\\\"device_group\\\":\\\"trusted\\\"}]}\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_contains "$result" '"ok":false' "import rejects invalid MAC"
+assert_contains "$result" "invalid device MAC" "import error mentions device MAC"
+
+# Invalid group
+result=$(vm_exec router 'echo "{\"method\":\"import_config\",\"value\":\"{\\\"version\\\":1,\\\"devices\\\":[{\\\"mac\\\":\\\"aa:bb:cc:dd:ee:ff\\\",\\\"device_group\\\":\\\"hacker\\\"}]}\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_contains "$result" '"ok":false' "import rejects invalid group"
+assert_contains "$result" "invalid device group" "import error mentions group"
+
+# Invalid port forward IP
+result=$(vm_exec router 'echo "{\"method\":\"import_config\",\"value\":\"{\\\"version\\\":1,\\\"port_forwards\\\":[{\\\"protocol\\\":\\\"tcp\\\",\\\"external_port_start\\\":80,\\\"external_port_end\\\":80,\\\"internal_ip\\\":\\\"not-an-ip\\\",\\\"internal_port\\\":80}]}\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_contains "$result" '"ok":false' "import rejects invalid port forward IP"
+assert_contains "$result" "invalid port forward IP" "import error mentions IP"
+
+# Invalid port forward protocol
+result=$(vm_exec router 'echo "{\"method\":\"import_config\",\"value\":\"{\\\"version\\\":1,\\\"port_forwards\\\":[{\\\"protocol\\\":\\\"sctp\\\",\\\"external_port_start\\\":80,\\\"external_port_end\\\":80,\\\"internal_ip\\\":\\\"10.0.1.1\\\",\\\"internal_port\\\":80}]}\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_contains "$result" '"ok":false' "import rejects invalid protocol"
+assert_contains "$result" "invalid port forward protocol" "import error mentions protocol"
+
+# Invalid pinhole protocol
+result=$(vm_exec router 'echo "{\"method\":\"import_config\",\"value\":\"{\\\"version\\\":1,\\\"ipv6_pinholes\\\":[{\\\"device_mac\\\":\\\"aa:bb:cc:dd:ee:ff\\\",\\\"protocol\\\":\\\"icmp\\\",\\\"port_start\\\":80,\\\"port_end\\\":80}]}\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_contains "$result" '"ok":false' "import rejects invalid pinhole protocol"
+assert_contains "$result" "invalid pinhole protocol" "import error mentions pinhole protocol"
+
 # --- Backup Database ---
 result=$(vm_exec router 'echo "{\"method\":\"backup_database\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$result" '"ok":true' "backup_database succeeds"

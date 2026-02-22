@@ -17,7 +17,7 @@ fn validate_ip(ip: &str) -> Result<()> {
 }
 
 /// Validate that a group name is one of the known forwarding chains.
-fn validate_group(group: &str) -> Result<()> {
+pub fn validate_group(group: &str) -> Result<()> {
     if !VALID_GROUPS.contains(&group) {
         anyhow::bail!("invalid group: {}", group);
     }
@@ -65,7 +65,7 @@ pub fn validate_ipv6_global(ip: &str) -> Result<()> {
 }
 
 /// Validate that a protocol string is "tcp" or "udp".
-fn validate_protocol(protocol: &str) -> Result<()> {
+pub fn validate_protocol(protocol: &str) -> Result<()> {
     match protocol {
         "tcp" | "udp" => Ok(()),
         _ => anyhow::bail!("invalid protocol: {} (must be tcp or udp)", protocol),
