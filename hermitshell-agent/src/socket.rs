@@ -1389,6 +1389,13 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             if now.saturating_sub(created) > SESSION_ABSOLUTE_TIMEOUT_SECS {
                 return Response::err("session expired");
             }
+            let last_active = match parts[2].parse::<u64>() {
+                Ok(t) => t,
+                Err(_) => return Response::err("invalid timestamp"),
+            };
+            if now.saturating_sub(last_active) > SESSION_IDLE_TIMEOUT_SECS {
+                return Response::err("session idle expired");
+            }
             // Issue new token with same CREATED but updated LAST_ACTIVE
             let new_payload = format!("admin:{}:{}", created, now);
             let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
