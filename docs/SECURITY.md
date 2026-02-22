@@ -534,4 +534,14 @@ This document tracks security compromises made during implementation, why they w
 
 **Mitigating factor:** The 10-second rate limit per MAC means legitimate traffic creates at most one connection per device per 10 seconds. The risk is primarily from spoofed-MAC floods, which are already mitigated by the LRU cap discarding old entries.
 
+## 47. Container lacks no-new-privileges protection
+
+**What:** The Docker container runs without `--security-opt no-new-privileges`. This means a process inside the container could theoretically escalate privileges via setuid/setgid binaries if any were present.
+
+**Why:** `no-new-privileges` sets the kernel's `PR_SET_NO_NEW_PRIVS` flag, which prevents privilege escalation during `execve` — but it also prevents the kernel from honoring file capabilities set via `setcap`. The container binary uses `setcap cap_net_bind_service=+ep` to bind ports 80/443 as a non-root user. With `no-new-privileges` enabled, this capability is silently ignored and the binary cannot bind privileged ports.
+
+**Risk:** If an attacker compromises the web UI process and can write a setuid binary to the container filesystem, they could escalate to root inside the container. In practice, this is mitigated by `--read-only` (filesystem is immutable) and `--cap-drop ALL --cap-add NET_BIND_SERVICE` (only one capability available). There are no setuid binaries in the Alpine base image after `adduser`/`addgroup`.
+
+**Proper fix:** Switch to high ports (8080/8443) with nftables DNAT rules on the host redirecting 80/443. This would eliminate the need for `cap_net_bind_service` entirely, allowing `no-new-privileges` to be re-enabled. Alternatively, use Docker's ambient capabilities (`--cap-add` with `--security-opt no-new-privileges`) which requires a Docker runtime that supports ambient capability injection (not yet standard).
+
 **Proper fix:** Reuse a persistent IPC connection with automatic reconnection on failure. Or add a connection semaphore in the DHCP server to cap concurrent agent connections (e.g., 10).
