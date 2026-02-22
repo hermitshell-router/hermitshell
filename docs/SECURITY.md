@@ -254,6 +254,8 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Truncate and validate in the DHCP handler before sending to the agent: reject hostnames > 255 bytes or containing non-printable characters.
 
+**Status: Fixed.** `sanitize_hostname()` added to the DHCP server — filters to `[a-zA-Z0-9._-]` and truncates to 63 chars before IPC. The agent retains its own `sanitize_hostname()` as defense-in-depth.
+
 ## 22. DHCP discover_times and DHCPv6 solicit_times HashMaps grow without bound
 
 **What:** The DHCP server (`hermitshell-dhcp/src/main.rs:53`) uses `HashMap<String, Instant>` to rate-limit DHCPDISCOVER messages (10-second cooldown per MAC). The DHCPv6 server uses a similar `solicit_times` HashMap to rate-limit DHCPv6 SOLICIT messages. Entries are never evicted in either map — every unique MAC that sends a DISCOVER or SOLICIT is stored forever.
@@ -264,6 +266,8 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Periodically evict entries older than 60 seconds, or cap the HashMap size and evict the oldest entry when full. A simple approach: every 1000 packets, remove entries where `elapsed() > 60s`. Apply the same eviction strategy to both `discover_times` and `solicit_times`.
 
+**Status: Fixed.** Both `discover_times` and `solicit_times` replaced with `LruCache` (cap 10,000 entries). When full, the least-recently-seen MAC is evicted automatically.
+
 ## 23. DHCP/DHCPv6 servers accept packets from any source on the LAN interface
 
 **What:** The DHCP server binds to `0.0.0.0:67` and the DHCPv6 server binds to `[::]:547` on the LAN interface. Both process all valid packets without source validation — any device that can send a UDP packet to port 67 (DHCP) or 547 (DHCPv6) on the LAN interface gets an address allocation.
@@ -273,6 +277,8 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** This is expected DHCP/DHCPv6 behavior, but it means any device physically connected to the LAN (or bridged to it) can claim addresses. A rogue device can exhaust the address pool by requesting allocations with many spoofed MACs. The agent allocates /32 point-to-point IPv4 addresses from 10.0.0.0/16 plus /128 ULA IPv6 addresses per device, giving 16,580,355 possible device allocations (up from ~16,000 with the old /30 subnet scheme). DHCPv6 has the same MAC spoofing risk — a client can use a different DUID per request to appear as a new device each time.
 
 **Proper fix:** Add a maximum device limit in the agent's `dhcp_discover` handler. When the device count exceeds a threshold (e.g., 1000), reject new allocations. Apply the same limit to the DHCPv6 `dhcpv6_solicit` handler. Consider alerting the admin.
+
+**Status: Mitigated.** The LRU cap on DHCP rate-limit maps (#22) bounds the rate of new device registrations from MAC-spoofing attacks. The architectural 16.5M device limit in `db.rs` remains as the hard cap.
 
 ## 24. set_config allows overwriting critical keys without restriction
 
