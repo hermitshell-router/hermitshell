@@ -497,3 +497,37 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** An attacker can brute-force the current password via `setup_password` without web UI rate limiting. The agent-side rate limiter still applies (shared counter with `verify_password`), so this is defense-in-depth reduction, not a bypass.
 
 **Proper fix:** Distinguish brute-force failures (wrong current password → HTTP 422) from validation errors (HTTP 500) in the middleware, and only count 422 responses as failures.
+
+## 44. DHCP server IPC has no read timeout
+
+**What:** The `agent_request()` function (`hermitshell-dhcp/src/main.rs:168`) opens a blocking `UnixStream` to the agent and calls `read_line()` with no timeout. If the agent hangs or crashes mid-response, the DHCP server blocks indefinitely.
+
+**Why:** Simplicity. The agent is expected to always respond promptly.
+
+**Risk:** The DHCP server is single-threaded (synchronous event loop). A hung agent blocks the entire DHCP server — no new clients can get addresses until the process is restarted. The DHCPv6 server runs in a separate thread and is independently affected (it also uses `agent_request()`).
+
+**Proper fix:** Call `stream.set_read_timeout(Some(Duration::from_secs(5)))` before `read_line()` in `agent_request()`. On timeout, log the error and return `Err` so the DHCP handler can continue processing other packets.
+
+## 45. Agent IPC read_line has no size limit
+
+**What:** The agent's IPC handler (`hermitshell-agent/src/socket.rs:246`) reads lines with `reader.read_line(&mut line)` which grows the buffer until it finds a newline. There is no cap on line length.
+
+**Why:** Simplicity. IPC callers are expected to send well-formed, reasonably-sized JSON.
+
+**Risk:** Any process with socket access can send a multi-gigabyte line (no newline) to exhaust agent memory. The socket is `0660 root:root` in production, so the attacker needs root or container access. In tests where the socket is `chmod 666`, any user can trigger this.
+
+**Mitigating factor:** Same socket permissions as all other IPC issues. The DHCP server's requests are bounded by the 1500-byte UDP packet that triggered them, so this is only exploitable by a direct socket client.
+
+**Proper fix:** Use `read_line()` with a size-limited wrapper, or switch to `tokio::io::AsyncBufReadExt::read_line()` with a manual length check. Reject lines longer than 64 KB.
+
+## 46. DHCP server opens a new IPC connection per request
+
+**What:** The `agent_request()` function (`hermitshell-dhcp/src/main.rs:168`) opens a new `UnixStream` for every IPC call. Each DHCP DISCOVER triggers one connection, and each DHCP REQUEST triggers two (one for discover, one for provision).
+
+**Why:** Simplicity. A persistent connection would require reconnection logic if the agent restarts.
+
+**Risk:** Under heavy DHCP traffic (many devices joining simultaneously), the DHCP server opens many short-lived connections. Each connection spawns a tokio task in the agent (`socket.rs:233`). This compounds with issue #19 (no connection limiting) — a DHCP flood creates both rate-limit map entries (now bounded by LRU) and agent connections (unbounded).
+
+**Mitigating factor:** The 10-second rate limit per MAC means legitimate traffic creates at most one connection per device per 10 seconds. The risk is primarily from spoofed-MAC floods, which are already mitigated by the LRU cap discarding old entries.
+
+**Proper fix:** Reuse a persistent IPC connection with automatic reconnection on failure. Or add a connection semaphore in the DHCP server to cap concurrent agent connections (e.g., 10).
