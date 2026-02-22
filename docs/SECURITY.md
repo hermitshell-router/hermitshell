@@ -551,3 +551,13 @@ This document tracks security compromises made during implementation, why they w
 **Proper fix:** Switch to high ports (8080/8443) with nftables DNAT rules on the host redirecting 80/443. This would eliminate the need for `cap_net_bind_service` entirely, allowing `no-new-privileges` to be re-enabled. Alternatively, use Docker's ambient capabilities (`--cap-add` with `--security-opt no-new-privileges`) which requires a Docker runtime that supports ambient capability injection (not yet standard).
 
 **Status: Fixed.** Web UI switched to high ports (8080/8443). nftables DNAT redirects 80→8080 and 443→8443 on the LAN interface. `setcap` and `libcap` removed from Dockerfile. `--security-opt no-new-privileges` re-enabled, `--cap-add NET_BIND_SERVICE` removed (no longer needed).
+
+## 48. Per-IP rate limit cache can be evicted by distributed attack
+
+**What:** The web UI per-IP rate limiter uses an `LruCache` capped at 1,000 entries. An attacker with access to many source IPs (e.g., multiple compromised LAN devices) could flood the cache with new entries, evicting a previously tracked IP and resetting its backoff counter.
+
+**Why:** Bounded caches are necessary to prevent unbounded memory growth. LRU eviction is a standard trade-off — it favors tracking recently active IPs, but allows old entries to be displaced.
+
+**Risk:** Low. The agent-side rate limiter uses a global counter that is unaffected by web UI cache eviction. An attacker who evicts their IP from the web UI cache still hits the agent's exponential backoff on the next attempt. The web UI per-IP layer is a UX improvement (prevents one attacker from locking out other clients); the agent-side global limiter is the ultimate brute-force defense.
+
+**Proper fix:** No fix needed — the two-layer design (per-IP web UI + global agent) provides defense in depth. If a stronger guarantee were desired, the web UI could use a larger cache or persist rate limit state to the agent's SQLite database.
