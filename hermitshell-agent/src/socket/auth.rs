@@ -238,6 +238,35 @@ pub(super) fn handle_refresh_session(req: &Request, db: &Arc<Mutex<Db>>) -> Resp
     resp
 }
 
+pub(super) fn handle_set_tls_cert(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref cert_pem) = req.tls_cert_pem else {
+        return Response::err("tls_cert_pem required");
+    };
+    let Some(ref key_pem) = req.tls_key_pem else {
+        return Response::err("tls_key_pem required");
+    };
+
+    let certs: Vec<_> = rustls_pemfile::certs(&mut cert_pem.as_bytes())
+        .filter_map(|c| c.ok())
+        .collect();
+    if certs.is_empty() {
+        return Response::err("invalid certificate PEM");
+    }
+
+    let key = rustls_pemfile::private_key(&mut key_pem.as_bytes());
+    match key {
+        Ok(Some(_)) => {}
+        _ => return Response::err("invalid private key PEM"),
+    }
+
+    let db = db.lock().unwrap();
+    let _ = db.set_config("tls_cert_pem", cert_pem);
+    let _ = db.set_config("tls_key_pem", key_pem);
+    let _ = db.set_config("tls_mode", "custom");
+    info!("custom TLS certificate uploaded");
+    Response::ok()
+}
+
 pub(super) fn handle_get_tls_status(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let db = db.lock().unwrap();
     let mode = db.get_config("tls_mode").ok().flatten().unwrap_or_else(|| "self_signed".to_string());

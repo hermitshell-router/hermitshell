@@ -111,6 +111,8 @@ struct Request {
     download_mbps: Option<u32>,
     url: Option<String>,
     nickname: Option<String>,
+    tls_cert_pem: Option<String>,
+    tls_key_pem: Option<String>,
 }
 
 /// JSON response envelope. `ok` indicates success; `error` carries failure details.
@@ -283,6 +285,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "refresh_session" => auth::handle_refresh_session(&req, db),
         "get_tls_config" => auth::handle_get_tls_config(&req, db),
         "get_tls_status" => auth::handle_get_tls_status(&req, db),
+        "set_tls_cert" => auth::handle_set_tls_cert(&req, db),
         "get_wireguard" => wireguard::handle_get_wireguard(&req, db),
         "set_wireguard_enabled" => wireguard::handle_set_wireguard_enabled(&req, db),
         "add_wg_peer" => wireguard::handle_add_wg_peer(&req, db),
