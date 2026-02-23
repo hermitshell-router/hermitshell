@@ -155,64 +155,66 @@ fn check_dns_beaconing(db: &Db, mac: &str, ip: &str, log_tx: &UnboundedSender<Lo
     }
 }
 
-fn check_dns_volume_spike(db: &Db, mac: &str, ip: &str, log_tx: &UnboundedSender<LogEvent>) {
-    let baseline = match db.get_baseline(mac, "unique_dns_domains") {
+fn check_baseline_spike(
+    db: &Db,
+    mac: &str,
+    ip: &str,
+    log_tx: &UnboundedSender<LogEvent>,
+    metric: &str,
+    rule: &str,
+    severity: &str,
+    threshold_multiplier: f64,
+    min_baseline: f64,
+    query_fn: impl Fn(&Db, &str, i64) -> anyhow::Result<Vec<(i64, i64)>>,
+    format_msg: impl Fn(i64, i64) -> String,
+    format_details: impl Fn(i64, i64) -> serde_json::Value,
+) {
+    let baseline = match db.get_baseline(mac, metric) {
         Ok(Some(b)) => b,
         _ => return,
     };
     let (avg, _stddev) = baseline;
-    if avg < 1.0 {
+    if avg < min_baseline {
         return;
     }
 
-    let hourly = match db.count_unique_dns_domains_hourly(ip, 1) {
+    let hourly = match query_fn(db, ip, 1) {
         Ok(h) => h,
         Err(_) => return,
     };
     let current: i64 = hourly.iter().map(|(_, c)| c).sum();
 
-    if current as f64 > avg * 3.0 {
-        let details = serde_json::json!({
-            "current": current,
-            "baseline_avg": avg as i64,
-        });
+    if current as f64 > avg * threshold_multiplier {
+        let details = format_details(current, avg as i64);
         fire_alert(
-            db, mac, "dns_volume_spike", "high",
-            &format!("Device queried {} unique domains in the last hour (baseline: {})", current, avg as i64),
+            db, mac, rule, severity,
+            &format_msg(current, avg as i64),
             Some(&details.to_string()),
             log_tx,
         );
     }
 }
 
+fn check_dns_volume_spike(db: &Db, mac: &str, ip: &str, log_tx: &UnboundedSender<LogEvent>) {
+    check_baseline_spike(
+        db, mac, ip, log_tx,
+        "unique_dns_domains", "dns_volume_spike", "high",
+        3.0, 1.0,
+        |db, ip, hours| db.count_unique_dns_domains_hourly(ip, hours),
+        |current, avg| format!("Device queried {} unique domains in the last hour (baseline: {})", current, avg),
+        |current, avg| serde_json::json!({"current": current, "baseline_avg": avg}),
+    );
+}
+
 fn check_new_dest_spike(db: &Db, mac: &str, ip: &str, log_tx: &UnboundedSender<LogEvent>) {
-    let baseline = match db.get_baseline(mac, "unique_dest_ips") {
-        Ok(Some(b)) => b,
-        _ => return,
-    };
-    let (avg, _stddev) = baseline;
-    if avg < 1.0 {
-        return;
-    }
-
-    let hourly = match db.count_unique_dest_ips_hourly(ip, 1) {
-        Ok(h) => h,
-        Err(_) => return,
-    };
-    let current: i64 = hourly.iter().map(|(_, c)| c).sum();
-
-    if current as f64 > avg * 3.0 {
-        let details = serde_json::json!({
-            "current": current,
-            "baseline_avg": avg as i64,
-        });
-        fire_alert(
-            db, mac, "new_dest_spike", "medium",
-            &format!("Device contacted {} unique IPs in the last hour (baseline: {})", current, avg as i64),
-            Some(&details.to_string()),
-            log_tx,
-        );
-    }
+    check_baseline_spike(
+        db, mac, ip, log_tx,
+        "unique_dest_ips", "new_dest_spike", "medium",
+        3.0, 1.0,
+        |db, ip, hours| db.count_unique_dest_ips_hourly(ip, hours),
+        |current, avg| format!("Device contacted {} unique IPs in the last hour (baseline: {})", current, avg),
+        |current, avg| serde_json::json!({"current": current, "baseline_avg": avg}),
+    );
 }
 
 fn check_suspicious_ports(db: &Db, mac: &str, ip: &str, log_tx: &UnboundedSender<LogEvent>) {
@@ -240,33 +242,14 @@ fn check_suspicious_ports(db: &Db, mac: &str, ip: &str, log_tx: &UnboundedSender
 }
 
 fn check_bandwidth_spike(db: &Db, mac: &str, ip: &str, log_tx: &UnboundedSender<LogEvent>) {
-    let baseline = match db.get_baseline(mac, "tx_bytes") {
-        Ok(Some(b)) => b,
-        _ => return,
-    };
-    let (avg, _stddev) = baseline;
-    if avg < 1024.0 {
-        return;
-    }
-
-    let hourly = match db.get_device_tx_bytes_hourly(ip, 1) {
-        Ok(h) => h,
-        Err(_) => return,
-    };
-    let current: i64 = hourly.iter().map(|(_, c)| c).sum();
-
-    if current as f64 > avg * 5.0 {
-        let details = serde_json::json!({
-            "current_bytes": current,
-            "baseline_avg_bytes": avg as i64,
-        });
-        fire_alert(
-            db, mac, "bandwidth_spike", "low",
-            &format!("Device uploaded {} bytes in the last hour (baseline: {})", current, avg as i64),
-            Some(&details.to_string()),
-            log_tx,
-        );
-    }
+    check_baseline_spike(
+        db, mac, ip, log_tx,
+        "tx_bytes", "bandwidth_spike", "low",
+        5.0, 1024.0,
+        |db, ip, hours| db.get_device_tx_bytes_hourly(ip, hours),
+        |current, avg| format!("Device uploaded {} bytes in the last hour (baseline: {})", current, avg),
+        |current, avg| serde_json::json!({"current_bytes": current, "baseline_avg_bytes": avg}),
+    );
 }
 
 fn mean_stddev(values: &[f64]) -> (f64, f64) {

@@ -39,7 +39,9 @@ pub fn pubkey_from_private(private_key: &str) -> Result<String> {
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()?;
-    cmd.stdin.take().unwrap().write_all(private_key.as_bytes())?;
+    cmd.stdin.take()
+        .ok_or_else(|| anyhow::anyhow!("wg stdin not piped"))?
+        .write_all(private_key.as_bytes())?;
     let output = cmd.wait_with_output()?;
     if !output.status.success() {
         anyhow::bail!("wg pubkey failed");
@@ -65,12 +67,12 @@ pub fn create_interface(private_key: &str, listen_port: u16) -> Result<()> {
         anyhow::bail!("wg set failed");
     }
 
-    // Assign router IPv4 address
+    // Assign router IPv4 address (ignore: may already exist)
     let _ = Command::new("/usr/sbin/ip")
         .args(["addr", "add", "10.0.0.1/32", "dev", "wg0"])
         .status();
 
-    // Assign router IPv6 ULA address
+    // Assign router IPv6 ULA address (ignore: may already exist)
     let _ = Command::new("/usr/sbin/ip")
         .args(["-6", "addr", "add", "fd00::1/128", "dev", "wg0"])
         .status();
@@ -89,6 +91,7 @@ pub fn create_interface(private_key: &str, listen_port: u16) -> Result<()> {
 
 /// Destroy the wg0 interface.
 pub fn destroy_interface() -> Result<()> {
+    // best-effort: interface may not exist
     let _ = Command::new("/usr/sbin/ip")
         .args(["link", "del", "wg0"])
         .status();
@@ -99,7 +102,7 @@ pub fn destroy_interface() -> Result<()> {
 /// Add a peer to the wg0 interface with dual-stack allowed-ips.
 pub fn add_peer(public_key: &str, device_ipv4: &str, device_ipv6_ula: &str) -> Result<()> {
     validate_pubkey(public_key)?;
-    crate::nftables::validate_ip_pub(device_ipv4)?;
+    crate::nftables::validate_ip(device_ipv4)?;
     crate::nftables::validate_ipv6_ula(device_ipv6_ula)?;
 
     let allowed_ips = format!("{}/32,{}/128", device_ipv4, device_ipv6_ula);
@@ -110,13 +113,13 @@ pub fn add_peer(public_key: &str, device_ipv4: &str, device_ipv6_ula: &str) -> R
         anyhow::bail!("failed to add WireGuard peer {}", public_key);
     }
 
-    // Add IPv4 route so kernel sends traffic for this IP through wg0
+    // Add IPv4 route (ignore: may already exist from previous add)
     let route_v4 = format!("{}/32", device_ipv4);
     let _ = Command::new("/usr/sbin/ip")
         .args(["route", "add", &route_v4, "dev", "wg0"])
         .status();
 
-    // Add IPv6 route
+    // Add IPv6 route (ignore: may already exist)
     let route_v6 = format!("{}/128", device_ipv6_ula);
     let _ = Command::new("/usr/sbin/ip")
         .args(["-6", "route", "add", &route_v6, "dev", "wg0"])
@@ -130,15 +133,18 @@ pub fn add_peer(public_key: &str, device_ipv4: &str, device_ipv6_ula: &str) -> R
 pub fn remove_peer(public_key: &str, device_ipv4: &str, device_ipv6_ula: &str) -> Result<()> {
     validate_pubkey(public_key)?;
 
+    // best-effort cleanup: peer may already be removed
     let _ = Command::new("/usr/bin/wg")
         .args(["set", "wg0", "peer", public_key, "remove"])
         .status();
 
+    // best-effort: route may not exist
     let route_v4 = format!("{}/32", device_ipv4);
     let _ = Command::new("/usr/sbin/ip")
         .args(["route", "del", &route_v4, "dev", "wg0"])
         .status();
 
+    // best-effort: IPv6 route may not exist
     let route_v6 = format!("{}/128", device_ipv6_ula);
     let _ = Command::new("/usr/sbin/ip")
         .args(["-6", "route", "del", &route_v6, "dev", "wg0"])
@@ -172,6 +178,7 @@ pub fn close_listen_port() -> Result<()> {
         if line.contains("wireguard") {
             if let Some(handle) = line.split("# handle ").last() {
                 let handle = handle.trim();
+                // best-effort: rule may already have been removed
                 let _ = Command::new("/usr/sbin/nft")
                     .args(["delete", "rule", "inet", "filter", "input", "handle", handle])
                     .status();

@@ -7,7 +7,7 @@ use tracing::{debug, info};
 const VALID_GROUPS: &[&str] = &["quarantine", "trusted", "iot", "guest", "servers", "blocked"];
 
 /// Validate that an IP string is a valid IPv4 address within 10.0.0.0/8.
-fn validate_ip(ip: &str) -> Result<()> {
+pub fn validate_ip(ip: &str) -> Result<()> {
     let addr: Ipv4Addr = ip.parse().map_err(|_| anyhow::anyhow!("invalid IP: {}", ip))?;
     let octets = addr.octets();
     if octets[0] != 10 {
@@ -72,15 +72,9 @@ pub fn validate_protocol(protocol: &str) -> Result<()> {
     }
 }
 
-/// Public wrapper for IP validation, used by wireguard.rs.
-pub fn validate_ip_pub(ip: &str) -> Result<()> {
-    validate_ip(ip)
-}
 
-pub fn apply_base_rules(wan_iface: &str, lan_iface: &str) -> Result<()> {
-    validate_iface(wan_iface)?;
-    validate_iface(lan_iface)?;
-    let rules = format!(r#"#!/usr/sbin/nft -f
+fn build_base_ruleset(wan_iface: &str, lan_iface: &str) -> String {
+    format!(r#"#!/usr/sbin/nft -f
 flush ruleset
 
 table inet filter {{
@@ -187,21 +181,29 @@ table inet traffic {{
         ip6 daddr @rx_devices_v6
     }}
 }}
-"#);
+"#)
+}
 
+fn execute_nft_script(rules: &str) -> Result<()> {
     let temp_path = "/tmp/hermitshell-rules.nft";
-    std::fs::write(temp_path, &rules)?;
-
+    std::fs::write(temp_path, rules)?;
     let status = Command::new("/usr/sbin/nft")
         .args(["-f", temp_path])
         .status()?;
-
-    if status.success() {
-        info!("applied nftables rules");
-        Ok(())
-    } else {
-        anyhow::bail!("Failed to apply nftables rules")
+    let _ = std::fs::remove_file(temp_path);
+    if !status.success() {
+        anyhow::bail!("Failed to apply nftables rules");
     }
+    Ok(())
+}
+
+pub fn apply_base_rules(wan_iface: &str, lan_iface: &str) -> Result<()> {
+    validate_iface(wan_iface)?;
+    validate_iface(lan_iface)?;
+    let rules = build_base_ruleset(wan_iface, lan_iface);
+    execute_nft_script(&rules)?;
+    info!("applied nftables rules");
+    Ok(())
 }
 
 pub fn add_device_counter(ip: &str) -> Result<()> {
@@ -368,6 +370,14 @@ pub fn add_device_route_v6(device_ipv6: &str, lan_iface: &str) -> Result<()> {
     Ok(())
 }
 
+fn expand_protocols(proto: &str) -> Vec<&'static str> {
+    match proto {
+        "tcp" => vec!["tcp"],
+        "udp" => vec!["udp"],
+        _ => vec!["tcp", "udp"],
+    }
+}
+
 /// Apply port forwarding DNAT rules and corresponding forward rules.
 /// Flushes and rebuilds the nat prerouting chain and a dedicated forward chain.
 pub fn apply_port_forwards(
@@ -395,12 +405,7 @@ pub fn apply_port_forwards(
     // Port forward DNAT rules
     for fwd in forwards {
         validate_ip(&fwd.internal_ip)?;
-        let protos: Vec<&str> = match fwd.protocol.as_str() {
-            "tcp" => vec!["tcp"],
-            "udp" => vec!["udp"],
-            _ => vec!["tcp", "udp"],
-        };
-        for proto in protos {
+        for proto in expand_protocols(&fwd.protocol) {
             if fwd.external_port_start == fwd.external_port_end {
                 prerouting_rules.push_str(&format!(
                     "        iifname \"{}\" {} dport {} dnat to {}:{}\n",
@@ -441,12 +446,7 @@ pub fn apply_port_forwards(
     // Build forward allow rules for port forwards
     let mut forward_rules = String::new();
     for fwd in forwards {
-        let protos: Vec<&str> = match fwd.protocol.as_str() {
-            "tcp" => vec!["tcp"],
-            "udp" => vec!["udp"],
-            _ => vec!["tcp", "udp"],
-        };
-        for proto in protos {
+        for proto in expand_protocols(&fwd.protocol) {
             if fwd.external_port_start == fwd.external_port_end {
                 forward_rules.push_str(&format!(
                     "        ct state new iifname \"{}\" ip daddr {} {} dport {} accept\n",
@@ -574,4 +574,27 @@ pub fn remove_ipv6_pinhole(ipv6_global: &str, protocol: &str, port_start: u16, p
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_base_ruleset_contains_chains() {
+        let rules = build_base_ruleset("eth1", "eth2");
+        assert!(rules.contains("chain input"));
+        assert!(rules.contains("chain forward"));
+        assert!(rules.contains("chain output"));
+        assert!(rules.contains("eth1"));
+        assert!(rules.contains("eth2"));
+    }
+
+    #[test]
+    fn test_expand_protocols() {
+        assert_eq!(expand_protocols("tcp"), vec!["tcp"]);
+        assert_eq!(expand_protocols("udp"), vec!["udp"]);
+        assert_eq!(expand_protocols("both"), vec!["tcp", "udp"]);
+        assert_eq!(expand_protocols(""), vec!["tcp", "udp"]);
+    }
 }

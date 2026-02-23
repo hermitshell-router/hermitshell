@@ -31,7 +31,7 @@ pub fn run_ra_sender(lan_iface: &str) -> Result<()> {
     sock.set_unicast_hops_v6(255)?;
 
     // All-nodes multicast: ff02::1
-    let dest = SocketAddrV6::new("ff02::1".parse::<Ipv6Addr>().unwrap(), 0, 0, 0);
+    let dest = SocketAddrV6::new("ff02::1".parse::<Ipv6Addr>().expect("valid multicast addr"), 0, 0, 0);
 
     let ra = build_ra();
 

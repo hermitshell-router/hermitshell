@@ -240,10 +240,7 @@ async fn main() -> Result<()> {
     // Restore QoS if enabled
     {
         let db_guard = db.lock().unwrap();
-        let qos_enabled = db_guard.get_config("qos_enabled")
-            .ok().flatten()
-            .map(|v| v == "true")
-            .unwrap_or(false);
+        let qos_enabled = db_guard.get_config_bool("qos_enabled", false);
         if qos_enabled {
             let upload: u32 = db_guard.get_config("qos_upload_mbps")
                 .ok().flatten()
@@ -311,10 +308,7 @@ async fn main() -> Result<()> {
     // Restore WireGuard state if enabled
     {
         let db_guard = db.lock().unwrap();
-        let wg_enabled = db_guard.get_config("wg_enabled")
-            .ok().flatten()
-            .map(|v| v == "true")
-            .unwrap_or(false);
+        let wg_enabled = db_guard.get_config_bool("wg_enabled", false);
         if wg_enabled {
             if let Some(private_key) = db_guard.get_config("wg_private_key").ok().flatten() {
                 let listen_port: u16 = db_guard.get_config("wg_listen_port")
@@ -371,12 +365,7 @@ async fn main() -> Result<()> {
             }
             // Check ad_blocking_enabled setting
             let db_guard = db.lock().unwrap();
-            let enabled = db_guard
-                .get_config("ad_blocking_enabled")
-                .ok()
-                .flatten()
-                .map(|v| v == "true")
-                .unwrap_or(true);
+            let enabled = db_guard.get_config_bool("ad_blocking_enabled", true);
             drop(db_guard);
             if !enabled {
                 if let Err(e) = mgr.set_blocking_enabled(false) {

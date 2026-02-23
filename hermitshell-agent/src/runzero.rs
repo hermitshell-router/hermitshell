@@ -75,10 +75,7 @@ pub async fn run(db: Arc<Mutex<Db>>) {
 
         let (enabled, url, token, sync_secs) = {
             let db = db.lock().unwrap();
-            let enabled = db.get_config("runzero_enabled")
-                .ok().flatten()
-                .map(|v| v == "true")
-                .unwrap_or(false);
+            let enabled = db.get_config_bool("runzero_enabled", false);
             let url = db.get_config("runzero_url").ok().flatten().unwrap_or_default();
             let token = db.get_config("runzero_token").ok().flatten().unwrap_or_default();
             let sync_secs: u64 = db.get_config("runzero_sync_interval")

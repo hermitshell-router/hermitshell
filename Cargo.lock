@@ -938,6 +938,9 @@ dependencies = [
 [[package]]
 name = "hermitshell-common"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "hermitshell-dhcp"
@@ -945,6 +948,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dhcproto",
+ "hermitshell-common",
  "ipnet",
  "lru",
  "serde",
@@ -959,6 +963,7 @@ name = "hermitshell-ui"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "hermitshell-common",
  "leptos",
  "leptos_axum",
  "leptos_router",

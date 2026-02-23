@@ -1,6 +1,9 @@
 use anyhow::Result;
 use rusqlite::Connection;
-use serde::Serialize;
+
+pub use hermitshell_common::{
+    Alert, AuditEntry, ConnectionLog, Device, DhcpReservation, DnsLogEntry, PortForward, WgPeer,
+};
 
 /// Hard limit from 10.0.0.0/8 address space: 16,580,355 /32 addresses.
 /// Practical bottlenecks before hitting this:
@@ -122,104 +125,38 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
 "#;
 
-#[derive(Debug, Clone, Serialize)]
-pub struct Device {
-    pub mac: String,
-    pub ipv4: Option<String>,
-    pub ipv6_ula: Option<String>,
-    pub ipv6_global: Option<String>,
-    pub hostname: Option<String>,
-    pub first_seen: i64,
-    pub last_seen: i64,
-    pub rx_bytes: i64,
-    pub tx_bytes: i64,
-    pub device_group: String,
-    pub subnet_id: Option<i64>,
-    pub runzero_os: Option<String>,
-    pub runzero_hw: Option<String>,
-    pub runzero_device_type: Option<String>,
-    pub runzero_manufacturer: Option<String>,
-    pub runzero_last_sync: Option<i64>,
-    pub nickname: Option<String>,
+fn device_from_row(row: &rusqlite::Row) -> rusqlite::Result<Device> {
+    Ok(Device {
+        mac: row.get(0)?,
+        ipv4: row.get(1)?,
+        ipv6_ula: row.get(2)?,
+        ipv6_global: row.get(3)?,
+        hostname: row.get(4)?,
+        first_seen: row.get(5)?,
+        last_seen: row.get(6)?,
+        rx_bytes: row.get(7)?,
+        tx_bytes: row.get(8)?,
+        device_group: row.get(9)?,
+        subnet_id: row.get(10)?,
+        runzero_os: row.get(11)?,
+        runzero_hw: row.get(12)?,
+        runzero_device_type: row.get(13)?,
+        runzero_manufacturer: row.get(14)?,
+        runzero_last_sync: row.get(15)?,
+        nickname: row.get(16)?,
+    })
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct WgPeer {
-    pub public_key: String,
-    pub name: String,
-    pub subnet_id: i64,
-    pub device_group: String,
-    pub enabled: bool,
-    pub created_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct PortForward {
-    pub id: i64,
-    pub protocol: String,
-    pub external_port_start: u16,
-    pub external_port_end: u16,
-    pub internal_ip: String,
-    pub internal_port: u16,
-    pub enabled: bool,
-    pub description: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DhcpReservation {
-    pub mac: String,
-    pub subnet_id: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ConnectionLog {
-    pub id: i64,
-    pub device_ip: String,
-    pub dest_ip: String,
-    pub dest_port: i64,
-    pub protocol: String,
-    pub bytes_sent: i64,
-    pub bytes_recv: i64,
-    pub started_at: i64,
-    pub ended_at: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DnsLogEntry {
-    pub id: i64,
-    pub device_ip: String,
-    pub domain: String,
-    pub query_type: String,
-    pub ts: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Alert {
-    pub id: i64,
-    pub device_mac: String,
-    pub rule: String,
-    pub severity: String,
-    pub message: String,
-    pub details: Option<String>,
-    pub created_at: i64,
-    pub acknowledged: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct AuditEntry {
-    pub id: i64,
-    pub action: String,
-    pub detail: String,
-    pub created_at: i64,
-}
-
+/// SQLite database holding device state, config, WireGuard peers, and logs.
 pub struct Db {
     conn: Connection,
 }
 
 impl Db {
     pub fn open(path: &str) -> Result<Self> {
-        std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap())?;
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let conn = Connection::open(path)?;
         conn.execute_batch(SCHEMA)?;
         Self::run_migrations(&conn)?;
@@ -301,27 +238,7 @@ impl Db {
         let mut stmt = self.conn.prepare(
             "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname FROM devices"
         )?;
-        let devices = stmt.query_map([], |row| {
-            Ok(Device {
-                mac: row.get(0)?,
-                ipv4: row.get(1)?,
-                ipv6_ula: row.get(2)?,
-                ipv6_global: row.get(3)?,
-                hostname: row.get(4)?,
-                first_seen: row.get(5)?,
-                last_seen: row.get(6)?,
-                rx_bytes: row.get(7)?,
-                tx_bytes: row.get(8)?,
-                device_group: row.get(9)?,
-                subnet_id: row.get(10)?,
-                runzero_os: row.get(11)?,
-                runzero_hw: row.get(12)?,
-                runzero_device_type: row.get(13)?,
-                runzero_manufacturer: row.get(14)?,
-                runzero_last_sync: row.get(15)?,
-                nickname: row.get(16)?,
-            })
-        })?;
+        let devices = stmt.query_map([], |row| device_from_row(row))?;
         Ok(devices.filter_map(|d| d.ok()).collect())
     }
 
@@ -331,25 +248,7 @@ impl Db {
         )?;
         let mut rows = stmt.query([mac])?;
         if let Some(row) = rows.next()? {
-            Ok(Some(Device {
-                mac: row.get(0)?,
-                ipv4: row.get(1)?,
-                ipv6_ula: row.get(2)?,
-                ipv6_global: row.get(3)?,
-                hostname: row.get(4)?,
-                first_seen: row.get(5)?,
-                last_seen: row.get(6)?,
-                rx_bytes: row.get(7)?,
-                tx_bytes: row.get(8)?,
-                device_group: row.get(9)?,
-                subnet_id: row.get(10)?,
-                runzero_os: row.get(11)?,
-                runzero_hw: row.get(12)?,
-                runzero_device_type: row.get(13)?,
-                runzero_manufacturer: row.get(14)?,
-                runzero_last_sync: row.get(15)?,
-                nickname: row.get(16)?,
-            }))
+            Ok(Some(device_from_row(row)?))
         } else {
             Ok(None)
         }
@@ -423,6 +322,14 @@ impl Db {
         }
     }
 
+    pub fn get_config_bool(&self, key: &str, default: bool) -> bool {
+        self.get_config(key)
+            .ok()
+            .flatten()
+            .map(|v| v == "true")
+            .unwrap_or(default)
+    }
+
     pub fn set_config(&self, key: &str, value: &str) -> Result<()> {
         self.conn.execute(
             "INSERT INTO config (key, value) VALUES (?1, ?2)
@@ -437,27 +344,7 @@ impl Db {
         let mut stmt = self.conn.prepare(
             "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname FROM devices WHERE subnet_id IS NOT NULL"
         )?;
-        let devices = stmt.query_map([], |row| {
-            Ok(Device {
-                mac: row.get(0)?,
-                ipv4: row.get(1)?,
-                ipv6_ula: row.get(2)?,
-                ipv6_global: row.get(3)?,
-                hostname: row.get(4)?,
-                first_seen: row.get(5)?,
-                last_seen: row.get(6)?,
-                rx_bytes: row.get(7)?,
-                tx_bytes: row.get(8)?,
-                device_group: row.get(9)?,
-                subnet_id: row.get(10)?,
-                runzero_os: row.get(11)?,
-                runzero_hw: row.get(12)?,
-                runzero_device_type: row.get(13)?,
-                runzero_manufacturer: row.get(14)?,
-                runzero_last_sync: row.get(15)?,
-                nickname: row.get(16)?,
-            })
-        })?;
+        let devices = stmt.query_map([], |row| device_from_row(row))?;
         Ok(devices.filter_map(|d| d.ok()).collect())
     }
 

@@ -89,7 +89,7 @@ fn render_dashboard(status: Status, mut devices: Vec<Device>) -> AnyView {
                 <tbody>
                     {recent.into_iter().map(|device| {
                         let hostname = device.hostname.clone().unwrap_or_else(|| "Unknown".to_string());
-                        let ip = device.ip.clone().unwrap_or_else(|| "-".to_string());
+                        let ip = device.ipv4.clone().unwrap_or_else(|| "-".to_string());
                         let badge_class = format!("badge badge-{}", device.device_group);
                         let device_link = format!("/devices/{}", device.mac);
                         view! {

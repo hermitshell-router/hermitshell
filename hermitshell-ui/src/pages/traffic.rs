@@ -62,7 +62,7 @@ fn render_traffic(mut devices: Vec<crate::types::Device>) -> AnyView {
                 <tbody>
                     {devices.iter().map(|d| {
                         let hostname = d.hostname.clone().unwrap_or_else(|| "(unknown)".to_string());
-                        let ip = d.ip.clone().unwrap_or_default();
+                        let ip = d.ipv4.clone().unwrap_or_default();
                         let badge_class = format!("badge badge-{}", d.device_group);
                         let device_link = format!("/devices/{}", d.mac);
                         let total = d.rx_bytes + d.tx_bytes;

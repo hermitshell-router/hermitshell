@@ -1,0 +1,254 @@
+use super::*;
+
+pub(super) fn handle_has_password(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let db = db.lock().unwrap();
+    let has = db
+        .get_config("admin_password_hash")
+        .ok()
+        .flatten()
+        .is_some();
+    let mut resp = Response::ok();
+    resp.config_value = Some(if has { "true" } else { "false" }.to_string());
+    resp
+}
+
+pub(super) fn handle_verify_password(req: &Request, db: &Arc<Mutex<Db>>, login_rate_limit: &LoginRateLimit, password_lock: &PasswordLock) -> Response {
+    let Some(ref value) = req.value else {
+        return Response::err("value required");
+    };
+    if value.len() > 128 {
+        return Response::err("password too long");
+    }
+    if let Some(msg) = check_login_rate_limit(login_rate_limit) {
+        warn!("verify_password rate-limited");
+        return Response::err(&msg);
+    }
+    let _pw_guard = password_lock.lock().unwrap();
+    let hash_str = {
+        let db = db.lock().unwrap();
+        db.get_config("admin_password_hash").ok().flatten()
+    };
+    let hash_str = match hash_str {
+        Some(h) => h,
+        None => {
+            warn!("password verification failed");
+            record_login_failure(login_rate_limit);
+            let mut resp = Response::ok();
+            resp.config_value = Some("false".to_string());
+            return resp;
+        }
+    };
+    let parsed_hash = match PasswordHash::new(&hash_str) {
+        Ok(h) => h,
+        Err(_) => {
+            warn!("password verification failed");
+            record_login_failure(login_rate_limit);
+            let mut resp = Response::ok();
+            resp.config_value = Some("false".to_string());
+            return resp;
+        }
+    };
+    let valid = Argon2::default()
+        .verify_password(value.as_bytes(), &parsed_hash)
+        .is_ok();
+    if !valid {
+        warn!("password verification failed");
+        record_login_failure(login_rate_limit);
+    } else {
+        reset_login_rate_limit(login_rate_limit);
+    }
+    let mut resp = Response::ok();
+    resp.config_value = Some(if valid { "true" } else { "false" }.to_string());
+    resp
+}
+
+pub(super) fn handle_setup_password(req: &Request, db: &Arc<Mutex<Db>>, login_rate_limit: &LoginRateLimit, password_lock: &PasswordLock) -> Response {
+    let Some(ref value) = req.value else {
+        return Response::err("value required");
+    };
+    if value.len() < 8 {
+        return Response::err("password too short (minimum 8 characters)");
+    }
+    if value.len() > 128 {
+        return Response::err("password too long (maximum 128 characters)");
+    }
+    let _pw_guard = password_lock.lock().unwrap();
+    let existing_hash = {
+        let db = db.lock().unwrap();
+        db.get_config("admin_password_hash").ok().flatten()
+    };
+    if let Some(ref hash_str) = existing_hash {
+        let Some(ref current) = req.key else {
+            return Response::err("key required (current password)");
+        };
+        if let Some(msg) = check_login_rate_limit(login_rate_limit) {
+            warn!("setup_password rate-limited");
+            return Response::err(&msg);
+        }
+        let parsed_hash = match PasswordHash::new(hash_str) {
+            Ok(h) => h,
+            Err(_) => return Response::err("stored hash corrupt"),
+        };
+        if Argon2::default()
+            .verify_password(current.as_bytes(), &parsed_hash)
+            .is_err()
+        {
+            warn!("setup_password rejected: wrong current password");
+            record_login_failure(login_rate_limit);
+            return Response::err("wrong current password");
+        }
+        reset_login_rate_limit(login_rate_limit);
+    }
+    let salt = SaltString::generate(&mut rand::rngs::OsRng);
+    let new_hash = match Argon2::default().hash_password(value.as_bytes(), &salt) {
+        Ok(h) => h.to_string(),
+        Err(e) => return Response::err(&format!("hashing failed: {}", e)),
+    };
+    let db = db.lock().unwrap();
+    match db.set_config("admin_password_hash", &new_hash) {
+        Ok(()) => Response::ok(),
+        Err(e) => Response::err(&e.to_string()),
+    }
+}
+
+pub(super) fn handle_create_session(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let db = db.lock().unwrap();
+    let secret = match db.get_config("session_secret").ok().flatten() {
+        Some(s) => s,
+        None => {
+            let s = hex::encode(rand::Rng::r#gen::<[u8; 32]>(&mut rand::thread_rng()));
+            if let Err(e) = db.set_config("session_secret", &s) {
+                return Response::err(&format!("failed to store secret: {}", e));
+            }
+            s
+        }
+    };
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before epoch")
+        .as_secs();
+    let payload = format!("admin:{}:{}", timestamp, timestamp);
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key size");
+    mac.update(payload.as_bytes());
+    let sig = hex::encode(mac.finalize().into_bytes());
+    let cookie = format!("{}.{}", payload, sig);
+    let mut resp = Response::ok();
+    resp.config_value = Some(cookie);
+    resp
+}
+
+pub(super) fn handle_verify_session(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref value) = req.value else {
+        return Response::err("value required");
+    };
+    let db = db.lock().unwrap();
+    let secret = match db.get_config("session_secret").ok().flatten() {
+        Some(s) => s,
+        None => {
+            let mut resp = Response::ok();
+            resp.config_value = Some("false".to_string());
+            return resp;
+        }
+    };
+    let valid = if let Some(dot_pos) = value.rfind('.') {
+        let payload = &value[..dot_pos];
+        let sig = &value[dot_pos + 1..];
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key size");
+        mac.update(payload.as_bytes());
+        let expected = hex::encode(mac.finalize().into_bytes());
+        if sig != expected {
+            false
+        } else {
+            let parts: Vec<&str> = payload.splitn(3, ':').collect();
+            if parts.len() != 3 {
+                false
+            } else {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                match (parts[1].parse::<u64>(), parts[2].parse::<u64>()) {
+                    (Ok(created), Ok(last_active)) => {
+                        let absolute_ok = now.saturating_sub(created) <= SESSION_ABSOLUTE_TIMEOUT_SECS;
+                        let idle_ok = now.saturating_sub(last_active) <= SESSION_IDLE_TIMEOUT_SECS;
+                        absolute_ok && idle_ok
+                    }
+                    _ => false,
+                }
+            }
+        }
+    } else {
+        false
+    };
+    let mut resp = Response::ok();
+    resp.config_value = Some(if valid { "true" } else { "false" }.to_string());
+    resp
+}
+
+pub(super) fn handle_refresh_session(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref value) = req.value else {
+        return Response::err("value required");
+    };
+    let db = db.lock().unwrap();
+    let secret = match db.get_config("session_secret").ok().flatten() {
+        Some(s) => s,
+        None => return Response::err("no session secret"),
+    };
+    let dot_pos = match value.rfind('.') {
+        Some(p) => p,
+        None => return Response::err("invalid token"),
+    };
+    let payload = &value[..dot_pos];
+    let sig = &value[dot_pos + 1..];
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key size");
+    mac.update(payload.as_bytes());
+    let expected = hex::encode(mac.finalize().into_bytes());
+    if sig != expected {
+        return Response::err("invalid signature");
+    }
+    let parts: Vec<&str> = payload.splitn(3, ':').collect();
+    if parts.len() != 3 {
+        return Response::err("invalid token format");
+    }
+    let created = match parts[1].parse::<u64>() {
+        Ok(t) => t,
+        Err(_) => return Response::err("invalid timestamp"),
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before epoch")
+        .as_secs();
+    if now.saturating_sub(created) > SESSION_ABSOLUTE_TIMEOUT_SECS {
+        return Response::err("session expired");
+    }
+    let last_active = match parts[2].parse::<u64>() {
+        Ok(t) => t,
+        Err(_) => return Response::err("invalid timestamp"),
+    };
+    if now.saturating_sub(last_active) > SESSION_IDLE_TIMEOUT_SECS {
+        return Response::err("session idle expired");
+    }
+    let new_payload = format!("admin:{}:{}", created, now);
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key size");
+    mac.update(new_payload.as_bytes());
+    let new_sig = hex::encode(mac.finalize().into_bytes());
+    let new_cookie = format!("{}.{}", new_payload, new_sig);
+    let mut resp = Response::ok();
+    resp.config_value = Some(new_cookie);
+    resp
+}
+
+pub(super) fn handle_get_tls_config(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let db = db.lock().unwrap();
+    let cert = db.get_config("tls_cert_pem").ok().flatten();
+    let key = db.get_config("tls_key_pem").ok().flatten();
+    match (cert, key) {
+        (Some(c), Some(k)) => {
+            let mut resp = Response::ok();
+            resp.tls_cert_pem = Some(c);
+            resp.tls_key_pem = Some(k);
+            resp
+        }
+        _ => Response::err("TLS not yet configured"),
+    }
+}

@@ -81,7 +81,7 @@ pub fn DeviceDetail() -> impl IntoView {
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label">"IP Address"</div>
-                                    <div class="detail-value">{d.ip.clone().unwrap_or_else(|| "\u{2014}".to_string())}</div>
+                                    <div class="detail-value">{d.ipv4.clone().unwrap_or_else(|| "\u{2014}".to_string())}</div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label">"Hostname"</div>
@@ -196,7 +196,7 @@ pub fn DeviceDetail() -> impl IntoView {
                             <ErrorToast value=set_nickname_action.value() />
 
                             {
-                                let device_ip = d.ip.clone();
+                                let device_ip = d.ipv4.clone();
 
                                 let conn_logs = device_ip.as_ref()
                                     .map(|ip| client::list_connection_logs(Some(ip), 50).unwrap_or_default())

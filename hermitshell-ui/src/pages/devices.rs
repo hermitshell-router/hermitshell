@@ -90,7 +90,7 @@ pub fn DeviceList() -> impl IntoView {
                                                             view! { <br /><span style="color: var(--text-muted); font-size: 0.75rem">{h.clone()}</span> }
                                                         })}
                                                     </td>
-                                                    <td>{d.ip.clone().unwrap_or_default()}</td>
+                                                    <td>{d.ipv4.clone().unwrap_or_default()}</td>
                                                     <td style="color: var(--text-muted); font-size: 0.8125rem;">{mac.clone()}</td>
                                                     <td><span class={badge_class}>{group.clone()}</span></td>
                                                     <td>{format_bytes(d.rx_bytes)}</td>

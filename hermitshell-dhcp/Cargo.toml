@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
+hermitshell-common = { path = "../hermitshell-common" }
 dhcproto = "0.12"
 ipnet = "2"
 lru = "0.12"

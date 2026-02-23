@@ -13,6 +13,7 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6, UdpSocket};
 use std::num::NonZeroUsize;
 use std::os::unix::net::UnixStream;
 use std::time::Instant;
+use hermitshell_common::sanitize_hostname;
 use tracing::{debug, error, info, warn};
 
 const SERVER_IP: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 1);
@@ -75,7 +76,7 @@ fn main() -> Result<()> {
         .context("failed to spawn DHCPv6 thread")?;
 
     let mut buf = [0u8; 1500];
-    let mut discover_times: LruCache<String, Instant> = LruCache::new(NonZeroUsize::new(10_000).unwrap());
+    let mut discover_times: LruCache<String, Instant> = LruCache::new(NonZeroUsize::new(10_000).expect("nonzero constant"));
 
     loop {
         let (len, _addr) = match udp.recv_from(&mut buf) {
@@ -205,14 +206,6 @@ fn is_valid_mac(chaddr: &[u8]) -> bool {
         return false;
     }
     true
-}
-
-/// Sanitize a DHCP hostname: keep only safe characters, truncate to 63.
-fn sanitize_hostname(raw: &str) -> String {
-    raw.chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '.' || *c == '_')
-        .take(63)
-        .collect()
 }
 
 fn build_response(request: &Message, msg_type: MessageType, yiaddr: Ipv4Addr) -> Message {
@@ -435,7 +428,7 @@ fn run_dhcpv6_server(lan_iface: &str) -> Result<()> {
     info!(iface = %lan_iface, "hermitshell-dhcpv6 listening on [::]:547");
 
     let mut buf = [0u8; 1500];
-    let mut solicit_times: LruCache<String, Instant> = LruCache::new(NonZeroUsize::new(10_000).unwrap());
+    let mut solicit_times: LruCache<String, Instant> = LruCache::new(NonZeroUsize::new(10_000).expect("nonzero constant"));
 
     loop {
         let (len, src_addr) = match udp.recv_from(&mut buf) {

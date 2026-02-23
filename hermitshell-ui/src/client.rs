@@ -4,42 +4,9 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 
 use crate::types::{Device, Status};
+pub use hermitshell_common::{Alert, ConnectionLog, DnsLogEntry};
 
 const SOCKET_PATH: &str = "/run/hermitshell/agent.sock";
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct ConnectionLog {
-    pub id: i64,
-    pub device_ip: String,
-    pub dest_ip: String,
-    pub dest_port: i64,
-    pub protocol: String,
-    pub bytes_sent: i64,
-    pub bytes_recv: i64,
-    pub started_at: i64,
-    pub ended_at: Option<i64>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct DnsLogEntry {
-    pub id: i64,
-    pub device_ip: String,
-    pub domain: String,
-    pub query_type: String,
-    pub ts: i64,
-}
-
-#[derive(Debug, Clone, serde::Serialize, Deserialize)]
-pub struct Alert {
-    pub id: i64,
-    pub device_mac: String,
-    pub rule: String,
-    pub severity: String,
-    pub message: String,
-    pub details: Option<String>,
-    pub created_at: i64,
-    pub acknowledged: bool,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct Response {
