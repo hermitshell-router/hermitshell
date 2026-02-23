@@ -264,3 +264,44 @@ pub async fn run_speed_test() -> Result<(), ServerFnError> {
     leptos_axum::redirect("/settings");
     Ok(())
 }
+
+#[server]
+pub async fn set_tls_custom_cert(cert_pem: String, key_pem: String) -> Result<(), ServerFnError> {
+    crate::client::set_tls_cert(&cert_pem, &key_pem)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("set_tls_cert", "custom cert uploaded");
+    leptos_axum::redirect("/settings");
+    Ok(())
+}
+
+#[server]
+pub async fn set_tls_self_signed() -> Result<(), ServerFnError> {
+    crate::client::set_tls_mode("self_signed", None)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("set_tls_mode", "self_signed");
+    leptos_axum::redirect("/settings");
+    Ok(())
+}
+
+#[server]
+pub async fn set_tls_tailscale(domain: String) -> Result<(), ServerFnError> {
+    crate::client::set_tls_mode("tailscale", Some(&domain))
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("set_tls_mode", &format!("tailscale: {}", domain));
+    leptos_axum::redirect("/settings");
+    Ok(())
+}
+
+#[server]
+pub async fn set_tls_acme(
+    domain: String,
+    email: String,
+    cf_api_token: String,
+    cf_zone_id: String,
+) -> Result<(), ServerFnError> {
+    crate::client::set_acme_config(&domain, &email, &cf_api_token, &cf_zone_id)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("set_acme_config", &domain);
+    leptos_axum::redirect("/settings");
+    Ok(())
+}

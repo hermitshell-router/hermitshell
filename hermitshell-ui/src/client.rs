@@ -34,6 +34,7 @@ pub struct Response {
     #[serde(default)]
     pub qos_config: Option<serde_json::Value>,
     pub audit_logs: Option<Vec<crate::types::AuditEntry>>,
+    pub tls_status: Option<serde_json::Value>,
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
@@ -342,6 +343,43 @@ pub fn log_audit(action: &str, detail: &str) -> Result<(), String> {
 pub fn list_audit_logs(limit: i64) -> Result<Vec<crate::types::AuditEntry>, String> {
     let resp = ok_or_err(send(json!({"method": "list_audit_logs", "limit": limit}))?)?;
     Ok(resp.audit_logs.unwrap_or_default())
+}
+
+pub fn get_tls_status() -> Result<serde_json::Value, String> {
+    let resp = ok_or_err(send(json!({"method": "get_tls_status"}))?)?;
+    resp.tls_status.ok_or_else(|| "no tls_status in response".to_string())
+}
+
+pub fn set_tls_cert(cert_pem: &str, key_pem: &str) -> Result<(), String> {
+    ok_or_err(send(json!({
+        "method": "set_tls_cert",
+        "tls_cert_pem": cert_pem,
+        "tls_key_pem": key_pem,
+    }))?)?;
+    Ok(())
+}
+
+pub fn set_tls_mode(mode: &str, domain: Option<&str>) -> Result<(), String> {
+    let mut req = json!({"method": "set_tls_mode", "value": mode});
+    if let Some(d) = domain {
+        req["key"] = serde_json::Value::String(d.to_string());
+    }
+    ok_or_err(send(req)?)?;
+    Ok(())
+}
+
+pub fn set_acme_config(domain: &str, email: &str, cf_api_token: &str, cf_zone_id: &str) -> Result<(), String> {
+    let config = serde_json::json!({
+        "domain": domain,
+        "email": email,
+        "cf_api_token": cf_api_token,
+        "cf_zone_id": cf_zone_id,
+    });
+    ok_or_err(send(json!({
+        "method": "set_acme_config",
+        "value": config.to_string(),
+    }))?)?;
+    Ok(())
 }
 
 #[cfg(test)]

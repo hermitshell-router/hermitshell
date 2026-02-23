@@ -6,6 +6,7 @@ use crate::format_uptime;
 use crate::server_fns::{
     RemoveReservation, SetLogConfig, SetRunzeroConfig, SyncRunzero,
     SetQosConfig, SetQosTestUrl, RunSpeedTest,
+    SetTlsCustomCert, SetTlsSelfSigned, SetTlsTailscale, SetTlsAcme,
 };
 
 #[component]
@@ -33,6 +34,10 @@ pub fn Settings() -> impl IntoView {
     let qos_config = Resource::new(
         || (),
         |_| async { client::get_qos_config() },
+    );
+    let tls_status = Resource::new(
+        || (),
+        |_| async { client::get_tls_status() },
     );
 
     view! {
@@ -383,6 +388,145 @@ pub fn Settings() -> impl IntoView {
                     Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
                 })}
             </Suspense>
+            <Suspense fallback=move || view! { <p>"Loading TLS status..."</p> }>
+                {move || tls_status.get().map(|result| match result {
+                    Ok(status) => {
+                        let mode = status.get("tls_mode").and_then(|v| v.as_str()).unwrap_or("self_signed").to_string();
+                        let issuer = status.get("issuer").and_then(|v| v.as_str()).unwrap_or("N/A").to_string();
+                        let expires_at = status.get("expires_at").and_then(|v| v.as_i64()).unwrap_or(0);
+                        let sans: Vec<String> = status.get("sans")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                            .unwrap_or_default();
+                        let sans_text = sans.join(", ");
+
+                        let mode_text = match mode.as_str() {
+                            "self_signed" => "Self-Signed",
+                            "custom" => "Custom Certificate",
+                            "tailscale" => "Tailscale",
+                            "acme_dns01" => "ACME DNS-01 (Cloudflare)",
+                            _ => "Unknown",
+                        };
+
+                        let self_signed_action = ServerAction::<SetTlsSelfSigned>::new();
+                        let custom_action = ServerAction::<SetTlsCustomCert>::new();
+                        let tailscale_action = ServerAction::<SetTlsTailscale>::new();
+                        let acme_action = ServerAction::<SetTlsAcme>::new();
+
+                        view! {
+                            <div class="settings-section">
+                                <h3>"TLS Certificate"</h3>
+                                <div class="settings-row">
+                                    <span class="settings-label">"Mode"</span>
+                                    <span class="settings-value">{mode_text}</span>
+                                </div>
+                                <div class="settings-row">
+                                    <span class="settings-label">"Issuer"</span>
+                                    <span class="settings-value">{issuer}</span>
+                                </div>
+                                <div class="settings-row">
+                                    <span class="settings-label">"Expires"</span>
+                                    <span class="settings-value">{if expires_at > 0 { format_expiry(expires_at) } else { "N/A".to_string() }}</span>
+                                </div>
+                                <div class="settings-row">
+                                    <span class="settings-label">"SANs"</span>
+                                    <span class="settings-value">{sans_text}</span>
+                                </div>
+
+                                <h4>"Switch to Self-Signed"</h4>
+                                <ActionForm action=self_signed_action>
+                                    <button type="submit" class="btn btn-sm">"Use Self-Signed"</button>
+                                </ActionForm>
+
+                                <h4>"Upload Custom Certificate"</h4>
+                                <ActionForm action=custom_action>
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Certificate PEM"</span>
+                                        <span class="settings-value">
+                                            <textarea name="cert_pem" rows="4" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+                                        </span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Private Key PEM"</span>
+                                        <span class="settings-value">
+                                            <textarea name="key_pem" rows="4" placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+                                        </span>
+                                    </div>
+                                    <div class="actions-bar">
+                                        <button type="submit" class="btn btn-primary btn-sm">"Upload Certificate"</button>
+                                    </div>
+                                </ActionForm>
+
+                                <h4>"Tailscale HTTPS"</h4>
+                                <p class="hint">"Automatically provision a cert for your *.ts.net domain."</p>
+                                <ActionForm action=tailscale_action>
+                                    <div class="settings-row">
+                                        <span class="settings-label">"ts.net Domain"</span>
+                                        <span class="settings-value">
+                                            <input type="text" name="domain" placeholder="router.tail1234.ts.net" />
+                                        </span>
+                                    </div>
+                                    <div class="actions-bar">
+                                        <button type="submit" class="btn btn-primary btn-sm">"Enable Tailscale HTTPS"</button>
+                                    </div>
+                                </ActionForm>
+
+                                <h4>"ACME DNS-01 (Cloudflare)"</h4>
+                                <p class="hint">"Let's Encrypt certificate via Cloudflare DNS. Works behind NAT."</p>
+                                <ActionForm action=acme_action>
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Domain"</span>
+                                        <span class="settings-value">
+                                            <input type="text" name="domain" placeholder="router.example.com" />
+                                        </span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Email"</span>
+                                        <span class="settings-value">
+                                            <input type="email" name="email" placeholder="admin@example.com" />
+                                        </span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Cloudflare API Token"</span>
+                                        <span class="settings-value">
+                                            <input type="password" name="cf_api_token" placeholder="Zone:DNS:Edit token" />
+                                        </span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Cloudflare Zone ID"</span>
+                                        <span class="settings-value">
+                                            <input type="text" name="cf_zone_id" placeholder="32-char hex" />
+                                        </span>
+                                    </div>
+                                    <div class="actions-bar">
+                                        <button type="submit" class="btn btn-primary btn-sm">"Enable ACME DNS-01"</button>
+                                    </div>
+                                </ActionForm>
+
+                                <ErrorToast value=self_signed_action.value() />
+                                <ErrorToast value=custom_action.value() />
+                                <ErrorToast value=tailscale_action.value() />
+                                <ErrorToast value=acme_action.value() />
+                                <p class="hint">"Note: Restart the web UI to apply new certificates."</p>
+                            </div>
+                        }.into_any()
+                    }
+                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
+                })}
+            </Suspense>
         </Layout>
+    }
+}
+
+fn format_expiry(epoch: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let days = (epoch - now) / 86400;
+    if days < 0 {
+        format!("Expired ({} days ago)", -days)
+    } else {
+        format!("{} days remaining", days)
     }
 }
