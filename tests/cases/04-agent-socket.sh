@@ -11,5 +11,5 @@ status=$(vm_exec router 'echo "{\"method\":\"get_status\"}" | socat - UNIX-CONNE
 assert_match "$status" '"ok":true' "Agent responds to get_status"
 
 # Agent should log the configured interfaces
-agent_log=$(vm_sudo router "journalctl -u hermitshell-agent --no-pager -n 50")
+agent_log=$(vm_sudo router "journalctl -u hermitshell-agent --no-pager -n 500")
 assert_match "$agent_log" "network interfaces" "Agent logs interface configuration"
