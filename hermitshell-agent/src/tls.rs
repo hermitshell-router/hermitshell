@@ -106,18 +106,14 @@ pub async fn provision_tailscale(domain: &str) -> anyhow::Result<(String, String
     let stdout = String::from_utf8(output.stdout)
         .map_err(|_| anyhow::anyhow!("tailscale cert output is not valid UTF-8"))?;
 
-    // tailscale cert --cert-file=- --key-file=- outputs cert then key concatenated
+    // tailscale cert --cert-file=- --key-file=- outputs cert chain then key concatenated
     let mut cert_pem = String::new();
     let mut key_pem = String::new();
     let mut in_key = false;
-    let mut found_cert_end = false;
 
     for line in stdout.lines() {
-        if found_cert_end && line.starts_with("-----BEGIN") {
+        if line.starts_with("-----BEGIN") && line.contains("PRIVATE KEY") {
             in_key = true;
-        }
-        if line.contains("END CERTIFICATE") {
-            found_cert_end = true;
         }
         if in_key {
             key_pem.push_str(line);
@@ -214,7 +210,25 @@ pub async fn provision_acme_dns01(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
         let cf_record_id = cf_create_txt_record(&cf_token, &cf_zone_id, &record_name, &dns_value).await?;
         info!(record = %record_name, "DNS-01 TXT record created");
 
-        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        // Poll DNS until the TXT record propagates (or timeout after 120s)
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
+        loop {
+            let output = tokio::process::Command::new("dig")
+                .args(["+short", "TXT", &record_name, "@1.1.1.1"])
+                .output()
+                .await;
+            if let Ok(ref o) = output {
+                let txt = String::from_utf8_lossy(&o.stdout);
+                if txt.contains(&dns_value) {
+                    break;
+                }
+            }
+            if tokio::time::Instant::now() >= deadline {
+                warn!("DNS propagation timeout, proceeding anyway");
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
 
         challenge
             .set_ready()

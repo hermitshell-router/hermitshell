@@ -274,9 +274,18 @@ pub(super) fn handle_set_tls_mode(req: &Request, db: &Arc<Mutex<Db>>) -> Respons
     match mode.as_str() {
         "self_signed" => {
             let db = db.lock().unwrap();
-            let _ = db.set_config("tls_mode", "self_signed");
-            info!(mode = "self_signed", "TLS mode changed");
-            Response::ok()
+            // Regenerate a fresh self-signed cert when switching back
+            let sans = vec!["hermitshell.local".to_string(), "10.0.0.1".to_string()];
+            match rcgen::generate_simple_self_signed(sans) {
+                Ok(cert) => {
+                    let _ = db.set_config("tls_cert_pem", &cert.cert.pem());
+                    let _ = db.set_config("tls_key_pem", &cert.key_pair.serialize_pem());
+                    let _ = db.set_config("tls_mode", "self_signed");
+                    info!(mode = "self_signed", "TLS mode changed, cert regenerated");
+                    Response::ok()
+                }
+                Err(e) => Response::err(&format!("failed to generate self-signed cert: {}", e)),
+            }
         }
         "custom" => {
             Response::err("use set_tls_cert to upload a custom certificate")
@@ -288,7 +297,9 @@ pub(super) fn handle_set_tls_mode(req: &Request, db: &Arc<Mutex<Db>>) -> Respons
             if !domain.ends_with(".ts.net") {
                 return Response::err("domain must end with .ts.net");
             }
-            if domain.len() > 253 || domain.contains(' ') {
+            if domain.is_empty() || domain.len() > 253
+                || !domain.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+            {
                 return Response::err("invalid domain");
             }
             let db = db.lock().unwrap();
@@ -301,7 +312,9 @@ pub(super) fn handle_set_tls_mode(req: &Request, db: &Arc<Mutex<Db>>) -> Respons
             let Some(ref domain) = req.key else {
                 return Response::err("key required (domain)");
             };
-            if domain.is_empty() || domain.len() > 253 || domain.contains(' ') {
+            if domain.is_empty() || domain.len() > 253
+                || !domain.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+            {
                 return Response::err("invalid domain");
             }
             let db = db.lock().unwrap();
@@ -324,7 +337,9 @@ pub(super) fn handle_set_acme_config(req: &Request, db: &Arc<Mutex<Db>>) -> Resp
     };
 
     let domain = parsed.get("domain").and_then(|v| v.as_str()).unwrap_or("");
-    if domain.is_empty() || domain.len() > 253 || domain.contains(' ') {
+    if domain.is_empty() || domain.len() > 253
+        || !domain.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
         return Response::err("domain required and must be a valid hostname");
     }
 
