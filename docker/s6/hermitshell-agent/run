@@ -1,2 +1,4 @@
 #!/command/execlineb -P
+env HERMITSHELL_DHCP_BIN=/usr/local/bin/hermitshell-dhcp
+env BLOCKY_BIN=/usr/local/bin/blocky
 /usr/local/bin/hermitshell-agent
