@@ -156,7 +156,27 @@ async fn main() -> Result<()> {
         let has_cert = db_guard.get_config("tls_cert_pem").ok().flatten().is_some();
         let has_key = db_guard.get_config("tls_key_pem").ok().flatten().is_some();
         if !has_cert || !has_key {
-            let subject_alt_names = vec!["hermitshell.local".to_string(), "10.0.0.1".to_string()];
+            let mut subject_alt_names = vec![
+                "hermitshell.local".to_string(),
+                "10.0.0.1".to_string(),
+            ];
+            // Add system hostname
+            if let Ok(hostname) = nix::unistd::gethostname() {
+                let h = hostname.to_string_lossy().to_string();
+                if !h.is_empty() && !subject_alt_names.contains(&h) {
+                    subject_alt_names.push(h);
+                }
+            }
+            // Add extra SANs from env var
+            if let Ok(extra) = std::env::var("TLS_SANS") {
+                for san in extra.split(',') {
+                    let san = san.trim().to_string();
+                    if !san.is_empty() && !subject_alt_names.contains(&san) {
+                        subject_alt_names.push(san);
+                    }
+                }
+            }
+            info!(sans = ?subject_alt_names, "generating self-signed TLS certificate");
             match rcgen::generate_simple_self_signed(subject_alt_names) {
                 Ok(cert) => {
                     let cert_pem = cert.cert.pem();

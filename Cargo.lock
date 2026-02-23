@@ -901,12 +901,14 @@ dependencies = [
  "leptos",
  "leptos_axum",
  "leptos_router",
+ "lru",
  "rustls",
  "rustls-pemfile",
  "serde",
  "serde_json",
  "tokio",
  "tokio-rustls",
+ "tower-service",
 ]
 
 [[package]]
