@@ -31,6 +31,7 @@ const BLOCKED_CONFIG_KEYS: &[&str] = &[
     "runzero_token",
     "acme_cf_api_token",
     "acme_account_key",
+    "webhook_secret",
 ];
 
 fn is_blocked_config_key(key: &str) -> bool {
