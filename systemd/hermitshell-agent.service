@@ -12,6 +12,8 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=hermitshell-agent
 Environment=RUST_LOG=info
+Environment=WAN_IFACE=eth1
+Environment=LAN_IFACE=eth2
 ProtectHome=yes
 ProtectSystem=strict
 ReadWritePaths=/data/hermitshell /run/hermitshell /tmp

@@ -1,0 +1,19 @@
+[Unit]
+Description=HermitShell Web UI
+After=hermitshell-agent.service
+Requires=hermitshell-agent.service
+
+[Service]
+Type=simple
+ExecStart=/opt/hermitshell/hermitshell
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hermitshell-ui
+Environment=LEPTOS_OUTPUT_NAME=hermitshell
+User=hermitshell
+Group=hermitshell
+
+[Install]
+WantedBy=multi-user.target
