@@ -614,15 +614,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Encrypted-at-rest column, or use Cloudflare scoped API tokens (zone-locked + permission-limited).
 
-## 53. ~~Webhook secret accepted but never sent~~ (FIXED)
-
-**Fixed:** `webhook_post()` now loads `webhook_secret` from config and sends it as `Authorization: Bearer <secret>` when non-empty.
-
-## 54. ~~Webhook uses raw TCP, ignores HTTPS~~ (FIXED)
-
-**Fixed:** `webhook_post()` now uses async `reqwest` with `rustls-tls` for proper HTTPS. TLS certificates are validated against the system CA bundle.
-
-## 55. Syslog export uses unencrypted, unauthenticated UDP
+## 53. Syslog export uses unencrypted, unauthenticated UDP
 
 **What:** `send_syslog()` in `log_export.rs` sends RFC 5424 syslog messages over UDP with no encryption or authentication.
 
