@@ -20,6 +20,7 @@ use pages::settings::Settings;
 use pages::setup::Setup;
 use pages::traffic::Traffic;
 use pages::port_forwarding::PortForwarding;
+use pages::wifi::Wifi;
 use pages::wireguard::Wireguard;
 
 #[component]
@@ -37,6 +38,7 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/alerts") view=Alerts />
                     <Route path=path!("/wireguard") view=Wireguard />
                     <Route path=path!("/port-forwarding") view=PortForwarding />
+                    <Route path=path!("/wifi") view=Wifi />
                     <Route path=path!("/settings") view=Settings />
                     <Route path=path!("/audit") view=Audit />
                     <Route path=path!("/login") view=Login />

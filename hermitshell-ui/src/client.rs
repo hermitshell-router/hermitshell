@@ -35,6 +35,8 @@ pub struct Response {
     pub qos_config: Option<serde_json::Value>,
     pub audit_logs: Option<Vec<crate::types::AuditEntry>>,
     pub tls_status: Option<serde_json::Value>,
+    pub wifi_aps: Option<Vec<hermitshell_common::WifiAp>>,
+    pub wifi_clients: Option<Vec<hermitshell_common::WifiClient>>,
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
@@ -380,6 +382,34 @@ pub fn set_acme_config(domain: &str, email: &str, cf_api_token: &str, cf_zone_id
         "value": config.to_string(),
     }))?)?;
     Ok(())
+}
+
+pub fn wifi_list_aps() -> Result<Vec<hermitshell_common::WifiAp>, String> {
+    let resp = ok_or_err(send(json!({"method": "wifi_list_aps"}))?)?;
+    Ok(resp.wifi_aps.unwrap_or_default())
+}
+
+pub fn wifi_adopt_ap(mac: &str, ip: &str, name: &str, username: &str, password: &str) -> Result<(), String> {
+    ok_or_err(send(json!({
+        "method": "wifi_adopt_ap",
+        "mac": mac,
+        "url": ip,
+        "name": name,
+        "key": username,
+        "value": password,
+        "protocol": "eap_standalone"
+    }))?)?;
+    Ok(())
+}
+
+pub fn wifi_remove_ap(mac: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "wifi_remove_ap", "mac": mac}))?)?;
+    Ok(())
+}
+
+pub fn wifi_get_clients() -> Result<Vec<hermitshell_common::WifiClient>, String> {
+    let resp = ok_or_err(send(json!({"method": "wifi_get_clients"}))?)?;
+    Ok(resp.wifi_clients.unwrap_or_default())
 }
 
 #[cfg(test)]

@@ -305,3 +305,21 @@ pub async fn set_tls_acme(
     leptos_axum::redirect("/settings");
     Ok(())
 }
+
+#[server]
+pub async fn adopt_wifi_ap(mac: String, ip: String, name: String, username: String, password: String) -> Result<(), ServerFnError> {
+    crate::client::wifi_adopt_ap(&mac, &ip, &name, &username, &password)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("wifi_adopt_ap", &format!("{}: {}", name, mac));
+    leptos_axum::redirect("/wifi");
+    Ok(())
+}
+
+#[server]
+pub async fn remove_wifi_ap(mac: String) -> Result<(), ServerFnError> {
+    crate::client::wifi_remove_ap(&mac)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("wifi_remove_ap", &mac);
+    leptos_axum::redirect("/wifi");
+    Ok(())
+}

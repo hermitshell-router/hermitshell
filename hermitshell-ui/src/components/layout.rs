@@ -18,6 +18,7 @@ pub fn Layout(
         ("DNS", "/dns"),
         ("Alerts", "/alerts"),
         ("WireGuard", "/wireguard"),
+        ("WiFi", "/wifi"),
         ("Port Forwarding", "/port-forwarding"),
         ("Settings", "/settings"),
         ("Audit", "/audit"),
