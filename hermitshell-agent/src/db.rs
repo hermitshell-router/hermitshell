@@ -222,46 +222,70 @@ impl Db {
         std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap())?;
         let conn = Connection::open(path)?;
         conn.execute_batch(SCHEMA)?;
-        Self::migrate(&conn)?;
+        Self::run_migrations(&conn)?;
         Ok(Self { conn })
     }
 
-    fn migrate(conn: &Connection) -> Result<()> {
-        for col in &[
-            "runzero_os TEXT",
-            "runzero_hw TEXT",
-            "runzero_device_type TEXT",
-            "runzero_manufacturer TEXT",
-            "runzero_last_sync INTEGER",
-            "nickname TEXT",
-        ] {
-            let _ = conn.execute_batch(&format!("ALTER TABLE devices ADD COLUMN {col}"));
+    fn run_migrations(conn: &Connection) -> Result<()> {
+        // Get current schema version (0 if never set)
+        let version: i64 = conn
+            .query_row(
+                "SELECT value FROM config WHERE key = 'schema_version'",
+                [],
+                |row| {
+                    let v: String = row.get(0)?;
+                    Ok(v.parse::<i64>().unwrap_or(0))
+                },
+            )
+            .unwrap_or(0);
+
+        if version < 1 {
+            // Baseline: absorb all existing ad-hoc migrations
+            // These are idempotent so safe to re-run on existing DBs
+            for col in &[
+                "runzero_os TEXT",
+                "runzero_hw TEXT",
+                "runzero_device_type TEXT",
+                "runzero_manufacturer TEXT",
+                "runzero_last_sync INTEGER",
+                "nickname TEXT",
+            ] {
+                let _ = conn.execute_batch(&format!("ALTER TABLE devices ADD COLUMN {col}"));
+            }
+            let _ = conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS device_baselines (
+                    mac TEXT NOT NULL,
+                    metric TEXT NOT NULL,
+                    window_avg REAL NOT NULL,
+                    window_stddev REAL NOT NULL,
+                    last_computed INTEGER NOT NULL,
+                    PRIMARY KEY (mac, metric)
+                );
+                CREATE TABLE IF NOT EXISTS alerts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    device_mac TEXT NOT NULL,
+                    rule TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    details TEXT,
+                    created_at INTEGER NOT NULL,
+                    acknowledged INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_alerts_device ON alerts(device_mac);
+                CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at);
+                CREATE INDEX IF NOT EXISTS idx_conn_logs_device_started ON connection_logs(device_ip, started_at);
+                CREATE INDEX IF NOT EXISTS idx_dns_logs_device_ts ON dns_logs(device_ip, ts);"
+            );
+            conn.execute(
+                "INSERT INTO config (key, value) VALUES ('schema_version', '1')
+                 ON CONFLICT(key) DO UPDATE SET value = '1'",
+                [],
+            )?;
         }
-        // Behavioral analysis tables (idempotent)
-        let _ = conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS device_baselines (
-                mac TEXT NOT NULL,
-                metric TEXT NOT NULL,
-                window_avg REAL NOT NULL,
-                window_stddev REAL NOT NULL,
-                last_computed INTEGER NOT NULL,
-                PRIMARY KEY (mac, metric)
-            );
-            CREATE TABLE IF NOT EXISTS alerts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                device_mac TEXT NOT NULL,
-                rule TEXT NOT NULL,
-                severity TEXT NOT NULL,
-                message TEXT NOT NULL,
-                details TEXT,
-                created_at INTEGER NOT NULL,
-                acknowledged INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE INDEX IF NOT EXISTS idx_alerts_device ON alerts(device_mac);
-            CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at);
-            CREATE INDEX IF NOT EXISTS idx_conn_logs_device_started ON connection_logs(device_ip, started_at);
-            CREATE INDEX IF NOT EXISTS idx_dns_logs_device_ts ON dns_logs(device_ip, ts);"
-        );
+
+        // Future migrations go here:
+        // if version < 2 { migrate_v2(conn)?; }
+
         Ok(())
     }
 
