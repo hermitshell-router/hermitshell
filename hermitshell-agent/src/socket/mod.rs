@@ -4,6 +4,7 @@ mod devices;
 mod logs;
 mod network;
 mod wireguard;
+mod wifi;
 
 use anyhow::Result;
 use argon2::password_hash::SaltString;
@@ -32,6 +33,7 @@ const BLOCKED_CONFIG_KEYS: &[&str] = &[
     "acme_cf_api_token",
     "acme_account_key",
     "webhook_secret",
+    "wifi_ap_password",
 ];
 
 fn is_blocked_config_key(key: &str) -> bool {
@@ -176,6 +178,10 @@ struct Response {
     audit_logs: Option<Vec<crate::db::AuditEntry>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tls_status: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wifi_aps: Option<Vec<crate::db::WifiAp>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wifi_clients: Option<Vec<crate::db::WifiClient>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -332,6 +338,10 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "list_audit_logs" => logs::handle_list_audit_logs(&req, db),
         "ingest_dns_logs" => logs::handle_ingest_dns_logs(&req, db, log_tx),
         "run_analysis" => logs::handle_run_analysis(&req, db, log_tx),
+        "wifi_list_aps" => wifi::handle_wifi_list_aps(&req, db),
+        "wifi_adopt_ap" => wifi::handle_wifi_adopt_ap(&req, db),
+        "wifi_remove_ap" => wifi::handle_wifi_remove_ap(&req, db),
+        "wifi_get_clients" => wifi::handle_wifi_get_clients(&req, db),
         _ => Response::err("unknown method"),
     }
 }
