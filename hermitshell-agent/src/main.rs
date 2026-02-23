@@ -355,11 +355,13 @@ async fn main() -> Result<()> {
         } else {
             "10.0.0.1:53".to_string()
         };
+        let blocky_bin = std::env::var("BLOCKY_BIN")
+            .unwrap_or_else(|_| "/opt/hermitshell/blocky".into());
         let mut mgr = blocky::BlockyManager::new(
             dns_strings,
             blocky_listen,
             "/data/hermitshell/blocky".to_string(),
-            "/opt/hermitshell/blocky".to_string(),
+            blocky_bin,
         );
         if let Err(e) = mgr.start() {
             error!(error = %e, "failed to start blocky");
@@ -440,8 +442,10 @@ async fn main() -> Result<()> {
 
     // Spawn DHCP server as child process
     let db_for_counters = db.clone();
-    std::process::Command::new("/opt/hermitshell/hermitshell-dhcp")
-        .arg(lan_iface)
+    let dhcp_bin = std::env::var("HERMITSHELL_DHCP_BIN")
+        .unwrap_or_else(|_| "/opt/hermitshell/hermitshell-dhcp".into());
+    std::process::Command::new(&dhcp_bin)
+        .arg(&lan_iface)
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .spawn()?;
