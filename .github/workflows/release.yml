@@ -1,0 +1,125 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  BLOCKY_VERSION: v0.24
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            arch: x86_64
+            blocky_arch: x86_64
+            docker_platform: linux/amd64
+          - target: aarch64-unknown-linux-musl
+            arch: aarch64
+            blocky_arch: aarch64
+            docker_platform: linux/arm64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.arch == 'aarch64'
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build binaries
+        env:
+          LEPTOS_OUTPUT_NAME: hermitshell
+        run: |
+          if [ "${{ matrix.arch }}" = "aarch64" ]; then
+            cross build --release -p hermitshell-agent -p hermitshell-dhcp -p hermitshell --target ${{ matrix.target }}
+          else
+            cargo build --release -p hermitshell-agent -p hermitshell-dhcp -p hermitshell --target ${{ matrix.target }}
+          fi
+
+      - name: Download Blocky
+        run: |
+          curl -fsSL "https://github.com/0xERR0R/blocky/releases/download/${{ env.BLOCKY_VERSION }}/blocky_${{ env.BLOCKY_VERSION }}_Linux_${{ matrix.blocky_arch }}.tar.gz" \
+            | tar -xz blocky
+
+      - name: Package tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          DIR="hermitshell-${VERSION}-${{ matrix.arch }}-linux"
+          mkdir "$DIR"
+          cp target/${{ matrix.target }}/release/hermitshell-agent "$DIR/"
+          cp target/${{ matrix.target }}/release/hermitshell-dhcp "$DIR/"
+          cp target/${{ matrix.target }}/release/hermitshell "$DIR/"
+          cp blocky "$DIR/"
+          tar -czf "${DIR}.tar.gz" "$DIR"
+          sha256sum "${DIR}.tar.gz" > "${DIR}.tar.gz.sha256"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.arch }}
+          path: hermitshell-*.tar.gz*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            hermitshell-*.tar.gz
+            hermitshell-*.tar.gz.sha256
+
+  docker:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Extract binaries for Docker
+        run: |
+          mkdir -p docker-ctx/amd64 docker-ctx/arm64
+          VERSION="${GITHUB_REF_NAME}"
+          tar -xzf "hermitshell-${VERSION}-x86_64-linux.tar.gz"
+          cp hermitshell-${VERSION}-x86_64-linux/* docker-ctx/amd64/
+          tar -xzf "hermitshell-${VERSION}-aarch64-linux.tar.gz"
+          cp hermitshell-${VERSION}-aarch64-linux/* docker-ctx/arm64/
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ghcr.io/${{ github.repository }}:latest
