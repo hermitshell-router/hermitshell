@@ -101,12 +101,27 @@ async fn main() -> Result<()> {
     info!("hermitshell-agent starting");
     let start_time = std::time::Instant::now();
 
-    let wan_iface = "eth1";
-    let lan_iface = "eth2";
+    let wan_iface = std::env::var("WAN_IFACE").unwrap_or_else(|_| "eth1".into());
+    let lan_iface = std::env::var("LAN_IFACE").unwrap_or_else(|_| "eth2".into());
+
+    // Validate interface names
+    nftables::validate_iface(&wan_iface)?;
+    nftables::validate_iface(&lan_iface)?;
+
+    // Verify interfaces exist on the system
+    let wan_exists = std::path::Path::new(&format!("/sys/class/net/{}", wan_iface)).exists();
+    let lan_exists = std::path::Path::new(&format!("/sys/class/net/{}", lan_iface)).exists();
+    if !wan_exists {
+        anyhow::bail!("WAN interface '{}' not found (set WAN_IFACE env var)", wan_iface);
+    }
+    if !lan_exists {
+        anyhow::bail!("LAN interface '{}' not found (set LAN_IFACE env var)", lan_iface);
+    }
+    info!(wan = %wan_iface, lan = %lan_iface, "network interfaces");
 
     // Ensure LAN interface has the base IPv4 address
     let status = std::process::Command::new("/usr/sbin/ip")
-        .args(["addr", "add", LAN_ADDR, "dev", lan_iface])
+        .args(["addr", "add", LAN_ADDR, "dev", &lan_iface])
         .status();
     match status {
         Ok(s) if s.success() || s.code() == Some(2) => {} // 2 = already exists
@@ -116,11 +131,11 @@ async fn main() -> Result<()> {
 
     // Ensure LAN interface has the base IPv6 ULA address
     let _ = std::process::Command::new("/usr/sbin/ip")
-        .args(["-6", "addr", "add", LAN_ADDR_V6, "dev", lan_iface])
+        .args(["-6", "addr", "add", LAN_ADDR_V6, "dev", &lan_iface])
         .status();
     // Verify the address is actually present (ip addr add exit code 2 is ambiguous)
     let has_ipv6_ula = std::process::Command::new("/usr/sbin/ip")
-        .args(["-6", "addr", "show", "dev", lan_iface])
+        .args(["-6", "addr", "show", "dev", &lan_iface])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).contains("fd00::1"))
         .unwrap_or(false);
@@ -129,7 +144,7 @@ async fn main() -> Result<()> {
     }
 
     // Apply base nftables rules
-    nftables::apply_base_rules(wan_iface, lan_iface)?;
+    nftables::apply_base_rules(&wan_iface, &lan_iface)?;
 
     // Open database
     let db = Arc::new(Mutex::new(db::Db::open(DB_PATH)?));
@@ -164,7 +179,7 @@ async fn main() -> Result<()> {
     }
 
     // Try to obtain IPv6 prefix delegation from ISP
-    match crate::pd::request_prefix(wan_iface) {
+    match crate::pd::request_prefix(&wan_iface) {
         Ok(Some(prefix)) => {
             info!(prefix = %prefix, "IPv6 prefix delegated");
             let db_guard = db.lock().unwrap();
@@ -186,14 +201,14 @@ async fn main() -> Result<()> {
             if let (Some(ip), Some(sid)) = (&dev.ipv4, dev.subnet_id) {
                 if let Some(info) = subnet::compute_subnet(sid) {
                     // Re-add /32 device route
-                    let _ = nftables::add_device_route(ip, lan_iface);
+                    let _ = nftables::add_device_route(ip, &lan_iface);
                     // Re-add nftables counter
                     let _ = nftables::add_device_counter(ip);
                     // Re-add nftables forward rule
                     let _ = nftables::add_device_forward_rule(ip, &dev.device_group);
                     // Re-add IPv6 route, counter, forward rule
                     let ipv6 = info.device_ipv6_ula.to_string();
-                    let _ = nftables::add_device_route_v6(&ipv6, lan_iface);
+                    let _ = nftables::add_device_route_v6(&ipv6, &lan_iface);
                     let _ = nftables::add_device_counter_v6(&ipv6);
                     let _ = nftables::add_device_forward_rule_v6(&ipv6, &dev.device_group);
                     info!(mac = %dev.mac, ip = %ip, subnet_id = sid, group = %dev.device_group, "device restored");
@@ -219,7 +234,7 @@ async fn main() -> Result<()> {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0);
             if upload > 0 && download > 0 {
-                if let Err(e) = qos::enable(wan_iface, upload, download) {
+                if let Err(e) = qos::enable(&wan_iface, upload, download) {
                     error!(error = %e, "failed to restore QoS");
                 } else {
                     info!(upload = upload, download = download, "QoS restored");
@@ -242,7 +257,7 @@ async fn main() -> Result<()> {
         let dmz = db_guard.get_config("dmz_host_ip").ok().flatten().unwrap_or_default();
         let dmz_ref = if dmz.is_empty() { None } else { Some(dmz.as_str()) };
         if !forwards.is_empty() || dmz_ref.is_some() {
-            if let Err(e) = nftables::apply_port_forwards(wan_iface, lan_iface, &forwards, dmz_ref) {
+            if let Err(e) = nftables::apply_port_forwards(&wan_iface, &lan_iface, &forwards, dmz_ref) {
                 error!(error = %e, "failed to restore port forwards");
             } else {
                 info!(count = forwards.len(), "port forwards restored");
@@ -310,7 +325,7 @@ async fn main() -> Result<()> {
     }
 
     // Start blocky DNS server
-    let upstream_dns = read_upstream_dns(wan_iface);
+    let upstream_dns = read_upstream_dns(&wan_iface);
     info!(servers = ?upstream_dns, "upstream DNS");
 
     let blocky_mgr = {
