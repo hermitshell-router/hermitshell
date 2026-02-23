@@ -15,11 +15,11 @@ assert_match "$devices" '"device_group":"quarantine"' "Device is in quarantine"
 device_ip=$(vm_exec lan "ip -4 addr show eth1 | grep inet | awk '{print \$2}' | cut -d/ -f1")
 
 # Verify nftables verdict map routes this device to quarantine_fwd chain
-vmap=$(vm_sudo router "nft list map inet filter device_groups_v4" || echo "")
+vmap=$(vm_nft "list map inet filter device_groups_v4" || echo "")
 assert_contains "$vmap" "${device_ip} : jump quarantine_fwd" "Device IP mapped to quarantine_fwd in nftables"
 
 # Verify quarantine_fwd chain structure: allows WAN, drops everything else
-chain=$(vm_sudo router "nft list chain inet filter quarantine_fwd" || echo "")
+chain=$(vm_nft "list chain inet filter quarantine_fwd" || echo "")
 assert_match "$chain" 'oifname.*accept' "quarantine_fwd allows outbound to WAN"
 assert_match "$chain" 'drop' "quarantine_fwd drops non-WAN traffic"
 

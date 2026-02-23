@@ -31,6 +31,17 @@ else
 fi
 
 cp systemd/hermitshell-agent.service target/release/
+cp install.sh target/release/
+
+# Package local tarball for install.sh --local testing
+mkdir -p target/release/hermitshell-pkg
+cp target/release/hermitshell-agent target/release/hermitshell-pkg/
+cp target/release/hermitshell-dhcp target/release/hermitshell-pkg/
+cp target/release/hermitshell target/release/hermitshell-pkg/
+cp target/release/blocky target/release/hermitshell-pkg/
+tar -czf target/release/hermitshell-local.tar.gz -C target/release hermitshell-pkg
+rm -rf target/release/hermitshell-pkg
+echo "Install tarball: target/release/hermitshell-local.tar.gz"
 
 # Build container if docker is available
 if command -v docker &> /dev/null; then

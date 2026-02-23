@@ -7,13 +7,14 @@ DATA_DIR="/data/hermitshell"
 RUN_DIR="/run/hermitshell"
 
 usage() {
-    echo "Usage: $0 [--wan IFACE] [--lan IFACE] [--uninstall] [--upgrade]"
+    echo "Usage: $0 [--wan IFACE] [--lan IFACE] [--local TARBALL] [--uninstall] [--upgrade]"
     echo ""
     echo "Options:"
-    echo "  --wan IFACE    WAN interface name (required for install)"
-    echo "  --lan IFACE    LAN interface name (required for install)"
-    echo "  --uninstall    Remove HermitShell (preserves data)"
-    echo "  --upgrade      Upgrade to latest release"
+    echo "  --wan IFACE      WAN interface name (required for install)"
+    echo "  --lan IFACE      LAN interface name (required for install)"
+    echo "  --local TARBALL  Install from local tarball instead of GitHub"
+    echo "  --uninstall      Remove HermitShell (preserves data)"
+    echo "  --upgrade        Upgrade to latest release"
     exit 1
 }
 
@@ -88,31 +89,35 @@ do_install() {
     apt-get update -qq
     apt-get install -y -qq nftables conntrack wireguard-tools iproute2 curl >/dev/null
 
-    # Download latest release
-    local version
-    version=$(get_latest_version)
-    if [ -z "$version" ]; then
-        echo "Error: could not determine latest version" >&2
-        exit 1
-    fi
-    echo "  Version: $version"
-
-    local tarball="hermitshell-${version}-${arch}-linux.tar.gz"
-    local url="https://github.com/$REPO/releases/download/${version}/${tarball}"
-    local checksum_url="${url}.sha256"
-
-    local tmp
-    tmp=$(mktemp -d)
-    curl -fsSL -o "$tmp/$tarball" "$url"
-    curl -fsSL -o "$tmp/$tarball.sha256" "$checksum_url"
-    (cd "$tmp" && sha256sum -c "$tarball.sha256")
-
     # Install binaries
     mkdir -p "$INSTALL_DIR"
-    tar -xzf "$tmp/$tarball" -C "$INSTALL_DIR" --strip-components=1
+    if [ -n "$LOCAL_TARBALL" ]; then
+        echo "  Source: $LOCAL_TARBALL"
+        tar -xzf "$LOCAL_TARBALL" -C "$INSTALL_DIR" --strip-components=1
+    else
+        # Download latest release
+        local version
+        version=$(get_latest_version)
+        if [ -z "$version" ]; then
+            echo "Error: could not determine latest version" >&2
+            exit 1
+        fi
+        echo "  Version: $version"
+
+        local tarball="hermitshell-${version}-${arch}-linux.tar.gz"
+        local url="https://github.com/$REPO/releases/download/${version}/${tarball}"
+        local checksum_url="${url}.sha256"
+
+        local tmp
+        tmp=$(mktemp -d)
+        curl -fsSL -o "$tmp/$tarball" "$url"
+        curl -fsSL -o "$tmp/$tarball.sha256" "$checksum_url"
+        (cd "$tmp" && sha256sum -c "$tarball.sha256")
+        tar -xzf "$tmp/$tarball" -C "$INSTALL_DIR" --strip-components=1
+        rm -rf "$tmp"
+    fi
     chmod +x "$INSTALL_DIR"/hermitshell-agent "$INSTALL_DIR"/hermitshell-dhcp \
               "$INSTALL_DIR"/hermitshell "$INSTALL_DIR"/blocky
-    rm -rf "$tmp"
 
     # Create data and runtime directories
     mkdir -p "$DATA_DIR/db" "$DATA_DIR/blocky" "$RUN_DIR"
@@ -166,7 +171,8 @@ UNIT
 [Unit]
 Description=HermitShell Web UI
 After=hermitshell-agent.service
-Requires=hermitshell-agent.service
+BindsTo=hermitshell-agent.service
+PartOf=hermitshell-agent.service
 
 [Service]
 Type=simple
@@ -236,12 +242,14 @@ do_upgrade() {
 # Parse arguments
 WAN=""
 LAN=""
+LOCAL_TARBALL=""
 ACTION="install"
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --wan) WAN="$2"; shift 2 ;;
         --lan) LAN="$2"; shift 2 ;;
+        --local) LOCAL_TARBALL="$2"; shift 2 ;;
         --uninstall) ACTION="uninstall"; shift ;;
         --upgrade) ACTION="upgrade"; shift ;;
         *) usage ;;

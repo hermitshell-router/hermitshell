@@ -4,8 +4,8 @@ cd "$(dirname "$0")/.."
 
 ARCH=$(uname -m)
 case "$ARCH" in
-    x86_64)  DOCKER_ARCH="amd64" ;;
-    aarch64) DOCKER_ARCH="arm64" ;;
+    x86_64)  DOCKER_ARCH="amd64"; S6_ARCH="x86_64" ;;
+    aarch64) DOCKER_ARCH="arm64"; S6_ARCH="aarch64" ;;
     *) echo "Unsupported: $ARCH" >&2; exit 1 ;;
 esac
 
@@ -15,7 +15,7 @@ cp target/release/hermitshell-dhcp "docker-ctx/$DOCKER_ARCH/"
 cp target/release/hermitshell "docker-ctx/$DOCKER_ARCH/"
 cp target/release/blocky "docker-ctx/$DOCKER_ARCH/"
 
-docker build -t hermitshell:latest .
+docker build --build-arg TARGETARCH="$DOCKER_ARCH" --build-arg S6_ARCH="$S6_ARCH" -t hermitshell:latest .
 
 rm -rf docker-ctx
 echo "Built: hermitshell:latest"

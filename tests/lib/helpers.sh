@@ -8,6 +8,7 @@ NC='\033[0m'
 # --- SSH multiplexing setup ---
 # Use raw SSH with ControlMaster instead of vagrant ssh (~0.02s vs ~5s per call)
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$(dirname "${BASH_SOURCE[0]}")/deploy.sh"
 SSH_SOCK_DIR="$HOME/.ssh/sockets"
 mkdir -p "$SSH_SOCK_DIR"
 SSH_COMMON="-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o LogLevel=ERROR -o ControlMaster=auto -o ControlPath=$SSH_SOCK_DIR/%r@%h:%p -o ControlPersist=300"
@@ -151,9 +152,9 @@ require_lan_ip() {
 
 require_docker() {
     _check_ready() {
-        vm_exec router "docker inspect -f '{{.State.Running}}' hermitshell" 2>/dev/null | grep -q true
+        deploy_check_webui
     }
-    wait_for 20 "Docker container running" _check_ready
+    wait_for 20 "Web UI running" _check_ready
 }
 
 require_blocky() {
@@ -163,9 +164,27 @@ require_blocky() {
     wait_for 15 "Blocky DNS ready" _check_ready
 }
 
+# Run nft on router — uses container nft in docker mode (host nft may be incompatible)
+vm_nft() {
+    if [ "${HERMIT_MODE:-direct}" = "docker" ]; then
+        vm_exec router "docker exec hermitshell-aio nft $*" 2>/dev/null
+    else
+        vm_sudo router "nft $*"
+    fi
+}
+
+# Run tc on router — uses container tc in docker mode (host may not have tc)
+vm_tc() {
+    if [ "${HERMIT_MODE:-direct}" = "docker" ]; then
+        vm_exec router "docker exec hermitshell-aio tc $*" 2>/dev/null
+    else
+        vm_exec router "sudo tc $*"
+    fi
+}
+
 require_nftables() {
     _check_ready() {
-        vm_sudo router "nft list tables" 2>/dev/null | grep -q 'inet filter'
+        vm_nft "list tables" 2>/dev/null | grep -q 'inet filter'
     }
     wait_for 10 "nftables inet filter loaded" _check_ready
 }

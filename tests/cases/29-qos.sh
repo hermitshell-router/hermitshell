@@ -18,7 +18,7 @@ result=$(vm_exec router "echo '{\"method\":\"set_qos_config\",\"enabled\":true,\
 assert_match "$result" '"ok":true' "set_qos_config enable succeeds"
 
 # --- 3. Verify CAKE on eth1 ---
-tc_eth1=$(vm_exec router "sudo tc qdisc show dev eth1")
+tc_eth1=$(vm_tc "qdisc show dev eth1")
 assert_contains "$tc_eth1" 'cake' "CAKE qdisc present on eth1"
 
 # --- 4. Verify IFB device exists ---
@@ -26,11 +26,11 @@ ifb=$(vm_exec router "sudo ip link show ifb0 2>&1")
 assert_contains "$ifb" 'ifb0' "ifb0 device exists"
 
 # --- 5. Verify CAKE on ifb0 ---
-tc_ifb=$(vm_exec router "sudo tc qdisc show dev ifb0")
+tc_ifb=$(vm_tc "qdisc show dev ifb0")
 assert_contains "$tc_ifb" 'cake' "CAKE qdisc present on ifb0"
 
 # --- 6. Verify DSCP nftables table ---
-nft_qos=$(vm_exec router "sudo nft list table inet qos 2>&1")
+nft_qos=$(vm_nft "list table inet qos" 2>&1)
 assert_contains "$nft_qos" 'table inet qos' "nft table inet qos exists"
 assert_contains "$nft_qos" 'mark_forward' "nft chain mark_forward exists"
 
@@ -39,7 +39,7 @@ result=$(vm_exec router "echo '{\"method\":\"set_qos_config\",\"enabled\":false}
 assert_match "$result" '"ok":true' "set_qos_config disable succeeds"
 
 # --- 8. Verify cleanup ---
-tc_eth1=$(vm_exec router "sudo tc qdisc show dev eth1 2>&1")
+tc_eth1=$(vm_tc "qdisc show dev eth1" 2>&1)
 if echo "$tc_eth1" | grep -qF 'cake'; then
     echo -e "${RED}FAIL${NC}: CAKE still on eth1 after disable"
 else
@@ -53,7 +53,7 @@ else
     echo -e "${GREEN}PASS${NC}: ifb0 removed after disable"
 fi
 
-nft_qos=$(vm_exec router "sudo nft list table inet qos 2>&1")
+nft_qos=$(vm_nft "list table inet qos" 2>&1)
 if echo "$nft_qos" | grep -qF 'chain mark_forward'; then
     echo -e "${RED}FAIL${NC}: nft table inet qos still exists after disable"
 else
@@ -64,18 +64,15 @@ fi
 result=$(vm_exec router "echo '{\"method\":\"set_qos_config\",\"enabled\":true,\"upload_mbps\":100,\"download_mbps\":500}' | socat - $SOCK")
 assert_match "$result" '"ok":true' "re-enable QoS for restart test"
 
-tc_eth1=$(vm_exec router "sudo tc qdisc show dev eth1")
+tc_eth1=$(vm_tc "qdisc show dev eth1")
 assert_contains "$tc_eth1" 'cake' "CAKE on eth1 before restart"
 
 # --- 10. Restart agent ---
-vm_sudo router "systemctl stop hermitshell-agent 2>/dev/null; killall hermitshell-age hermitshell-dhc 2>/dev/null; true"
+deploy_stop_agent
 
-agent_dead() {
-    ! vm_exec router "pgrep -x hermitshell-age" | grep -q '[0-9]'
-}
-wait_for 5 "Agent stopped" agent_dead
+wait_for 5 "Agent stopped" deploy_agent_dead
 
-vm_sudo router "rm -f /run/hermitshell/*.sock && systemctl restart hermitshell-agent"
+deploy_start_agent
 
 socket_ready() {
     vm_sudo router "chmod 666 /run/hermitshell/agent.sock"
@@ -84,10 +81,10 @@ socket_ready() {
 wait_for 15 "Agent socket ready after restart" socket_ready
 
 # --- 11. Verify QoS restored after restart ---
-tc_eth1=$(vm_exec router "sudo tc qdisc show dev eth1")
+tc_eth1=$(vm_tc "qdisc show dev eth1")
 assert_contains "$tc_eth1" 'cake' "CAKE restored on eth1 after restart"
 
-tc_ifb=$(vm_exec router "sudo tc qdisc show dev ifb0")
+tc_ifb=$(vm_tc "qdisc show dev ifb0")
 assert_contains "$tc_ifb" 'cake' "CAKE restored on ifb0 after restart"
 
 # --- 12. Export includes QoS ---
@@ -104,7 +101,7 @@ if [ -n "$lan_mac" ]; then
     result=$(vm_exec router "echo '{\"method\":\"set_device_group\",\"mac\":\"$lan_mac\",\"group\":\"iot\"}' | socat - $SOCK")
     assert_match "$result" '"ok":true' "set_device_group to iot succeeds"
 
-    nft_qos=$(vm_exec router "sudo nft list table inet qos 2>&1")
+    nft_qos=$(vm_nft "list table inet qos" 2>&1)
     assert_contains "$nft_qos" 'bulk_v4' "bulk_v4 set exists after iot assignment"
     # The set should have at least one element (the iot device IP)
     assert_contains "$nft_qos" 'elements' "bulk_v4 has elements for iot device"

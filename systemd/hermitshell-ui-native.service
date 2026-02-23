@@ -1,7 +1,8 @@
 [Unit]
 Description=HermitShell Web UI
 After=hermitshell-agent.service
-Requires=hermitshell-agent.service
+BindsTo=hermitshell-agent.service
+PartOf=hermitshell-agent.service
 
 [Service]
 Type=simple

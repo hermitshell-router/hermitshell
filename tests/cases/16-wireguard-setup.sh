@@ -52,7 +52,7 @@ else
 fi
 
 # Verify nftables has the peer in verdict map
-nft_map=$(vm_sudo router "nft list map inet filter device_groups_v4")
+nft_map=$(vm_nft "list map inet filter device_groups_v4")
 assert_match "$nft_map" "$peer_ip" "Peer IP in verdict map"
 
 # Remove peer

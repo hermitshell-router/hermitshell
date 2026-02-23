@@ -6,9 +6,11 @@ require_lan_ip
 
 ROUTER=https://10.0.0.1
 
-# Check if container is running
-assert_success "Web UI container running" \
-    vm_exec router "docker inspect -f '{{.State.Running}}' hermitshell 2>/dev/null | grep -q true"
+# Check web UI container is running (direct mode only — other modes use native/aio)
+if [ "${HERMIT_MODE:-direct}" = "direct" ]; then
+    assert_success "Web UI container running" \
+        vm_exec router "docker inspect -f '{{.State.Running}}' hermitshell 2>/dev/null | grep -q true"
+fi
 
 # HTTPS should respond (may redirect to /setup or /login since no password set yet)
 response=$(vm_exec lan "curl -s -k -o /dev/null -w '%{http_code}' $ROUTER/")

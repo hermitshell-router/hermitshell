@@ -5,17 +5,14 @@ source "$(dirname "$0")/../lib/helpers.sh"
 before=$(vm_exec router 'echo "{\"method\":\"list_devices\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$before" '"ok":true' "list_devices before restart"
 
-# Kill the agent and DHCP process (need sudo to signal root processes)
-vm_sudo router "systemctl stop hermitshell-agent 2>/dev/null; killall hermitshell-age hermitshell-dhc blocky 2>/dev/null; true"
+# Stop the agent
+deploy_stop_agent
 
-# Verify they're dead
-agent_dead() {
-    ! vm_exec router "pgrep -x hermitshell-age" | grep -q '[0-9]'
-}
-wait_for 5 "Agent process stopped" agent_dead
+# Verify it's dead
+wait_for 5 "Agent process stopped" deploy_agent_dead
 
 # Restart agent
-vm_sudo router "rm -f /run/hermitshell/*.sock && systemctl restart hermitshell-agent"
+deploy_start_agent
 
 # Wait for socket to come back
 socket_ready() {
@@ -33,19 +30,15 @@ assert_match "$after" '10\.0\.' "Device IP preserved after restart"
 assert_success "LAN can reach WAN after restart" vm_exec lan "ping -c1 -W3 192.168.100.2"
 
 # Verify blocky is running again
-blocky_running() {
-    vm_exec router "pgrep blocky" | grep -q '[0-9]'
-}
-wait_for 10 "Blocky restarted" blocky_running
+wait_for 10 "Blocky restarted" deploy_check_blocky_running
 
-blocky_pid=$(vm_exec router "pgrep blocky" || echo "")
-assert_match "$blocky_pid" "^[0-9]+" "Blocky process running after restart"
+blocky_ok() {
+    deploy_check_blocky_running
+}
+assert_success "Blocky process running after restart" blocky_ok
 
 # Verify DHCP process is running
-dhcp_running() {
-    vm_exec router "pgrep -x hermitshell-dhc" | grep -q '[0-9]'
-}
-wait_for 10 "DHCP process running after restart" dhcp_running
+wait_for 10 "DHCP process running after restart" deploy_check_dhcp_running
 
 # Verify DNS resolution works through blocky
 dns_works() {

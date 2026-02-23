@@ -2,6 +2,16 @@
 set -e
 cd "$(dirname "$0")"
 
+# Parse arguments
+HERMIT_MODE="${HERMIT_MODE:-direct}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --mode) HERMIT_MODE="$2"; shift 2 ;;
+        *) echo "Usage: $0 [--mode docker|install|direct]"; exit 1 ;;
+    esac
+done
+export HERMIT_MODE
+
 # Clear stale SSH config cache from prior VM sessions
 rm -rf /tmp/hermit-ssh-cache
 
@@ -9,27 +19,28 @@ source lib/helpers.sh
 
 SUITE_START=$SECONDS
 
-echo "=== HermitShell Integration Tests ==="
+echo "=== HermitShell Integration Tests (mode: $HERMIT_MODE) ==="
 echo
 
-# Build binaries before testing
-echo "Building binaries..."
+# Build artifacts
+echo "Building ($HERMIT_MODE mode)..."
 build_start=$SECONDS
-(cd .. && bash scripts/build-agent.sh)
+deploy_build
 build_time=$((SECONDS - build_start))
 echo "Build: ${build_time}s"
 echo
 
-# Deploy fresh binaries to router and restart agent
-echo "Deploying to router..."
-deploy_start=$SECONDS
-vagrant rsync router
-vm_sudo router "systemctl stop hermitshell-agent 2>/dev/null; killall hermitshell-age hermitshell-dhc blocky 2>/dev/null; true" || true
-sleep 2
-vm_sudo router "rm -f /run/hermitshell/*.sock && cp /opt/hermitshell/hermitshell-agent.service /etc/systemd/system/ && systemctl daemon-reload && systemctl restart hermitshell-agent" || true
+# Ensure WAN VM NAT rules are present (non-persistent across reboots)
+vm_sudo wan "nft list table ip nat 2>/dev/null | grep -q masquerade || { nft add table ip nat; nft add chain ip nat postrouting '{ type nat hook postrouting priority 100 ; }'; nft add rule ip nat postrouting oifname eth0 masquerade; }" || true
 
-# Reload web UI container if image tar exists
-vm_sudo router "if [ -f /opt/hermitshell/hermitshell-container.tar ]; then docker load -i /opt/hermitshell/hermitshell-container.tar; docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --network host --read-only --cap-drop ALL --security-opt no-new-privileges -v /run/hermitshell:/run/hermitshell hermitshell:latest; fi" || true
+# Deploy fresh binaries to router and start services
+echo "Deploying to router ($HERMIT_MODE)..."
+deploy_timer=$SECONDS
+deploy_send
+deploy_stop_all || true
+sleep 2
+vm_sudo router "rm -f /run/hermitshell/*.sock" || true
+deploy_start || true
 
 # Deploy dhclient hook so DHCP renewals set the default route via hermitshell router
 cat lib/rfc3442-classless-routes | vm_sudo lan "tee /etc/dhcp/dhclient-exit-hooks.d/rfc3442-classless-routes > /dev/null" || true
@@ -58,7 +69,7 @@ for i in $(seq 1 45); do
         fi
     fi
     if ! $docker_ok; then
-        if vm_exec router "docker inspect -f '{{.State.Running}}' hermitshell 2>/dev/null" 2>/dev/null | grep -q true; then
+        if deploy_check_webui 2>/dev/null; then
             docker_ok=true
         fi
     fi
@@ -73,7 +84,7 @@ for i in $(seq 1 45); do
     fi
     sleep 1
 done
-deploy_time=$((SECONDS - deploy_start))
+deploy_time=$((SECONDS - deploy_timer))
 echo "Deploy+wait: ${deploy_time}s"
 echo
 
@@ -173,6 +184,10 @@ run_phase() {
     echo
 }
 
+# Deployment-specific checks
+run_phase "deploy-check" \
+    "cases/34-deploy-docker.sh cases/35-deploy-install.sh"
+
 # All tests run serially to avoid vagrant SSH contention.
 # Parallel groups cause intermittent empty socat/curl responses.
 run_phase "all" \
@@ -181,6 +196,10 @@ run_phase "all" \
 # Ensure socket is accessible after restart
 vm_sudo router "chmod 666 /run/hermitshell/agent.sock" || true
 
+# Wait for web UI to recover after agent restart (install mode needs this)
+_webui_ready() { deploy_check_webui; }
+wait_for 30 "Web UI ready after restart" _webui_ready || true
+
 # QoS runs after restart since it does its own agent restart internally
 run_phase "qos" \
     "cases/29-qos.sh"
@@ -188,13 +207,17 @@ run_phase "qos" \
 # Ensure socket is accessible after QoS restart
 vm_sudo router "chmod 666 /run/hermitshell/agent.sock" || true
 
+# Wait for web UI to recover after QoS agent restart
+wait_for 30 "Web UI ready after QoS restart" _webui_ready || true
+
 # Rate limiting runs last (leaves rate limit state dirty, needs clean agent)
 run_phase "rate-limit" \
     "cases/30-login-rate-limiting.sh"
 
-# Session TTL — restart container to clear web UI rate limit state
-vm_sudo router "docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --network host --read-only --cap-drop ALL --security-opt no-new-privileges -v /run/hermitshell:/run/hermitshell hermitshell:latest" || true
+# Session TTL — restart web UI to clear rate limit state
+deploy_restart_webui || true
 vm_sudo router "chmod 666 /run/hermitshell/agent.sock" || true
+wait_for 30 "Web UI ready after restart" _webui_ready || true
 run_phase "session-ttl" \
     "cases/31-session-ttl.sh"
 

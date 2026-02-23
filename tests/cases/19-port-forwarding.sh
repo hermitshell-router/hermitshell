@@ -28,11 +28,11 @@ assert_contains "$result" '"internal_port":80' "Forward lists internal port 80"
 assert_contains "$result" '"protocol":"tcp"' "Forward lists protocol tcp"
 
 # Verify nftables DNAT rule has correct structure
-nat_rules=$(vm_exec router "sudo nft list chain ip nat prerouting" 2>/dev/null || echo "")
+nat_rules=$(vm_nft "list chain ip nat prerouting" || echo "")
 assert_match "$nat_rules" "tcp dport 8080 dnat to ${device_ip}:80" "NAT prerouting has complete DNAT rule"
 
 # Verify nftables forward rule allows the forwarded traffic
-fwd_rules=$(vm_exec router "sudo nft list chain inet filter port_fwd" 2>/dev/null || echo "")
+fwd_rules=$(vm_nft "list chain inet filter port_fwd" || echo "")
 assert_match "$fwd_rules" "ip daddr ${device_ip} tcp dport 80 accept" "Forward chain allows traffic to internal IP:port"
 
 # Test actual traffic through the port forward:
@@ -52,7 +52,7 @@ result=$(vm_exec router "echo '{\"method\":\"remove_port_forward\",\"id\":$fwd_i
 assert_match "$result" '"ok":true' "remove_port_forward succeeds"
 
 # Verify nftables rule is actually gone
-nat_after=$(vm_exec router "sudo nft list chain ip nat prerouting" 2>/dev/null || echo "")
+nat_after=$(vm_nft "list chain ip nat prerouting" || echo "")
 if echo "$nat_after" | grep -q "dport 8080"; then
     echo -e "${RED}FAIL${NC}: DNAT rule still present after removal"
     exit 1

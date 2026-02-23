@@ -23,11 +23,11 @@ for group in iot guest servers; do
     assert_match "$devices" "\"device_group\":\"$group\"" "Device group shows $group"
 
     # Verify nftables verdict map updated to correct chain
-    vmap=$(vm_sudo router "nft list map inet filter device_groups_v4" || echo "")
+    vmap=$(vm_nft "list map inet filter device_groups_v4" || echo "")
     assert_contains "$vmap" "${device_ip} : jump ${group}_fwd" "nftables map shows ${group}_fwd for $group"
 
     # Verify the group's forward chain exists and has WAN-only policy (like quarantine)
-    chain=$(vm_sudo router "nft list chain inet filter ${group}_fwd" || echo "")
+    chain=$(vm_nft "list chain inet filter ${group}_fwd" || echo "")
     assert_match "$chain" 'oifname.*accept' "${group}_fwd allows WAN egress"
     assert_match "$chain" 'drop' "${group}_fwd drops non-WAN traffic"
 
@@ -40,5 +40,5 @@ result=$(vm_exec router "echo '{\"method\":\"set_device_group\",\"mac\":\"$lan_m
 assert_match "$result" '"ok":true' "Restored device to quarantine"
 
 # Verify nftables restored to quarantine
-vmap=$(vm_sudo router "nft list map inet filter device_groups_v4" || echo "")
+vmap=$(vm_nft "list map inet filter device_groups_v4" || echo "")
 assert_contains "$vmap" "${device_ip} : jump quarantine_fwd" "nftables restored to quarantine_fwd"
