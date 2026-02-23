@@ -623,3 +623,13 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** Low. An attacker on the network can eavesdrop on syslog traffic (device IPs, DNS queries, alerts) or inject forged syslog messages. Syslog targets are typically on a trusted LAN segment.
 
 **Proper fix:** Add TLS syslog (RFC 5425) as an option. Validate that the syslog target is on a local network segment, or warn when targeting WAN addresses.
+
+## 54. WiFi AP credentials stored recoverable by root
+
+**What:** AP login passwords are stored in the SQLite config table. They are readable by the agent process to authenticate to APs.
+
+**Why:** The agent must authenticate to APs to push config and pull client data. Passwords cannot be one-way hashed.
+
+**Risk:** Root on the router box can read AP credentials. Same trust model as WireGuard private key and TLS key.
+
+**Proper fix:** Hardware security module or separate credential store with process-level isolation. Out of scope for a commodity router.
