@@ -3,6 +3,7 @@ use rusqlite::Connection;
 
 pub use hermitshell_common::{
     Alert, AuditEntry, ConnectionLog, Device, DhcpReservation, DnsLogEntry, PortForward, WgPeer,
+    WifiAp, WifiClient, WifiRadioConfig, WifiSsidConfig,
 };
 
 /// Hard limit from 10.0.0.0/8 address space: 16,580,355 /32 addresses.
@@ -144,6 +145,11 @@ fn device_from_row(row: &rusqlite::Row) -> rusqlite::Result<Device> {
         runzero_manufacturer: row.get(14)?,
         runzero_last_sync: row.get(15)?,
         nickname: row.get(16)?,
+        wifi_ssid: row.get(17)?,
+        wifi_band: row.get(18)?,
+        wifi_rssi: row.get(19)?,
+        wifi_ap_mac: row.get(20)?,
+        wifi_last_seen: row.get(21)?,
     })
 }
 
@@ -220,8 +226,51 @@ impl Db {
             )?;
         }
 
+        if version < 2 {
+            for col in &[
+                "wifi_ssid TEXT",
+                "wifi_band TEXT",
+                "wifi_rssi INTEGER",
+                "wifi_ap_mac TEXT",
+                "wifi_last_seen INTEGER",
+            ] {
+                let _ = conn.execute_batch(&format!("ALTER TABLE devices ADD COLUMN {col}"));
+            }
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS wifi_aps (
+                    mac TEXT PRIMARY KEY,
+                    ip TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    provider TEXT NOT NULL DEFAULT 'eap_standalone',
+                    model TEXT,
+                    firmware TEXT,
+                    username TEXT NOT NULL,
+                    password_enc TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    last_seen INTEGER,
+                    status TEXT NOT NULL DEFAULT 'unknown'
+                );
+                CREATE TABLE IF NOT EXISTS wifi_ssid_configs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ap_mac TEXT NOT NULL,
+                    ssid_name TEXT NOT NULL,
+                    band TEXT NOT NULL,
+                    password_enc TEXT,
+                    vlan_id INTEGER,
+                    hidden INTEGER NOT NULL DEFAULT 0,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    security TEXT NOT NULL DEFAULT 'wpa2_wpa3'
+                );"
+            )?;
+            conn.execute(
+                "INSERT INTO config (key, value) VALUES ('schema_version', '2')
+                 ON CONFLICT(key) DO UPDATE SET value = '2'",
+                [],
+            )?;
+        }
+
         // Future migrations go here:
-        // if version < 2 { migrate_v2(conn)?; }
+        // if version < 3 { ... }
 
         Ok(())
     }
@@ -236,7 +285,7 @@ impl Db {
 
     pub fn list_devices(&self) -> Result<Vec<Device>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname FROM devices"
+            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname, wifi_ssid, wifi_band, wifi_rssi, wifi_ap_mac, wifi_last_seen FROM devices"
         )?;
         let devices = stmt.query_map([], |row| device_from_row(row))?;
         Ok(devices.filter_map(|d| d.ok()).collect())
@@ -244,7 +293,7 @@ impl Db {
 
     pub fn get_device(&self, mac: &str) -> Result<Option<Device>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname FROM devices WHERE mac = ?1"
+            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname, wifi_ssid, wifi_band, wifi_rssi, wifi_ap_mac, wifi_last_seen FROM devices WHERE mac = ?1"
         )?;
         let mut rows = stmt.query([mac])?;
         if let Some(row) = rows.next()? {
@@ -342,7 +391,7 @@ impl Db {
     /// List all devices that have subnet_id set (for state restoration on startup)
     pub fn list_assigned_devices(&self) -> Result<Vec<Device>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname FROM devices WHERE subnet_id IS NOT NULL"
+            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname, wifi_ssid, wifi_band, wifi_rssi, wifi_ap_mac, wifi_last_seen FROM devices WHERE subnet_id IS NOT NULL"
         )?;
         let devices = stmt.query_map([], |row| device_from_row(row))?;
         Ok(devices.filter_map(|d| d.ok()).collect())
@@ -998,6 +1047,103 @@ impl Db {
         self.conn.execute(
             "UPDATE devices SET nickname = ?1 WHERE mac = ?2",
             (val, mac),
+        )?;
+        Ok(())
+    }
+
+    // WiFi AP methods
+
+    pub fn list_wifi_aps(&self) -> Result<Vec<hermitshell_common::WifiAp>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT mac, ip, name, provider, model, firmware, enabled, last_seen, status FROM wifi_aps"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(hermitshell_common::WifiAp {
+                mac: row.get(0)?,
+                ip: row.get(1)?,
+                name: row.get(2)?,
+                provider: row.get(3)?,
+                model: row.get(4)?,
+                firmware: row.get(5)?,
+                enabled: row.get::<_, i64>(6)? != 0,
+                last_seen: row.get(7)?,
+                status: row.get(8)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn get_wifi_ap(&self, mac: &str) -> Result<Option<hermitshell_common::WifiAp>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT mac, ip, name, provider, model, firmware, enabled, last_seen, status FROM wifi_aps WHERE mac = ?1"
+        )?;
+        let mut rows = stmt.query([mac])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(hermitshell_common::WifiAp {
+                mac: row.get(0)?,
+                ip: row.get(1)?,
+                name: row.get(2)?,
+                provider: row.get(3)?,
+                model: row.get(4)?,
+                firmware: row.get(5)?,
+                enabled: row.get::<_, i64>(6)? != 0,
+                last_seen: row.get(7)?,
+                status: row.get(8)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn insert_wifi_ap(&self, mac: &str, ip: &str, name: &str, provider: &str, username: &str, password_enc: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO wifi_aps (mac, ip, name, provider, username, password_enc) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            (mac, ip, name, provider, username, password_enc),
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_wifi_ap(&self, mac: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM wifi_ssid_configs WHERE ap_mac = ?1", [mac])?;
+        self.conn.execute("DELETE FROM wifi_aps WHERE mac = ?1", [mac])?;
+        Ok(())
+    }
+
+    pub fn update_wifi_ap_status(&self, mac: &str, status: &str, last_seen: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE wifi_aps SET status = ?1, last_seen = ?2 WHERE mac = ?3",
+            (status, last_seen, mac),
+        )?;
+        Ok(())
+    }
+
+    pub fn update_wifi_ap_info(&self, mac: &str, model: Option<&str>, firmware: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE wifi_aps SET model = ?1, firmware = ?2 WHERE mac = ?3",
+            (model, firmware, mac),
+        )?;
+        Ok(())
+    }
+
+    pub fn get_wifi_ap_credentials(&self, mac: &str) -> Result<Option<(String, String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT ip, username, password_enc FROM wifi_aps WHERE mac = ?1"
+        )?;
+        let mut rows = stmt.query([mac])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some((row.get(0)?, row.get(1)?, row.get(2)?)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn update_device_wifi(&self, mac: &str, ssid: Option<&str>, band: Option<&str>, rssi: Option<i32>, ap_mac: Option<&str>) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+        self.conn.execute(
+            "UPDATE devices SET wifi_ssid = ?1, wifi_band = ?2, wifi_rssi = ?3, wifi_ap_mac = ?4, wifi_last_seen = ?5 WHERE mac = ?6",
+            rusqlite::params![ssid, band, rssi, ap_mac, now, mac],
         )?;
         Ok(())
     }
