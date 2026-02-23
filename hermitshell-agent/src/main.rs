@@ -9,6 +9,7 @@ mod pd;
 mod qos;
 mod ra;
 mod socket;
+mod tls;
 mod runzero;
 mod wireguard;
 
@@ -427,6 +428,12 @@ async fn main() -> Result<()> {
     let db_runzero = db.clone();
     tokio::spawn(async move {
         runzero::run(db_runzero).await;
+    });
+
+    // Spawn TLS cert renewal task
+    let db_tls = db.clone();
+    tokio::spawn(async move {
+        tls::run_renewal(db_tls).await;
     });
 
     // Spawn DHCP server as child process
