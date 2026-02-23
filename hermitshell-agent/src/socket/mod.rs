@@ -169,6 +169,8 @@ struct Response {
     qos_config: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     audit_logs: Option<Vec<crate::db::AuditEntry>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tls_status: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -280,6 +282,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "verify_session" => auth::handle_verify_session(&req, db),
         "refresh_session" => auth::handle_refresh_session(&req, db),
         "get_tls_config" => auth::handle_get_tls_config(&req, db),
+        "get_tls_status" => auth::handle_get_tls_status(&req, db),
         "get_wireguard" => wireguard::handle_get_wireguard(&req, db),
         "set_wireguard_enabled" => wireguard::handle_set_wireguard_enabled(&req, db),
         "add_wg_peer" => wireguard::handle_add_wg_peer(&req, db),

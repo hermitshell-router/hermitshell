@@ -238,6 +238,65 @@ pub(super) fn handle_refresh_session(req: &Request, db: &Arc<Mutex<Db>>) -> Resp
     resp
 }
 
+pub(super) fn handle_get_tls_status(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let db = db.lock().unwrap();
+    let mode = db.get_config("tls_mode").ok().flatten().unwrap_or_else(|| "self_signed".to_string());
+    let cert_pem = db.get_config("tls_cert_pem").ok().flatten();
+
+    let mut status = serde_json::json!({
+        "tls_mode": mode,
+    });
+
+    if let Some(ref pem) = cert_pem {
+        if let Some(info) = parse_cert_info(pem) {
+            status["issuer"] = serde_json::Value::String(info.issuer);
+            status["expires_at"] = serde_json::Value::Number(info.expires_at.into());
+            status["sans"] = serde_json::Value::Array(
+                info.sans.into_iter().map(serde_json::Value::String).collect()
+            );
+        }
+    }
+
+    let mut resp = Response::ok();
+    resp.tls_status = Some(status);
+    resp
+}
+
+struct CertInfo {
+    issuer: String,
+    expires_at: i64,
+    sans: Vec<String>,
+}
+
+fn parse_cert_info(pem: &str) -> Option<CertInfo> {
+    let cert_der = rustls_pemfile::certs(&mut pem.as_bytes())
+        .filter_map(|c| c.ok())
+        .next()?;
+    let (_, cert) = x509_parser::parse_x509_certificate(&cert_der).ok()?;
+    let issuer = cert.issuer().to_string();
+    let expires_at = cert.validity().not_after.timestamp();
+    let sans = cert.subject_alternative_name()
+        .ok()
+        .flatten()
+        .map(|ext| {
+            ext.value.general_names.iter().filter_map(|name| {
+                match name {
+                    x509_parser::extensions::GeneralName::DNSName(s) => Some(s.to_string()),
+                    x509_parser::extensions::GeneralName::IPAddress(bytes) => {
+                        if bytes.len() == 4 {
+                            Some(format!("{}.{}.{}.{}", bytes[0], bytes[1], bytes[2], bytes[3]))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }
+            }).collect()
+        })
+        .unwrap_or_default();
+    Some(CertInfo { issuer, expires_at, sans })
+}
+
 pub(super) fn handle_get_tls_config(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let db = db.lock().unwrap();
     let cert = db.get_config("tls_cert_pem").ok().flatten();
