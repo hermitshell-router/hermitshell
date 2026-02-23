@@ -267,6 +267,53 @@ pub(super) fn handle_set_tls_cert(req: &Request, db: &Arc<Mutex<Db>>) -> Respons
     Response::ok()
 }
 
+pub(super) fn handle_set_tls_mode(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref mode) = req.value else {
+        return Response::err("value required (tls mode)");
+    };
+    match mode.as_str() {
+        "self_signed" => {
+            let db = db.lock().unwrap();
+            let _ = db.set_config("tls_mode", "self_signed");
+            info!(mode = "self_signed", "TLS mode changed");
+            Response::ok()
+        }
+        "custom" => {
+            Response::err("use set_tls_cert to upload a custom certificate")
+        }
+        "tailscale" => {
+            let Some(ref domain) = req.key else {
+                return Response::err("key required (ts.net domain)");
+            };
+            if !domain.ends_with(".ts.net") {
+                return Response::err("domain must end with .ts.net");
+            }
+            if domain.len() > 253 || domain.contains(' ') {
+                return Response::err("invalid domain");
+            }
+            let db = db.lock().unwrap();
+            let _ = db.set_config("acme_domain", domain);
+            let _ = db.set_config("tls_mode", "tailscale");
+            info!(mode = "tailscale", domain = %domain, "TLS mode changed");
+            Response::ok()
+        }
+        "acme_dns01" => {
+            let Some(ref domain) = req.key else {
+                return Response::err("key required (domain)");
+            };
+            if domain.is_empty() || domain.len() > 253 || domain.contains(' ') {
+                return Response::err("invalid domain");
+            }
+            let db = db.lock().unwrap();
+            let _ = db.set_config("acme_domain", domain);
+            let _ = db.set_config("tls_mode", "acme_dns01");
+            info!(mode = "acme_dns01", domain = %domain, "TLS mode changed");
+            Response::ok()
+        }
+        _ => Response::err("invalid tls mode (self_signed, custom, tailscale, acme_dns01)"),
+    }
+}
+
 pub(super) fn handle_get_tls_status(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let db = db.lock().unwrap();
     let mode = db.get_config("tls_mode").ok().flatten().unwrap_or_else(|| "self_signed".to_string());

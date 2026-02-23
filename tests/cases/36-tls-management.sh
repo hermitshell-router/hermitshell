@@ -37,3 +37,20 @@ assert_match "$result" '"ok":false' "set_tls_cert rejects invalid PEM"
 # --- set_tls_cert rejects missing fields ---
 result=$(vm_exec router "echo '{\"method\":\"set_tls_cert\",\"tls_cert_pem\":\"test\"}' | socat - $SOCK")
 assert_match "$result" '"ok":false' "set_tls_cert rejects missing key"
+
+# --- set_tls_mode to self_signed ---
+result=$(vm_exec router "echo '{\"method\":\"set_tls_mode\",\"value\":\"self_signed\"}' | socat - $SOCK")
+assert_match "$result" '"ok":true' "set_tls_mode self_signed succeeds"
+
+result=$(vm_exec router "echo '{\"method\":\"get_tls_status\"}' | socat - $SOCK")
+assert_match "$result" '"tls_mode":"self_signed"' "tls_mode reverted to self_signed"
+
+# --- set_tls_mode rejects invalid mode ---
+result=$(vm_exec router "echo '{\"method\":\"set_tls_mode\",\"value\":\"bogus\"}' | socat - $SOCK")
+assert_match "$result" '"ok":false' "set_tls_mode rejects invalid mode"
+
+# --- acme_cf_api_token and acme_account_key are blocked ---
+for key in acme_cf_api_token acme_account_key; do
+    result=$(vm_exec router "echo '{\"method\":\"get_config\",\"key\":\"$key\"}' | socat - $SOCK")
+    assert_match "$result" 'access denied' "get_config blocks $key"
+done

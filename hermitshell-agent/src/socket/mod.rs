@@ -29,6 +29,8 @@ const BLOCKED_CONFIG_KEYS: &[&str] = &[
     "tls_key_pem",
     "tls_cert_pem",
     "runzero_token",
+    "acme_cf_api_token",
+    "acme_account_key",
 ];
 
 fn is_blocked_config_key(key: &str) -> bool {
@@ -286,6 +288,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "get_tls_config" => auth::handle_get_tls_config(&req, db),
         "get_tls_status" => auth::handle_get_tls_status(&req, db),
         "set_tls_cert" => auth::handle_set_tls_cert(&req, db),
+        "set_tls_mode" => auth::handle_set_tls_mode(&req, db),
         "get_wireguard" => wireguard::handle_get_wireguard(&req, db),
         "set_wireguard_enabled" => wireguard::handle_set_wireguard_enabled(&req, db),
         "add_wg_peer" => wireguard::handle_add_wg_peer(&req, db),
