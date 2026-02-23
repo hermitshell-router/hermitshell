@@ -45,6 +45,16 @@ pub struct Device {
     pub runzero_last_sync: Option<i64>,
     #[serde(default)]
     pub nickname: Option<String>,
+    #[serde(default)]
+    pub wifi_ssid: Option<String>,
+    #[serde(default)]
+    pub wifi_band: Option<String>,
+    #[serde(default)]
+    pub wifi_rssi: Option<i32>,
+    #[serde(default)]
+    pub wifi_ap_mac: Option<String>,
+    #[serde(default)]
+    pub wifi_last_seen: Option<i64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -120,4 +130,61 @@ pub struct AuditEntry {
     pub action: String,
     pub detail: String,
     pub created_at: i64,
+}
+
+/// An adopted WiFi access point managed by the agent.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WifiAp {
+    pub mac: String,
+    pub ip: String,
+    pub name: String,
+    pub provider: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub firmware: Option<String>,
+    pub enabled: bool,
+    #[serde(default)]
+    pub last_seen: Option<i64>,
+    pub status: String,
+}
+
+/// A WiFi client observed on an access point.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WifiClient {
+    pub mac: String,
+    pub ap_mac: String,
+    pub ssid: String,
+    pub band: String,
+    #[serde(default)]
+    pub rssi: Option<i32>,
+    #[serde(default)]
+    pub rx_rate: Option<u32>,
+    #[serde(default)]
+    pub tx_rate: Option<u32>,
+}
+
+/// SSID configuration for an access point.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WifiSsidConfig {
+    pub ssid_name: String,
+    #[serde(default)]
+    pub password: Option<String>,
+    pub band: String,
+    #[serde(default)]
+    pub vlan_id: Option<u16>,
+    #[serde(default)]
+    pub hidden: bool,
+    pub enabled: bool,
+    pub security: String,
+}
+
+/// Radio configuration for an access point.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WifiRadioConfig {
+    pub band: String,
+    pub channel: String,
+    pub channel_width: String,
+    pub tx_power: String,
+    pub enabled: bool,
 }
