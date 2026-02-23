@@ -593,3 +593,23 @@ This document tracks security compromises made during implementation, why they w
 **Mitigating factor:** The standalone web UI container (`hermitshell/Dockerfile`) still runs non-privileged with `--read-only --cap-drop ALL --security-opt no-new-privileges`. Only the all-in-one container requires `--privileged`. The all-in-one mode is primarily for testing and simple deployments; production-grade deployments should use install mode (systemd units with hardening directives).
 
 **Proper fix:** Replace `--privileged` with the minimum required capabilities: `--cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_MODULE --device /dev/net/tun`. Add `--security-opt no-new-privileges` and `--read-only` (with tmpfs mounts for writable paths). Run the web UI process as a non-root user inside the container using s6's `s6-setuidgid`. Keep only the agent and DHCP server as root.
+
+## 51. ACME account key stored in SQLite config
+
+**What:** The ACME account private key (used to sign requests to Let's Encrypt) is stored in the SQLite config table alongside other secrets.
+
+**Why:** Consistent with existing secret storage pattern (TLS key, WireGuard key). No separate key store.
+
+**Risk:** Low. The account key can only be used to request/revoke certs for domains you control. It cannot decrypt traffic. Blocked from `get_config` access.
+
+**Proper fix:** External secrets manager or encrypted-at-rest column.
+
+## 52. Cloudflare API token stored in plaintext
+
+**What:** The Cloudflare API token (with Zone:DNS:Edit permission) is stored in the config DB in plaintext.
+
+**Why:** The agent needs the token to create/delete DNS records during ACME challenges. Same storage pattern as runZero token.
+
+**Risk:** Medium. Token grants DNS write access to the configured zone. Scoped to a single zone. Blocked from `get_config` access.
+
+**Proper fix:** Encrypted-at-rest column, or use Cloudflare scoped API tokens (zone-locked + permission-limited).
