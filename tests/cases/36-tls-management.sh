@@ -54,3 +54,38 @@ for key in acme_cf_api_token acme_account_key; do
     result=$(vm_exec router "echo '{\"method\":\"get_config\",\"key\":\"$key\"}' | socat - $SOCK")
     assert_match "$result" 'access denied' "get_config blocks $key"
 done
+
+# --- set_acme_config stores ACME settings ---
+result=$(vm_exec router "echo '{\"method\":\"set_acme_config\",\"value\":\"{\\\"domain\\\":\\\"router.example.com\\\",\\\"email\\\":\\\"admin@example.com\\\",\\\"cf_api_token\\\":\\\"test-token-123\\\",\\\"cf_zone_id\\\":\\\"abcd1234abcd1234abcd1234abcd1234\\\"}\"}' | socat - $SOCK")
+assert_match "$result" '"ok":true' "set_acme_config succeeds"
+
+# --- verify domain was stored ---
+result=$(vm_exec router "echo '{\"method\":\"get_config\",\"key\":\"acme_domain\"}' | socat - $SOCK")
+assert_match "$result" 'router.example.com' "acme_domain stored"
+
+# --- verify email was stored ---
+result=$(vm_exec router "echo '{\"method\":\"get_config\",\"key\":\"acme_contact_email\"}' | socat - $SOCK")
+assert_match "$result" 'admin@example.com' "acme_contact_email stored"
+
+# --- verify token is blocked ---
+result=$(vm_exec router "echo '{\"method\":\"get_config\",\"key\":\"acme_cf_api_token\"}' | socat - $SOCK")
+assert_match "$result" 'access denied' "acme_cf_api_token is blocked"
+
+# --- set_acme_config rejects missing domain ---
+result=$(vm_exec router "echo '{\"method\":\"set_acme_config\",\"value\":\"{\\\"email\\\":\\\"a@b.com\\\"}\"}' | socat - $SOCK")
+assert_match "$result" '"ok":false' "set_acme_config rejects missing domain"
+
+# --- set_acme_config rejects invalid zone_id ---
+result=$(vm_exec router "echo '{\"method\":\"set_acme_config\",\"value\":\"{\\\"domain\\\":\\\"r.com\\\",\\\"email\\\":\\\"a@b.com\\\",\\\"cf_api_token\\\":\\\"tok\\\",\\\"cf_zone_id\\\":\\\"short\\\"}\"}' | socat - $SOCK")
+assert_match "$result" '"ok":false' "set_acme_config rejects invalid zone_id"
+
+# --- Tailscale mode test ---
+result=$(vm_exec router "echo '{\"method\":\"set_tls_mode\",\"value\":\"tailscale\",\"key\":\"router.tail1234.ts.net\"}' | socat - $SOCK")
+assert_match "$result" '"ok":true' "set_tls_mode tailscale succeeds"
+
+result=$(vm_exec router "echo '{\"method\":\"get_tls_status\"}' | socat - $SOCK")
+assert_match "$result" '"tls_mode":"tailscale"' "tls_mode is tailscale"
+
+# Restore self_signed for subsequent tests
+result=$(vm_exec router "echo '{\"method\":\"set_tls_mode\",\"value\":\"self_signed\"}' | socat - $SOCK")
+assert_match "$result" '"ok":true' "restore self_signed mode"

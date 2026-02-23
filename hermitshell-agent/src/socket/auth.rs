@@ -314,6 +314,45 @@ pub(super) fn handle_set_tls_mode(req: &Request, db: &Arc<Mutex<Db>>) -> Respons
     }
 }
 
+pub(super) fn handle_set_acme_config(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref value) = req.value else {
+        return Response::err("value required (JSON config)");
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(value) {
+        Ok(v) => v,
+        Err(e) => return Response::err(&format!("invalid JSON: {}", e)),
+    };
+
+    let domain = parsed.get("domain").and_then(|v| v.as_str()).unwrap_or("");
+    if domain.is_empty() || domain.len() > 253 || domain.contains(' ') {
+        return Response::err("domain required and must be a valid hostname");
+    }
+
+    let email = parsed.get("email").and_then(|v| v.as_str()).unwrap_or("");
+    if email.is_empty() || !email.contains('@') {
+        return Response::err("email required");
+    }
+
+    let cf_api_token = parsed.get("cf_api_token").and_then(|v| v.as_str()).unwrap_or("");
+    if cf_api_token.is_empty() {
+        return Response::err("cf_api_token required");
+    }
+
+    let cf_zone_id = parsed.get("cf_zone_id").and_then(|v| v.as_str()).unwrap_or("");
+    if cf_zone_id.len() != 32 || !cf_zone_id.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Response::err("cf_zone_id must be a 32-character hex string");
+    }
+
+    let db = db.lock().unwrap();
+    let _ = db.set_config("acme_domain", domain);
+    let _ = db.set_config("acme_contact_email", email);
+    let _ = db.set_config("acme_cf_api_token", cf_api_token);
+    let _ = db.set_config("acme_cf_zone_id", cf_zone_id);
+    let _ = db.set_config("tls_mode", "acme_dns01");
+    info!(domain = %domain, "ACME DNS-01 config saved");
+    Response::ok()
+}
+
 pub(super) fn handle_get_tls_status(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let db = db.lock().unwrap();
     let mode = db.get_config("tls_mode").ok().flatten().unwrap_or_else(|| "self_signed".to_string());
