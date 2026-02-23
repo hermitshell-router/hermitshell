@@ -614,25 +614,13 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Encrypted-at-rest column, or use Cloudflare scoped API tokens (zone-locked + permission-limited).
 
-## 53. Webhook secret accepted but never sent
+## 53. ~~Webhook secret accepted but never sent~~ (FIXED)
 
-**What:** The UI collects a `webhook_secret` field and the agent stores it via `set_log_config`, but `webhook_post()` in `log_export.rs` never reads or includes it in HTTP requests. The original design called for an `Authorization: Bearer <secret>` header.
+**Fixed:** `webhook_post()` now loads `webhook_secret` from config and sends it as `Authorization: Bearer <secret>` when non-empty.
 
-**Why:** The field was added to the allowed keys and UI form during Phase 7 (logging), but the actual HTTP sending code was implemented as a minimal raw TCP POST without authentication headers.
+## 54. ~~Webhook uses raw TCP, ignores HTTPS~~ (FIXED)
 
-**Risk:** Medium. Users who configure a webhook secret have a false sense of security — the token is silently ignored. Webhook endpoints that expect bearer auth will reject the unauthenticated requests, making this visible. Endpoints without auth checks receive events without any verification.
-
-**Proper fix:** Load `webhook_secret` in `refresh_config()`, pass to `webhook_post()`, add `Authorization: Bearer <secret>` header when the secret is non-empty.
-
-## 54. Webhook uses raw TCP, ignores HTTPS
-
-**What:** `webhook_post()` in `log_export.rs` uses `TcpStream::connect()` for raw HTTP. It strips both `http://` and `https://` prefixes identically, so `https://` URLs are silently downgraded to plaintext.
-
-**Why:** The implementation used a minimal hand-rolled HTTP client to avoid adding a runtime HTTP dependency to the agent's synchronous log export thread. The `reqwest` dependency exists in the agent (for ACME Cloudflare API calls) but is async-only.
-
-**Risk:** Medium. Log events containing device IPs, MACs, DNS queries, and security alerts are sent in plaintext. An attacker on the network path can eavesdrop or MITM the connection. Administrators who enter `https://` URLs expect encryption but don't get it.
-
-**Proper fix:** Use `reqwest::blocking::Client` (or spawn an async task) for webhook delivery. Validate TLS certificates. Reject `https://` URLs if TLS support is unavailable.
+**Fixed:** `webhook_post()` now uses async `reqwest` with `rustls-tls` for proper HTTPS. TLS certificates are validated against the system CA bundle.
 
 ## 55. Syslog export uses unencrypted, unauthenticated UDP
 

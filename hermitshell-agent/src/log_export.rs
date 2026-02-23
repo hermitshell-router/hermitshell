@@ -1,7 +1,6 @@
 use crate::db::Db;
 
-use std::io::{BufRead, BufReader, Write as IoWrite};
-use std::net::{TcpStream, UdpSocket};
+use std::net::UdpSocket;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -185,38 +184,39 @@ fn parse_syslog_target(target: &str) -> Option<String> {
     target.strip_prefix("udp://").map(|s| s.to_string())
 }
 
-/// Send a JSON array payload via HTTP POST to the given URL (fire-and-forget).
-/// URL format: "http://host:port/path" or "http://host/path"
-fn webhook_post(url: &str, payload: &str) {
-    let url = url.strip_prefix("http://").unwrap_or(url);
-    let url = url.strip_prefix("https://").unwrap_or(url);
-
-    let (host_port, path) = match url.find('/') {
-        Some(i) => (&url[..i], &url[i..]),
-        None => (url, "/"),
+/// Send a JSON array payload via HTTP(S) POST to the given URL (fire-and-forget).
+/// Supports HTTPS with certificate validation. Includes Bearer auth if secret is set.
+async fn webhook_post(url: &str, payload: String, secret: &str) {
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            error!(error = %e, "webhook client build failed");
+            return;
+        }
     };
 
-    let Ok(mut stream) = TcpStream::connect(host_port) else {
-        error!(target = host_port, "webhook connect failed");
-        return;
-    };
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    let mut req = client
+        .post(url)
+        .header("Content-Type", "application/json")
+        .body(payload);
 
-    let request = format!(
-        "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        path, host_port, payload.len(), payload
-    );
-    if stream.write_all(request.as_bytes()).is_err() {
-        error!(target = host_port, "webhook write failed");
-        return;
+    if !secret.is_empty() {
+        req = req.header("Authorization", format!("Bearer {}", secret));
     }
-    let _ = stream.flush();
 
-    // Read response status line (fire-and-forget, but drain to avoid RST)
-    let mut reader = BufReader::new(&stream);
-    let mut line = String::new();
-    let _ = reader.read_line(&mut line);
+    match req.send().await {
+        Ok(resp) => {
+            if !resp.status().is_success() {
+                error!(status = %resp.status(), url, "webhook POST failed");
+            }
+        }
+        Err(e) => {
+            error!(error = %e, url, "webhook POST failed");
+        }
+    }
 }
 
 /// Get system hostname for syslog messages.
@@ -236,12 +236,13 @@ pub async fn start(
     let hostname = get_hostname();
     let mut syslog_addr: Option<String> = None;
     let mut webhook_url: Option<String> = None;
+    let mut webhook_secret: String = String::new();
     let mut webhook_batch: Vec<serde_json::Value> = Vec::new();
     let mut last_config_refresh = std::time::Instant::now();
     let mut last_webhook_flush = std::time::Instant::now();
 
     // Initial config load
-    refresh_config(&db, &mut syslog_addr, &mut webhook_url);
+    refresh_config(&db, &mut syslog_addr, &mut webhook_url, &mut webhook_secret);
 
     loop {
         // Use a short timeout to enable periodic webhook flushing
@@ -261,7 +262,7 @@ pub async fn start(
                 if webhook_url.is_some() {
                     webhook_batch.push(event.to_json());
                     if webhook_batch.len() >= 100 {
-                        flush_webhook(&webhook_url, &mut webhook_batch);
+                        flush_webhook(&webhook_url, &webhook_secret, &mut webhook_batch);
                         last_webhook_flush = std::time::Instant::now();
                     }
                 }
@@ -277,13 +278,13 @@ pub async fn start(
 
         // Flush webhook batch if 10 seconds have passed
         if !webhook_batch.is_empty() && last_webhook_flush.elapsed() >= Duration::from_secs(10) {
-            flush_webhook(&webhook_url, &mut webhook_batch);
+            flush_webhook(&webhook_url, &webhook_secret, &mut webhook_batch);
             last_webhook_flush = std::time::Instant::now();
         }
 
         // Refresh config every 30 seconds
         if last_config_refresh.elapsed() >= Duration::from_secs(30) {
-            refresh_config(&db, &mut syslog_addr, &mut webhook_url);
+            refresh_config(&db, &mut syslog_addr, &mut webhook_url, &mut webhook_secret);
             last_config_refresh = std::time::Instant::now();
         }
     }
@@ -293,6 +294,7 @@ fn refresh_config(
     db: &Arc<Mutex<Db>>,
     syslog_addr: &mut Option<String>,
     webhook_url: &mut Option<String>,
+    webhook_secret: &mut String,
 ) {
     let db_guard = db.lock().unwrap();
     *syslog_addr = db_guard
@@ -305,6 +307,11 @@ fn refresh_config(
         .ok()
         .flatten()
         .filter(|v| !v.is_empty());
+    *webhook_secret = db_guard
+        .get_config("webhook_secret")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
 }
 
 fn emit_tracing(event: &LogEvent) {
@@ -367,7 +374,7 @@ fn send_syslog(addr: &str, event: &LogEvent, hostname: &str) {
     }
 }
 
-fn flush_webhook(webhook_url: &Option<String>, batch: &mut Vec<serde_json::Value>) {
+fn flush_webhook(webhook_url: &Option<String>, webhook_secret: &str, batch: &mut Vec<serde_json::Value>) {
     if batch.is_empty() {
         return;
     }
@@ -379,8 +386,9 @@ fn flush_webhook(webhook_url: &Option<String>, batch: &mut Vec<serde_json::Value
     batch.clear();
 
     let url = url.clone();
-    std::thread::spawn(move || {
-        webhook_post(&url, &payload);
+    let secret = webhook_secret.to_string();
+    tokio::spawn(async move {
+        webhook_post(&url, payload, &secret).await;
     });
 }
 
