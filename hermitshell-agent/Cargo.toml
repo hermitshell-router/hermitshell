@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 hermitshell-common = { path = "../hermitshell-common" }
 anyhow = "1"
+async-trait = "0.1"
 base64 = "0.22"
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
@@ -23,7 +24,7 @@ rcgen = "0.13"
 rustls-pemfile = "2"
 x509-parser = "0.16"
 instant-acme = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "cookies"] }
 nix = { version = "0.29", features = ["fs", "hostname", "user"] }
 
 [lints]

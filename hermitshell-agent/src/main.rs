@@ -11,6 +11,7 @@ mod ra;
 mod socket;
 mod tls;
 mod runzero;
+mod wifi;
 mod wireguard;
 
 use hermitshell_common::subnet;
@@ -434,6 +435,12 @@ async fn main() -> Result<()> {
     let db_tls = db.clone();
     tokio::spawn(async move {
         tls::run_renewal(db_tls).await;
+    });
+
+    // Spawn WiFi AP polling task
+    let db_wifi = db.clone();
+    tokio::spawn(async move {
+        wifi::run(db_wifi).await;
     });
 
     // Spawn DHCP server as child process
