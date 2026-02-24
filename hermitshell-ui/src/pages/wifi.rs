@@ -1,11 +1,15 @@
 use leptos::prelude::*;
+use leptos_router::hooks::use_query_map;
 use crate::client;
 use crate::components::layout::Layout;
 use crate::components::toast::ErrorToast;
-use crate::server_fns::{AdoptWifiAp, RemoveWifiAp};
+use crate::server_fns::{AdoptWifiAp, RemoveWifiAp, SetWifiSsid, DeleteWifiSsid, SetWifiRadio};
 
 #[component]
 pub fn Wifi() -> impl IntoView {
+    let query = use_query_map();
+    let selected_ap = move || query.with(|q| q.get("ap"));
+
     let aps = Resource::new(
         || (),
         |_| async { client::wifi_list_aps() },
@@ -16,13 +20,18 @@ pub fn Wifi() -> impl IntoView {
     );
     let adopt_action = ServerAction::<AdoptWifiAp>::new();
     let remove_action = ServerAction::<RemoveWifiAp>::new();
+    let set_ssid_action = ServerAction::<SetWifiSsid>::new();
+    let delete_ssid_action = ServerAction::<DeleteWifiSsid>::new();
+    let set_radio_action = ServerAction::<SetWifiRadio>::new();
 
     view! {
         <Layout title="WiFi" active_page="wifi">
             <div class="settings-section">
                 <h3>"Access Points"</h3>
                 <Suspense fallback=move || view! { <p>"Loading..."</p> }>
-                    {move || aps.get().map(|result| match result {
+                    {move || {
+                        let sel = selected_ap();
+                        aps.get().map(|result| match result {
                         Ok(aps) => {
                             if aps.is_empty() {
                                 view! { <p class="text-muted">"No access points adopted."</p> }.into_any()
@@ -42,6 +51,8 @@ pub fn Wifi() -> impl IntoView {
                                         <tbody>
                                             {aps.iter().map(|ap| {
                                                 let mac = ap.mac.clone();
+                                                let mac2 = ap.mac.clone();
+                                                let is_expanded = sel.as_deref() == Some(ap.mac.as_str());
                                                 view! {
                                                     <tr>
                                                         <td>{ap.name.clone()}</td>
@@ -50,21 +61,45 @@ pub fn Wifi() -> impl IntoView {
                                                         <td>{ap.provider.clone()}</td>
                                                         <td>{ap.status.clone()}</td>
                                                         <td>
+                                                            {if is_expanded {
+                                                                view! { <a href="/wifi" class="btn btn-sm">"Close"</a> }.into_any()
+                                                            } else {
+                                                                view! { <a href={format!("/wifi?ap={}", mac)} class="btn btn-sm">"Manage"</a> }.into_any()
+                                                            }}
+                                                            " "
                                                             <ActionForm action=remove_action attr:style="display:inline">
-                                                                <input type="hidden" name="mac" value={mac} />
+                                                                <input type="hidden" name="mac" value={mac2} />
                                                                 <button type="submit" class="btn btn-sm btn-danger">"Remove"</button>
                                                             </ActionForm>
                                                         </td>
                                                     </tr>
+                                                    {if is_expanded {
+                                                        let ap_mac = ap.mac.clone();
+                                                        Some(view! {
+                                                            <tr>
+                                                                <td colspan="6">
+                                                                    <ApDetail mac=ap_mac
+                                                                        set_ssid_action=set_ssid_action
+                                                                        delete_ssid_action=delete_ssid_action
+                                                                        set_radio_action=set_radio_action />
+                                                                </td>
+                                                            </tr>
+                                                        })
+                                                    } else {
+                                                        None
+                                                    }}
                                                 }
                                             }).collect_view()}
                                         </tbody>
                                     </table>
+                                    <ErrorToast value=set_ssid_action.value() />
+                                    <ErrorToast value=delete_ssid_action.value() />
+                                    <ErrorToast value=set_radio_action.value() />
                                 }.into_any()
                             }
                         }
                         Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
-                    })}
+                    })}}
                 </Suspense>
                 <ErrorToast value=remove_action.value() />
             </div>
@@ -141,5 +176,192 @@ pub fn Wifi() -> impl IntoView {
                 </Suspense>
             </div>
         </Layout>
+    }
+}
+
+#[component]
+fn ApDetail(
+    mac: String,
+    set_ssid_action: ServerAction<SetWifiSsid>,
+    delete_ssid_action: ServerAction<DeleteWifiSsid>,
+    set_radio_action: ServerAction<SetWifiRadio>,
+) -> impl IntoView {
+    let mac_for_ssids = mac.clone();
+    let mac_for_radios = mac.clone();
+
+    let ssids = Resource::new(
+        || (),
+        move |_| {
+            let m = mac_for_ssids.clone();
+            async move { client::wifi_get_ssids(&m) }
+        },
+    );
+    let radios = Resource::new(
+        || (),
+        move |_| {
+            let m = mac_for_radios.clone();
+            async move { client::wifi_get_radios(&m) }
+        },
+    );
+
+    let mac_for_ssid_form = mac.clone();
+    let mac_for_view = mac.clone();
+
+    view! {
+        <div class="ap-detail" style="padding: 1em; background: var(--bg-secondary, #f5f5f5); border-radius: 4px;">
+            // --- SSIDs ---
+            <h4>"SSIDs"</h4>
+            <Suspense fallback=move || view! { <p>"Loading SSIDs..."</p> }>
+                {move || {
+                    let mac_c = mac_for_view.clone();
+                    ssids.get().map(move |result| match result {
+                    Ok(ssids) => {
+                        let ssids = ssids.clone();
+                        if ssids.is_empty() {
+                            view! { <p class="text-muted">"No SSIDs configured."</p> }.into_any()
+                        } else {
+                            view! {
+                                <table class="device-table">
+                                    <thead>
+                                        <tr>
+                                            <th>"Name"</th>
+                                            <th>"Band"</th>
+                                            <th>"Security"</th>
+                                            <th>"Hidden"</th>
+                                            <th>"Enabled"</th>
+                                            <th></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {ssids.into_iter().map(|s| {
+                                            let mac_del = mac_c.clone();
+                                            view! {
+                                                <tr>
+                                                    <td>{s.ssid_name.clone()}</td>
+                                                    <td>{s.band.clone()}</td>
+                                                    <td>{s.security.clone()}</td>
+                                                    <td>{if s.hidden { "Yes" } else { "No" }}</td>
+                                                    <td>{if s.enabled { "Yes" } else { "No" }}</td>
+                                                    <td>
+                                                        <ActionForm action=delete_ssid_action attr:style="display:inline">
+                                                            <input type="hidden" name="mac" value={mac_del} />
+                                                            <input type="hidden" name="ssid_name" value={s.ssid_name} />
+                                                            <input type="hidden" name="band" value={s.band} />
+                                                            <button type="submit" class="btn btn-sm btn-danger">"Delete"</button>
+                                                        </ActionForm>
+                                                    </td>
+                                                </tr>
+                                            }
+                                        }).collect_view()}
+                                    </tbody>
+                                </table>
+                            }.into_any()
+                        }
+                    }
+                    Err(e) => view! { <p class="error">{format!("Error loading SSIDs: {}", e)}</p> }.into_any(),
+                })}}
+            </Suspense>
+
+            <h4>"Add / Edit SSID"</h4>
+            <ActionForm action=set_ssid_action>
+                <input type="hidden" name="mac" value={mac_for_ssid_form} />
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>"SSID Name"</label>
+                        <input type="text" name="ssid_name" required maxlength="32" />
+                    </div>
+                    <div class="form-group">
+                        <label>"Password"</label>
+                        <input type="password" name="password" placeholder="(leave blank for open)" />
+                    </div>
+                    <div class="form-group">
+                        <label>"Band"</label>
+                        <select name="band">
+                            <option value="2.4GHz">"2.4 GHz"</option>
+                            <option value="5GHz">"5 GHz"</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>"Security"</label>
+                        <select name="security">
+                            <option value="wpa2_wpa3">"WPA2/WPA3"</option>
+                            <option value="wpa-psk">"WPA-PSK"</option>
+                            <option value="none">"None (Open)"</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" name="hidden" />
+                            " Hidden"
+                        </label>
+                    </div>
+                </div>
+                <button type="submit" class="btn">"Save SSID"</button>
+            </ActionForm>
+
+            // --- Radios ---
+            <h4 style="margin-top: 1.5em;">"Radios"</h4>
+            <Suspense fallback=move || view! { <p>"Loading radios..."</p> }>
+                {move || {
+                    let mac_r = mac.clone();
+                    radios.get().map(move |result| match result {
+                    Ok(radios) => {
+                        let radios = radios.clone();
+                        if radios.is_empty() {
+                            view! { <p class="text-muted">"No radio information available."</p> }.into_any()
+                        } else {
+                            view! {
+                                {radios.into_iter().map(|r| {
+                                    let mac_rf = mac_r.clone();
+                                    let band_val = r.band.clone();
+                                    let sel_20 = r.channel_width == "20MHz";
+                                    let sel_40 = r.channel_width == "40MHz";
+                                    let sel_80 = r.channel_width == "80MHz";
+                                    let sel_160 = r.channel_width == "160MHz";
+                                    let sel_auto = r.channel_width == "Auto";
+                                    view! {
+                                        <div class="radio-card" style="border: 1px solid var(--border-color, #ddd); padding: 0.75em; margin-bottom: 0.75em; border-radius: 4px;">
+                                            <strong>{r.band.clone()}</strong>
+                                            <ActionForm action=set_radio_action>
+                                                <input type="hidden" name="mac" value={mac_rf} />
+                                                <input type="hidden" name="band" value={band_val} />
+                                                <div class="form-grid">
+                                                    <div class="form-group">
+                                                        <label>"Channel"</label>
+                                                        <input type="text" name="channel" value={r.channel} />
+                                                    </div>
+                                                    <div class="form-group">
+                                                        <label>"Width"</label>
+                                                        <select name="channel_width">
+                                                            <option value="20MHz" selected={sel_20}>"20 MHz"</option>
+                                                            <option value="40MHz" selected={sel_40}>"40 MHz"</option>
+                                                            <option value="80MHz" selected={sel_80}>"80 MHz"</option>
+                                                            <option value="160MHz" selected={sel_160}>"160 MHz"</option>
+                                                            <option value="Auto" selected={sel_auto}>"Auto"</option>
+                                                        </select>
+                                                    </div>
+                                                    <div class="form-group">
+                                                        <label>"TX Power"</label>
+                                                        <input type="text" name="tx_power" value={r.tx_power} />
+                                                    </div>
+                                                    <div class="form-group">
+                                                        <label>
+                                                            <input type="checkbox" name="enabled" checked={r.enabled} />
+                                                            " Enabled"
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                                <button type="submit" class="btn btn-sm">"Save Radio"</button>
+                                            </ActionForm>
+                                        </div>
+                                    }
+                                }).collect_view()}
+                            }.into_any()
+                        }
+                    }
+                    Err(e) => view! { <p class="error">{format!("Error loading radios: {}", e)}</p> }.into_any(),
+                })}}
+            </Suspense>
+        </div>
     }
 }
