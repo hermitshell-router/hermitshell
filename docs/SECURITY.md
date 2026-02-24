@@ -668,7 +668,37 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Consider caching the `EapSession` and re-authenticating only when a request returns `timeout:true`. This reduces credential exposure to once per session rather than once per poll.
 
-## 58. MAC filtering used as client blocking mechanism
+## 58. Update checker phones home to GitHub
+
+**What:** The agent spawns a background loop that polls `https://api.github.com/repos/jnordwick/hermitshell/releases/latest` every 24 hours using reqwest with a 10-second timeout. The request includes a `User-Agent: hermitshell-agent` header.
+
+**Why:** Users need to know when a new release is available. There is no push notification channel for a self-hosted router appliance, so the agent must poll.
+
+**Risk:** Each check reveals the router's WAN IP and the fact that it runs HermitShell to GitHub (and any network observer). The `User-Agent` header confirms the software identity. GitHub's API may log the IP for rate-limiting purposes.
+
+**Proper fix:** Make the update check opt-in (disabled by default). Add a config key `update_check_enabled` that the setup wizard or settings page can toggle. Use a generic `User-Agent` or omit it entirely. Consider proxying through a project-specific update endpoint that aggregates check counts without logging individual IPs.
+
+## 59. Update checker trusts GitHub API response without signature verification
+
+**What:** The update checker parses the `tag_name` field from the GitHub releases API response and stores it in the config DB. No signature or checksum verification is performed on the version string.
+
+**Why:** The check is informational only — it tells the admin a new version exists. It does not download or install anything.
+
+**Risk:** A MITM attacker (between router and GitHub) could inject a fake version string, potentially tricking the admin into visiting a malicious download URL. The response is HTTPS-protected, so this requires TLS compromise. The stored `tag_name` is rendered in the web UI — if it contains HTML/JS, Leptos's default escaping prevents XSS.
+
+**Proper fix:** Sign releases with a project GPG key and verify the signature in the agent. For the notification-only use case, the current HTTPS protection is adequate.
+
+## 60. Setup wizard endpoints are unauthenticated
+
+**What:** The `list_interfaces` and `set_interfaces` IPC methods (and their web UI server functions) require no authentication. They are guarded only by checking whether `admin_password_hash` is already set in the DB.
+
+**Why:** The setup wizard runs before any password exists. There is no credential to authenticate with.
+
+**Risk:** During the window between first boot and password setup, any process with socket access (or any LAN client reaching the web UI) can set the WAN and LAN interface assignments. After the password is set, `set_interfaces` rejects all calls. The window is typically seconds to minutes on first boot.
+
+**Proper fix:** Acceptable for the threat model — the router is physically controlled during initial setup. For defense-in-depth, consider a one-time setup token displayed on the console during first boot.
+
+## 61. MAC filtering used as client blocking mechanism
 
 **What:** `block_client` and `kick_client` use the AP's MAC filtering feature (deny list). `kick_client` blocks then unblocks after 2 seconds.
 
