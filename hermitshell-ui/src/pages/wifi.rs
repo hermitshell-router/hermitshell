@@ -75,10 +75,17 @@ pub fn Wifi() -> impl IntoView {
                                                     </tr>
                                                     {if is_expanded {
                                                         let ap_mac = ap.mac.clone();
+                                                        let ap_clients: Vec<_> = clients.get()
+                                                            .and_then(|r| r.ok())
+                                                            .unwrap_or_default()
+                                                            .into_iter()
+                                                            .filter(|c| c.ap_mac == ap.mac)
+                                                            .collect();
                                                         Some(view! {
                                                             <tr>
                                                                 <td colspan="6">
                                                                     <ApDetail mac=ap_mac
+                                                                        ap_clients=ap_clients
                                                                         set_ssid_action=set_ssid_action
                                                                         delete_ssid_action=delete_ssid_action
                                                                         set_radio_action=set_radio_action />
@@ -182,6 +189,7 @@ pub fn Wifi() -> impl IntoView {
 #[component]
 fn ApDetail(
     mac: String,
+    ap_clients: Vec<hermitshell_common::WifiClient>,
     set_ssid_action: ServerAction<SetWifiSsid>,
     delete_ssid_action: ServerAction<DeleteWifiSsid>,
     set_radio_action: ServerAction<SetWifiRadio>,
@@ -362,6 +370,44 @@ fn ApDetail(
                     Err(e) => view! { <p class="error">{format!("Error loading radios: {}", e)}</p> }.into_any(),
                 })}}
             </Suspense>
+
+            // --- Connected Clients ---
+            <h4 style="margin-top: 1.5em;">"Connected Clients"</h4>
+            {if ap_clients.is_empty() {
+                view! { <p class="text-muted">"No clients connected to this AP."</p> }.into_any()
+            } else {
+                view! {
+                    <table class="device-table">
+                        <thead>
+                            <tr>
+                                <th>"Client MAC"</th>
+                                <th>"SSID"</th>
+                                <th>"Band"</th>
+                                <th>"RSSI"</th>
+                                <th>"RX Rate"</th>
+                                <th>"TX Rate"</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {ap_clients.into_iter().map(|c| {
+                                let rssi_str = c.rssi.map(|r| format!("{} dBm", r)).unwrap_or_else(|| "\u{2014}".to_string());
+                                let rx_str = c.rx_rate.map(|r| format!("{} Mbps", r)).unwrap_or_else(|| "\u{2014}".to_string());
+                                let tx_str = c.tx_rate.map(|r| format!("{} Mbps", r)).unwrap_or_else(|| "\u{2014}".to_string());
+                                view! {
+                                    <tr>
+                                        <td style="font-family:monospace;font-size:0.85em">{c.mac}</td>
+                                        <td>{c.ssid}</td>
+                                        <td>{c.band}</td>
+                                        <td>{rssi_str}</td>
+                                        <td>{rx_str}</td>
+                                        <td>{tx_str}</td>
+                                    </tr>
+                                }
+                            }).collect_view()}
+                        </tbody>
+                    </table>
+                }.into_any()
+            }}
         </div>
     }
 }
