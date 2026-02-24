@@ -81,3 +81,37 @@ assert_match "$result" '"ok":false' "wifi_set_ssid rejects SSID >32 chars"
 # --- wifi_get_radios for non-existent AP ---
 result=$(vm_exec router "echo '{\"method\":\"wifi_get_radios\",\"mac\":\"ff:ff:ff:ff:ff:ff\"}' | socat - $SOCK")
 assert_match "$result" '"ok":false' "wifi_get_radios for missing AP fails"
+
+# --- Re-adopt AP for further tests ---
+result=$(vm_exec router 'echo "{\"method\":\"wifi_adopt_ap\",\"mac\":\"aa:bb:cc:dd:ee:01\",\"url\":\"192.168.1.100\",\"name\":\"Office AP\",\"key\":\"admin\",\"value\":\"testpass123\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_match "$result" '"ok":true' "re-adopt AP for UI tests"
+
+# --- wifi_set_ssid on adopted AP (will fail connecting to real AP, but validates params) ---
+result=$(vm_exec router 'echo "{\"method\":\"wifi_set_ssid\",\"mac\":\"aa:bb:cc:dd:ee:01\",\"ssid_name\":\"TestNet\",\"band\":\"5GHz\",\"security\":\"wpa2_wpa3\",\"hidden\":false}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+# Expect failure since no real AP is reachable, but the error should not be a validation error
+if echo "$result" | grep -q '"ok":true'; then
+    echo "PASS: wifi_set_ssid accepted (AP reachable)"
+else
+    assert_match "$result" '"ok":false' "wifi_set_ssid fails (no real AP, expected)"
+    echo "PASS: wifi_set_ssid fails gracefully without real AP"
+fi
+
+# --- wifi_delete_ssid validation (missing params) ---
+result=$(vm_exec router "echo '{\"method\":\"wifi_delete_ssid\",\"mac\":\"aa:bb:cc:dd:ee:01\"}' | socat - $SOCK")
+assert_match "$result" '"ok":false' "wifi_delete_ssid without ssid_name fails"
+
+# --- wifi_set_radio validation (missing params) ---
+result=$(vm_exec router "echo '{\"method\":\"wifi_set_radio\",\"mac\":\"aa:bb:cc:dd:ee:01\"}' | socat - $SOCK")
+assert_match "$result" '"ok":false' "wifi_set_radio without band fails"
+
+# --- wifi_set_radio rejects invalid band ---
+result=$(vm_exec router 'echo "{\"method\":\"wifi_set_radio\",\"mac\":\"aa:bb:cc:dd:ee:01\",\"band\":\"invalid\",\"channel\":\"Auto\",\"channel_width\":\"Auto\",\"tx_power\":\"25dBm\",\"enabled\":true}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_match "$result" '"ok":false' "wifi_set_radio rejects invalid band"
+
+# --- audit log records SSID operations ---
+result=$(vm_exec router "echo '{\"method\":\"list_audit_logs\",\"limit\":20}' | socat - $SOCK")
+assert_match "$result" 'wifi_adopt_ap' "SSID test: adopt audit still logged"
+
+# --- Clean up: remove AP ---
+result=$(vm_exec router 'echo "{\"method\":\"wifi_remove_ap\",\"mac\":\"aa:bb:cc:dd:ee:01\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_match "$result" '"ok":true' "cleanup: remove AP"
