@@ -45,16 +45,20 @@ pub fn spawn_update_loop(db: Arc<Mutex<crate::db::Db>>) {
             };
 
             if should_check {
-                match check_for_update().await {
+                let result = check_for_update().await;
+
+                // Always update last_check to prevent rapid retries on failure
+                let db = db.lock().unwrap();
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+                    .to_string();
+                let _ = db.set_config("update_last_check", &now);
+
+                match result {
                     Ok(Some(version)) => {
-                        let db = db.lock().unwrap();
                         let _ = db.set_config("update_latest_version", &version);
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs()
-                            .to_string();
-                        let _ = db.set_config("update_last_check", &now);
                         debug!(version = %version, "update check complete");
                     }
                     Ok(None) => {
