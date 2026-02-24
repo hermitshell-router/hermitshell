@@ -15,7 +15,7 @@ result=$(vm_exec router 'echo "{\"method\":\"wifi_adopt_ap\",\"mac\":\"aa:bb:cc:
 assert_match "$result" '"ok":true' "wifi_adopt_ap succeeds"
 
 # --- verify password is encrypted (not plaintext) ---
-stored_pass=$(vm_exec router "sqlite3 /data/hermitshell/db/hermitshell.db \"SELECT password_enc FROM wifi_aps WHERE mac='aa:bb:cc:dd:ee:01'\"")
+stored_pass=$(vm_exec router 'python3 -c "import sqlite3; r = sqlite3.connect(\"/data/hermitshell/db/hermitshell.db\").execute(\"SELECT password_enc FROM wifi_aps WHERE mac=\\\"aa:bb:cc:dd:ee:01\\\"\").fetchone(); print(r[0] if r else \"\")"')
 if [ "$stored_pass" = "testpass123" ]; then
     fail "password stored as plaintext"
 fi
