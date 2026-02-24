@@ -29,11 +29,17 @@ pub(super) fn handle_wifi_adopt_ap(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
     let provider = req.protocol.as_deref().unwrap_or("eap_standalone");
 
     // Validate inputs
-    if name.len() > 64 || name.is_empty() {
-        return Response::err("name must be 1-64 characters");
+    if ip.parse::<std::net::IpAddr>().is_err() {
+        return Response::err("url must be a valid IP address");
     }
-    if ip.is_empty() {
-        return Response::err("url (AP IP) must not be empty");
+    if name.is_empty() || name.len() > 64
+        || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ' ' || c == '.')
+    {
+        return Response::err("name must be 1-64 alphanumeric characters (plus - _ . space)");
+    }
+    let valid_providers = ["eap_standalone"];
+    if !valid_providers.contains(&provider) {
+        return Response::err("unknown provider");
     }
 
     // TODO: encrypt password before storing

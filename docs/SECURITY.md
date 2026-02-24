@@ -633,3 +633,43 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** Root on the router box can read AP credentials. Same trust model as WireGuard private key and TLS key.
 
 **Proper fix:** Hardware security module or separate credential store with process-level isolation. Out of scope for a commodity router.
+
+## 55. TLS verification disabled for WiFi AP HTTPS connections
+
+**What:** The EAP standalone provider uses `danger_accept_invalid_certs(true)` when connecting to access points via HTTPS.
+
+**Why:** Consumer and prosumer APs use self-signed TLS certificates in standalone mode. There is no CA trust chain to verify against.
+
+**Risk:** An attacker in a man-in-the-middle position between the router and an AP could intercept AP credentials and client data during polling. The AP is typically on the same LAN segment as the router, so the MITM window is small.
+
+**Proper fix:** Add a `wifi_ap_ca_cert` config option allowing the user to upload a custom CA certificate per AP. Same approach as the runZero TLS fix (#37).
+
+## 56. AP password sent as MD5 hash, not plaintext TLS-protected
+
+**What:** The EAP720 login flow sends `MD5(password).toUpperCase()` over HTTPS. The MD5 hash is the effective credential — anyone who captures it can replay it to authenticate.
+
+**Why:** This is the TP-Link firmware's authentication protocol. The agent must conform to it.
+
+**Risk:** MD5 is fast to brute-force. If TLS is compromised (see #55), the MD5 hash can be captured and either replayed directly or cracked to recover the plaintext. The plaintext is also needed for the agent to authenticate, so it's stored recoverable (see #54).
+
+**Proper fix:** Nothing the agent can do — this is the AP firmware's design. Ensure #55 is mitigated (TLS verification) to protect the hash in transit. Use strong random passwords for APs to resist offline cracking.
+
+## 57. EAP session timeout causes re-authentication on every poll cycle
+
+**What:** The EAP720 has a very aggressive session timeout (~30-60 seconds). The agent's 60-second polling loop creates a fresh `EapSession` per cycle, sending the MD5 password hash each time.
+
+**Why:** The agent uses a connect-per-poll pattern. The AP's session cannot be kept alive across poll intervals because the timeout is shorter than the polling interval.
+
+**Risk:** Each poll cycle transmits the AP credential hash. Increased exposure window compared to a persistent session. If the polling interval were reduced, reuse of sessions would be feasible.
+
+**Proper fix:** Consider caching the `EapSession` and re-authenticating only when a request returns `timeout:true`. This reduces credential exposure to once per session rather than once per poll.
+
+## 58. MAC filtering used as client blocking mechanism
+
+**What:** `block_client` and `kick_client` use the AP's MAC filtering feature (deny list). `kick_client` blocks then unblocks after 2 seconds.
+
+**Why:** The EAP720 standalone API does not expose a direct client deauthentication endpoint.
+
+**Risk:** MAC filtering affects all SSIDs globally. Blocking one client's MAC blocks it from all radios and SSIDs. The 2-second window in `kick_client` is a race condition — if the agent crashes between block and unblock, the client stays permanently blocked. MAC addresses can be spoofed, so a determined attacker can change their MAC to bypass the block.
+
+**Proper fix:** Track blocked MACs in the agent DB so they can be cleaned up on restart. Consider using the AP's scheduler or portal features for more granular access control. Document that MAC-based blocking is advisory, not a security boundary.

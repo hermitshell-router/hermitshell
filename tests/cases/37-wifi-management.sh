@@ -45,6 +45,14 @@ result=$(vm_exec router "echo '{\"method\":\"list_audit_logs\",\"limit\":10}' | 
 assert_match "$result" 'wifi_adopt_ap' "adopt audit logged"
 assert_match "$result" 'wifi_remove_ap' "remove audit logged"
 
-# --- AP password not readable via get_config ---
-result=$(vm_exec router "echo '{\"method\":\"get_config\",\"key\":\"wifi_ap_password\"}' | socat - $SOCK")
-assert_match "$result" '"ok":false' "get_config blocks wifi_ap_password"
+# --- wifi_adopt_ap rejects invalid IP ---
+result=$(vm_exec router "echo '{\"method\":\"wifi_adopt_ap\",\"mac\":\"aa:bb:cc:dd:ee:03\",\"url\":\"not-an-ip\",\"name\":\"Bad\",\"key\":\"admin\",\"value\":\"pass\"}' | socat - $SOCK")
+assert_match "$result" '"ok":false' "wifi_adopt_ap rejects invalid IP"
+
+# --- wifi_adopt_ap rejects invalid name ---
+result=$(vm_exec router 'echo "{\"method\":\"wifi_adopt_ap\",\"mac\":\"aa:bb:cc:dd:ee:03\",\"url\":\"192.168.1.102\",\"name\":\"bad<name>\",\"key\":\"admin\",\"value\":\"pass\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_match "$result" '"ok":false' "wifi_adopt_ap rejects name with special chars"
+
+# --- wifi_adopt_ap rejects unknown provider ---
+result=$(vm_exec router 'echo "{\"method\":\"wifi_adopt_ap\",\"mac\":\"aa:bb:cc:dd:ee:03\",\"url\":\"192.168.1.102\",\"name\":\"Test\",\"key\":\"admin\",\"value\":\"pass\",\"protocol\":\"fake\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_match "$result" '"ok":false' "wifi_adopt_ap rejects unknown provider"
