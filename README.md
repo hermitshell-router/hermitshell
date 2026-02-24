@@ -15,7 +15,10 @@ Open-source router platform. No cloud, no controller, runs on commodity hardware
 - **QoS / bufferbloat prevention**
 - **runZero asset sync**
 - **TLS certificate management** — self-signed, custom, Tailscale, and ACME DNS-01
-- **WiFi AP management**
+- **WiFi AP management** — adopt TP-Link EAP access points, manage SSIDs and radios
+- **First-run setup wizard** — select WAN/LAN interfaces and set admin password from the browser
+- **Update notifications** — background check against GitHub releases, shown in the dashboard
+- **Encrypted credentials** — WiFi AP passwords encrypted at rest with AES-256-GCM
 - **Web UI** — Leptos + Axum, SSR-only, served over HTTPS
 
 ## Architecture
@@ -27,7 +30,7 @@ hermitshell-common/   Shared wire types (Device, Alert, PortForward, etc.)
 hermitshell-dhcp/     DHCP server (DHCPv4 + DHCPv6)
 ```
 
-The agent is an async Rust daemon exposing a Unix socket API. Socket handlers are split by domain under `hermitshell-agent/src/socket/` (auth, config, devices, logs, network, wireguard, wifi). The DHCP server runs as a separate process and communicates with the agent over the socket.
+The agent is an async Rust daemon exposing a Unix socket API. Socket handlers are split by domain under `hermitshell-agent/src/socket/` (auth, config, devices, logs, network, setup, wifi, wireguard). The DHCP server runs as a separate process and communicates with the agent over the socket.
 
 ## Quick Start
 
