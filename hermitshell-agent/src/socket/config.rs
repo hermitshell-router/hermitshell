@@ -176,10 +176,44 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, wan_iface
         Ok(v) => v,
         Err(e) => return Response::err(&format!("invalid JSON: {}", e)),
     };
-    if parsed.get("version").and_then(|v| v.as_i64()) != Some(1) {
-        return Response::err("unsupported config version");
-    }
 
+    // Version check: accept v1 and v2
+    let version = match parsed.get("version").and_then(|v| v.as_i64()) {
+        Some(v) if v >= 1 && v <= 2 => v,
+        Some(v) if v > 2 => return Response::err("backup was created by a newer version — upgrade the agent first"),
+        _ => return Response::err("missing or invalid version"),
+    };
+
+    // Decrypt secrets if present
+    let secrets_obj: Option<serde_json::Map<String, serde_json::Value>> = {
+        let secrets_val = parsed.get("secrets");
+        let is_encrypted = parsed.get("secrets_encrypted").and_then(|v| v.as_bool()).unwrap_or(false);
+        match secrets_val {
+            None | Some(serde_json::Value::Null) => None,
+            Some(val) if is_encrypted => {
+                // Encrypted secrets: require passphrase, decrypt
+                let passphrase = match req.passphrase.as_deref() {
+                    Some(p) if !p.is_empty() => p,
+                    _ => return Response::err("passphrase required for encrypted backup"),
+                };
+                let encrypted_b64 = match val.as_str() {
+                    Some(s) => s,
+                    None => return Response::err("secrets decryption failed: expected encrypted string"),
+                };
+                match crate::crypto::decrypt_with_passphrase(encrypted_b64, passphrase) {
+                    Ok(json_str) => match serde_json::from_str::<serde_json::Value>(&json_str) {
+                        Ok(serde_json::Value::Object(map)) => Some(map),
+                        _ => return Response::err("secrets decryption failed: invalid JSON in decrypted secrets"),
+                    },
+                    Err(e) => return Response::err(&format!("secrets decryption failed: {}", e)),
+                }
+            }
+            Some(serde_json::Value::Object(obj)) => Some(obj.clone()),
+            _ => None,
+        }
+    };
+
+    // Validation pass: devices
     if let Some(devices) = parsed.get("devices").and_then(|v| v.as_array()) {
         for dev in devices {
             let mac = dev.get("mac").and_then(|v| v.as_str()).unwrap_or("");
@@ -194,6 +228,7 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, wan_iface
             }
         }
     }
+    // Validation pass: port forwards
     if let Some(forwards) = parsed.get("port_forwards").and_then(|v| v.as_array()) {
         for f in forwards {
             let protocol = f.get("protocol").and_then(|v| v.as_str()).unwrap_or("both");
@@ -207,6 +242,7 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, wan_iface
             }
         }
     }
+    // Validation pass: pinholes
     if let Some(pinholes) = parsed.get("ipv6_pinholes").and_then(|v| v.as_array()) {
         for p in pinholes {
             let protocol = p.get("protocol").and_then(|v| v.as_str()).unwrap_or("");
@@ -219,6 +255,7 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, wan_iface
     let db = db.lock().unwrap();
 
     // Import devices: best-effort per-device -- skip invalid entries rather than aborting import.
+    let mut device_count: usize = 0;
     if let Some(devices) = parsed.get("devices").and_then(|v| v.as_array()) {
         for dev in devices {
             let mac = dev.get("mac").and_then(|v| v.as_str()).unwrap_or("");
@@ -228,6 +265,10 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, wan_iface
                 if let Some(hostname) = dev.get("hostname").and_then(|v| v.as_str()) {
                     let _ = db.set_device_hostname(mac, hostname);
                 }
+                if let Some(nickname) = dev.get("nickname").and_then(|v| v.as_str()) {
+                    let _ = db.set_device_nickname(mac, nickname);
+                }
+                device_count += 1;
             }
         }
     }
@@ -275,10 +316,60 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, wan_iface
         }
     }
 
+    // Import WiFi APs: best-effort per-entry.
+    if let Some(wifi_aps) = parsed.get("wifi_aps").and_then(|v| v.as_array()) {
+        let session_secret = db.get_config("session_secret").ok().flatten().unwrap_or_default();
+        let ap_passwords = secrets_obj.as_ref()
+            .and_then(|s| s.get("wifi_ap_passwords"))
+            .and_then(|v| v.as_object());
+
+        for ap in wifi_aps {
+            let mac = ap.get("mac").and_then(|v| v.as_str()).unwrap_or("");
+            let ip = ap.get("ip").and_then(|v| v.as_str()).unwrap_or("");
+            let name = ap.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if mac.is_empty() || ip.is_empty() || name.is_empty() {
+                continue;
+            }
+            let provider = ap.get("provider").and_then(|v| v.as_str()).unwrap_or("eap_standalone");
+            let enabled = ap.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+
+            // Look up plaintext password from secrets, re-encrypt with current session_secret
+            let password_enc = ap_passwords
+                .and_then(|m| m.get(mac))
+                .and_then(|v| v.as_str())
+                .and_then(|plaintext| crate::crypto::encrypt_password(plaintext, &session_secret).ok())
+                .unwrap_or_default();
+
+            // Delete existing AP with same MAC, then insert
+            let _ = db.remove_wifi_ap(mac);
+            let _ = db.insert_wifi_ap(mac, ip, name, provider, "", &password_enc);
+
+            // Update model/firmware if present
+            let model = ap.get("model").and_then(|v| v.as_str());
+            let firmware = ap.get("firmware").and_then(|v| v.as_str());
+            if model.is_some() || firmware.is_some() {
+                let _ = db.update_wifi_ap_info(mac, model, firmware);
+            }
+
+            // Set enabled state: insert defaults to enabled, so only update if disabled
+            if !enabled {
+                let _ = db.set_config(&format!("wifi_ap_{}_enabled", mac), "false");
+            }
+        }
+    }
+
+    // Import config keys (expanded allowlist for v2).
     if let Some(config) = parsed.get("config").and_then(|v| v.as_object()) {
         for (key, val) in config {
             match key.as_str() {
-                "ad_blocking_enabled" | "wg_listen_port" | "dmz_host_ip" | "log_format" | "syslog_target" | "webhook_url" | "log_retention_days" | "runzero_url" | "runzero_sync_interval" | "runzero_enabled" | "qos_enabled" | "qos_upload_mbps" | "qos_download_mbps" | "qos_test_url" => {
+                "ad_blocking_enabled" | "wg_listen_port" | "dmz_host_ip" | "log_format"
+                | "syslog_target" | "webhook_url" | "log_retention_days" | "runzero_url"
+                | "runzero_sync_interval" | "runzero_enabled" | "qos_enabled" | "qos_upload_mbps"
+                | "qos_download_mbps" | "qos_test_url"
+                | "wg_enabled" | "tls_mode" | "analyzer_enabled"
+                | "alert_rule_dns_beaconing" | "alert_rule_dns_volume_spike"
+                | "alert_rule_new_dest_spike" | "alert_rule_suspicious_ports"
+                | "alert_rule_bandwidth_spike" | "wan_iface" | "lan_iface" => {
                     if let Some(v) = val.as_str() {
                         let _ = db.set_config(key, v);
                     }
@@ -287,6 +378,18 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, wan_iface
             }
         }
     }
+
+    // Import secrets (blocked config keys) if secrets object exists.
+    if let Some(ref secrets) = secrets_obj {
+        for key in super::BLOCKED_CONFIG_KEYS {
+            if let Some(val) = secrets.get(*key).and_then(|v| v.as_str()) {
+                let _ = db.set_config(key, val);
+            }
+        }
+    }
+
+    // Audit log
+    let _ = db.log_audit("config_import", &format!("version={} devices={}", version, device_count));
 
     let forwards = db.list_enabled_port_forwards().unwrap_or_default();
     let dmz = db.get_config("dmz_host_ip").ok().flatten().unwrap_or_default();
