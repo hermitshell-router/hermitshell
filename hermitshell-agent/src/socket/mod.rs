@@ -117,6 +117,13 @@ struct Request {
     nickname: Option<String>,
     tls_cert_pem: Option<String>,
     tls_key_pem: Option<String>,
+    ssid_name: Option<String>,
+    band: Option<String>,
+    hidden: Option<bool>,
+    security: Option<String>,
+    channel: Option<String>,
+    channel_width: Option<String>,
+    tx_power: Option<String>,
 }
 
 /// JSON response envelope. `ok` indicates success; `error` carries failure details.
@@ -181,6 +188,10 @@ struct Response {
     wifi_aps: Option<Vec<crate::db::WifiAp>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     wifi_clients: Option<Vec<crate::db::WifiClient>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wifi_ssids: Option<Vec<hermitshell_common::WifiSsidConfig>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wifi_radios: Option<Vec<hermitshell_common::WifiRadioConfig>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -257,7 +268,15 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
     let mut line = String::new();
     while reader.read_line(&mut line).await? > 0 {
         let response = match serde_json::from_str::<Request>(&line) {
-            Ok(req) => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock),
+            Ok(req) => {
+                match req.method.as_str() {
+                    "wifi_get_ssids" | "wifi_set_ssid" | "wifi_delete_ssid"
+                    | "wifi_get_radios" | "wifi_set_radio" => {
+                        wifi::handle_wifi_async(&req, &db).await
+                    }
+                    _ => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock),
+                }
+            }
             Err(e) => Response::err(&format!("Invalid JSON: {}", e)),
         };
         let mut json = serde_json::to_string(&response)?;

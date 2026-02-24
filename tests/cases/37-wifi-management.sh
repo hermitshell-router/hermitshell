@@ -64,3 +64,20 @@ assert_match "$result" '"ok":false' "wifi_adopt_ap rejects name with special cha
 # --- wifi_adopt_ap rejects unknown provider ---
 result=$(vm_exec router 'echo "{\"method\":\"wifi_adopt_ap\",\"mac\":\"aa:bb:cc:dd:ee:03\",\"url\":\"192.168.1.102\",\"name\":\"Test\",\"key\":\"admin\",\"value\":\"pass\",\"protocol\":\"fake\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$result" '"ok":false' "wifi_adopt_ap rejects unknown provider"
+
+# --- wifi_get_ssids requires mac ---
+result=$(vm_exec router "echo '{\"method\":\"wifi_get_ssids\"}' | socat - $SOCK")
+assert_match "$result" '"ok":false' "wifi_get_ssids without mac fails"
+
+# --- wifi_set_ssid validates band ---
+result=$(vm_exec router 'echo "{\"method\":\"wifi_set_ssid\",\"mac\":\"aa:bb:cc:dd:ee:01\",\"ssid_name\":\"Test\",\"band\":\"invalid\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_match "$result" '"ok":false' "wifi_set_ssid rejects invalid band"
+
+# --- wifi_set_ssid validates ssid_name length ---
+long_name=$(printf 'A%.0s' {1..33})
+result=$(vm_exec router "echo '{\"method\":\"wifi_set_ssid\",\"mac\":\"aa:bb:cc:dd:ee:01\",\"ssid_name\":\"$long_name\",\"band\":\"5GHz\"}' | socat - $SOCK")
+assert_match "$result" '"ok":false' "wifi_set_ssid rejects SSID >32 chars"
+
+# --- wifi_get_radios for non-existent AP ---
+result=$(vm_exec router "echo '{\"method\":\"wifi_get_radios\",\"mac\":\"ff:ff:ff:ff:ff:ff\"}' | socat - $SOCK")
+assert_match "$result" '"ok":false' "wifi_get_radios for missing AP fails"

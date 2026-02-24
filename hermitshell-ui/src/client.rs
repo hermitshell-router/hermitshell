@@ -37,6 +37,8 @@ pub struct Response {
     pub tls_status: Option<serde_json::Value>,
     pub wifi_aps: Option<Vec<hermitshell_common::WifiAp>>,
     pub wifi_clients: Option<Vec<hermitshell_common::WifiClient>>,
+    pub wifi_ssids: Option<Vec<hermitshell_common::WifiSsidConfig>>,
+    pub wifi_radios: Option<Vec<hermitshell_common::WifiRadioConfig>>,
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
@@ -410,6 +412,55 @@ pub fn wifi_remove_ap(mac: &str) -> Result<(), String> {
 pub fn wifi_get_clients() -> Result<Vec<hermitshell_common::WifiClient>, String> {
     let resp = ok_or_err(send(json!({"method": "wifi_get_clients"}))?)?;
     Ok(resp.wifi_clients.unwrap_or_default())
+}
+
+pub fn wifi_get_ssids(mac: &str) -> Result<Vec<hermitshell_common::WifiSsidConfig>, String> {
+    let resp = ok_or_err(send(json!({"method": "wifi_get_ssids", "mac": mac}))?)?;
+    Ok(resp.wifi_ssids.unwrap_or_default())
+}
+
+pub fn wifi_set_ssid(mac: &str, ssid_name: &str, password: Option<&str>, band: &str, security: &str, hidden: bool) -> Result<(), String> {
+    let mut req = json!({
+        "method": "wifi_set_ssid",
+        "mac": mac,
+        "ssid_name": ssid_name,
+        "band": band,
+        "security": security,
+        "hidden": hidden,
+    });
+    if let Some(pw) = password {
+        req["value"] = serde_json::Value::String(pw.to_string());
+    }
+    ok_or_err(send(req)?)?;
+    Ok(())
+}
+
+pub fn wifi_delete_ssid(mac: &str, ssid_name: &str, band: &str) -> Result<(), String> {
+    ok_or_err(send(json!({
+        "method": "wifi_delete_ssid",
+        "mac": mac,
+        "ssid_name": ssid_name,
+        "band": band,
+    }))?)?;
+    Ok(())
+}
+
+pub fn wifi_get_radios(mac: &str) -> Result<Vec<hermitshell_common::WifiRadioConfig>, String> {
+    let resp = ok_or_err(send(json!({"method": "wifi_get_radios", "mac": mac}))?)?;
+    Ok(resp.wifi_radios.unwrap_or_default())
+}
+
+pub fn wifi_set_radio(mac: &str, band: &str, channel: &str, channel_width: &str, tx_power: &str, enabled: bool) -> Result<(), String> {
+    ok_or_err(send(json!({
+        "method": "wifi_set_radio",
+        "mac": mac,
+        "band": band,
+        "channel": channel,
+        "channel_width": channel_width,
+        "tx_power": tx_power,
+        "enabled": enabled,
+    }))?)?;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -105,3 +105,196 @@ pub(super) fn handle_wifi_get_clients(_req: &Request, db: &Arc<Mutex<Db>>) -> Re
         Err(e) => Response::err(&e.to_string()),
     }
 }
+
+/// Async handler for WiFi methods that require AP communication.
+pub(super) async fn handle_wifi_async(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    match req.method.as_str() {
+        "wifi_get_ssids" => handle_wifi_get_ssids(req, db).await,
+        "wifi_set_ssid" => handle_wifi_set_ssid(req, db).await,
+        "wifi_delete_ssid" => handle_wifi_delete_ssid(req, db).await,
+        "wifi_get_radios" => handle_wifi_get_radios(req, db).await,
+        "wifi_set_radio" => handle_wifi_set_radio(req, db).await,
+        _ => Response::err("unknown wifi method"),
+    }
+}
+
+/// Helper: connect to an AP by MAC, looking up credentials from DB.
+async fn connect_to_ap(mac: &str, db: &Arc<Mutex<Db>>) -> Result<Box<dyn crate::wifi::WifiSession>, Response> {
+    let (ip, username, password_enc) = {
+        let db = db.lock().unwrap();
+        match db.get_wifi_ap_credentials(mac) {
+            Ok(Some(creds)) => creds,
+            Ok(None) => return Err(Response::err("AP not found")),
+            Err(e) => return Err(Response::err(&format!("DB error: {}", e))),
+        }
+    };
+
+    // Decrypt password
+    let password = {
+        let session_secret = {
+            let db = db.lock().unwrap();
+            db.get_config("session_secret").ok().flatten().unwrap_or_default()
+        };
+        if session_secret.is_empty() || !crate::crypto::is_encrypted(&password_enc) {
+            password_enc
+        } else {
+            match crate::crypto::decrypt_password(&password_enc, &session_secret) {
+                Ok(p) => p,
+                Err(e) => return Err(Response::err(&format!("decrypt failed: {}", e))),
+            }
+        }
+    };
+
+    let provider = {
+        let db = db.lock().unwrap();
+        db.get_wifi_ap(mac).ok().flatten()
+            .map(|ap| ap.provider)
+            .unwrap_or_else(|| "eap_standalone".to_string())
+    };
+
+    match crate::wifi::connect(&provider, &ip, &username, &password).await {
+        Ok(session) => Ok(session),
+        Err(e) => Err(Response::err(&format!("AP connection failed: {}", e))),
+    }
+}
+
+async fn handle_wifi_get_ssids(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref mac) = req.mac else {
+        return Response::err("mac required");
+    };
+    let session = match connect_to_ap(mac, db).await {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    match session.get_ssids().await {
+        Ok(ssids) => {
+            let mut resp = Response::ok();
+            resp.wifi_ssids = Some(ssids);
+            resp
+        }
+        Err(e) => Response::err(&format!("get_ssids failed: {}", e)),
+    }
+}
+
+async fn handle_wifi_set_ssid(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref mac) = req.mac else {
+        return Response::err("mac required");
+    };
+    let Some(ref ssid_name) = req.ssid_name else {
+        return Response::err("ssid_name required");
+    };
+    let Some(ref band) = req.band else {
+        return Response::err("band required");
+    };
+
+    if !["2.4GHz", "5GHz", "5GHz-2", "6GHz"].contains(&band.as_str()) {
+        return Response::err("band must be 2.4GHz, 5GHz, 5GHz-2, or 6GHz");
+    }
+    if ssid_name.is_empty() || ssid_name.len() > 32 {
+        return Response::err("ssid_name must be 1-32 characters");
+    }
+
+    let security = req.security.as_deref().unwrap_or("wpa-psk");
+    if !["none", "wpa-psk", "wpa-enterprise"].contains(&security) {
+        return Response::err("security must be none, wpa-psk, or wpa-enterprise");
+    }
+
+    let config = hermitshell_common::WifiSsidConfig {
+        ssid_name: ssid_name.clone(),
+        password: req.value.clone(),
+        band: band.clone(),
+        vlan_id: None,
+        hidden: req.hidden.unwrap_or(false),
+        enabled: req.enabled.unwrap_or(true),
+        security: security.to_string(),
+    };
+
+    let session = match connect_to_ap(mac, db).await {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    match session.set_ssid(&config).await {
+        Ok(()) => {
+            let db = db.lock().unwrap();
+            let _ = db.log_audit("wifi_set_ssid", &format!("{} on {}", ssid_name, mac));
+            Response::ok()
+        }
+        Err(e) => Response::err(&format!("set_ssid failed: {}", e)),
+    }
+}
+
+async fn handle_wifi_delete_ssid(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref mac) = req.mac else {
+        return Response::err("mac required");
+    };
+    let Some(ref ssid_name) = req.ssid_name else {
+        return Response::err("ssid_name required");
+    };
+    let Some(ref band) = req.band else {
+        return Response::err("band required");
+    };
+
+    let session = match connect_to_ap(mac, db).await {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    match session.delete_ssid(ssid_name, band).await {
+        Ok(()) => {
+            let db = db.lock().unwrap();
+            let _ = db.log_audit("wifi_delete_ssid", &format!("{} on {}", ssid_name, mac));
+            Response::ok()
+        }
+        Err(e) => Response::err(&format!("delete_ssid failed: {}", e)),
+    }
+}
+
+async fn handle_wifi_get_radios(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref mac) = req.mac else {
+        return Response::err("mac required");
+    };
+    let session = match connect_to_ap(mac, db).await {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    match session.get_radios().await {
+        Ok(radios) => {
+            let mut resp = Response::ok();
+            resp.wifi_radios = Some(radios);
+            resp
+        }
+        Err(e) => Response::err(&format!("get_radios failed: {}", e)),
+    }
+}
+
+async fn handle_wifi_set_radio(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref mac) = req.mac else {
+        return Response::err("mac required");
+    };
+    let Some(ref band) = req.band else {
+        return Response::err("band required");
+    };
+    if !["2.4GHz", "5GHz", "5GHz-2", "6GHz"].contains(&band.as_str()) {
+        return Response::err("band must be 2.4GHz, 5GHz, 5GHz-2, or 6GHz");
+    }
+
+    let config = hermitshell_common::WifiRadioConfig {
+        band: band.clone(),
+        channel: req.channel.clone().unwrap_or_else(|| "Auto".to_string()),
+        channel_width: req.channel_width.clone().unwrap_or_else(|| "Auto".to_string()),
+        tx_power: req.tx_power.clone().unwrap_or_else(|| "25dBm".to_string()),
+        enabled: req.enabled.unwrap_or(true),
+    };
+
+    let session = match connect_to_ap(mac, db).await {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    match session.set_radio(&config).await {
+        Ok(()) => {
+            let db = db.lock().unwrap();
+            let _ = db.log_audit("wifi_set_radio", &format!("{} on {}", band, mac));
+            Response::ok()
+        }
+        Err(e) => Response::err(&format!("set_radio failed: {}", e)),
+    }
+}
