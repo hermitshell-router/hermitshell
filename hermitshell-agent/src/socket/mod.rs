@@ -244,7 +244,7 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o666))?;
+        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660))?;
     }
     info!(path = socket_path, "socket server listening");
     let login_rate_limit: LoginRateLimit = Arc::new(Mutex::new((0, None)));
@@ -397,7 +397,7 @@ pub async fn run_dhcp_socket(socket_path: &str, db: Arc<Mutex<Db>>, lan_iface: S
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o666))?;
+        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660))?;
     }
     info!(path = socket_path, "DHCP IPC socket listening");
     loop {

@@ -10,7 +10,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Risk:** Any process that can connect to the agent Unix socket can read password hashes, session secrets, and private keys.
 
-**Mitigating factor:** The socket is `0666` (world-readable/writable) — see issue #49. Any local process can connect. Mitigated by the sensitive keys being blocked (see Status below).
+**Mitigating factor:** The socket is `0660` (root + group only) — see issue #49. Only root and group members can connect. Mitigated by the sensitive keys being blocked (see Status below).
 
 **Proper fix:** Separate the IPC into privileged and unprivileged channels, or have the agent handle auth verification directly (e.g., a `verify_password` method that accepts a plaintext password and returns true/false, keeping the hash internal).
 
@@ -40,7 +40,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Use `mac.verify_slice(&hex::decode(sig))` instead of comparing hex strings.
 
-**Note:** This logic moved from the web UI to the agent (`socket.rs` `verify_session`). The non-constant-time comparison was carried forward and also exists in the new `refresh_session` handler. The attack surface is now a Unix socket rather than an HTTPS endpoint. However, the socket is `0666` (see issue #49), so any local process could attempt timing attacks.
+**Note:** This logic moved from the web UI to the agent (`socket.rs` `verify_session`). The non-constant-time comparison was carried forward and also exists in the new `refresh_session` handler. The attack surface is now a Unix socket rather than an HTTPS endpoint. However, the socket is `0660` (see issue #49), so any process in the socket's group could attempt timing attacks.
 
 ## 4. Self-signed TLS certificate
 
@@ -182,7 +182,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Add a non-root user, use `setcap cap_net_bind_service` on the binary to allow privileged port binding, and ensure the socket is readable by the container user.
 
-**Status: Fixed.** The standalone web UI Dockerfile creates a `hermitshell` user (UID/GID 1000) and sets `USER hermitshell`. The web UI binds high ports (8080/8443) with nftables DNAT redirecting 80→8080 and 443→8443. The agent socket is `0666` (see issue #49) so the non-root container user can access it. Docker run adds `--read-only --cap-drop ALL --security-opt no-new-privileges`.
+**Status: Fixed.** The standalone web UI Dockerfile creates a `hermitshell` user (UID/GID 1000) and sets `USER hermitshell`. The web UI binds high ports (8080/8443) with nftables DNAT redirecting 80→8080 and 443→8443. The agent socket is `0660` (see issue #49) so the container user must be in the socket's group to access it. Docker run adds `--read-only --cap-drop ALL --security-opt no-new-privileges`.
 
 ## 16. Systemd service missing hardening directives
 
@@ -232,7 +232,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Why:** Not implemented. The socket is access-controlled by filesystem permissions.
 
-**Risk:** A process with socket access can open thousands of connections, exhausting memory. The socket is `0666` (see issue #49), so any local user can do this.
+**Risk:** A process with socket access can open thousands of connections, exhausting memory. The socket is `0660` (see issue #49), so only root and group members can do this.
 
 **Proper fix:** Add a connection semaphore or counter. Reject new connections above a threshold (e.g., 100 concurrent).
 
@@ -296,7 +296,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Risk:** Any process with socket access can reset the admin password, set a known session secret (forging auth cookies), or replace the TLS certificate with an attacker-controlled one. This is the same access level as issue #1, but for writes — the combination means full takeover via the socket.
 
-**Mitigating factor:** Socket access is required — the socket is `0666` (see issue #49), so any local process can connect.
+**Mitigating factor:** Socket access is required — the socket is `0660` (see issue #49), so only root and group members can connect.
 
 **Proper fix:** Write-protect critical keys: `admin_password_hash` should only be writable via a dedicated `setup` or `change_password` IPC method. `wg_private_key` should be agent-internal. `session_secret` should be auto-generated and never externally writable.
 
@@ -386,7 +386,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Why:** The web UI container terminates TLS (it binds ports 8080/8443 and handles HTTPS). It needs the private key to configure `rustls`. The agent generates and stores the cert, so the web UI must retrieve it at startup.
 
-**Risk:** Any process with socket access can obtain the TLS private key. With the key, an attacker can impersonate the router's web UI or decrypt captured traffic. The socket is `0666` (see issue #49), so any local process can read the key.
+**Risk:** Any process with socket access can obtain the TLS private key. With the key, an attacker can impersonate the router's web UI or decrypt captured traffic. The socket is `0660` (see issue #49), so only root and group members can read the key.
 
 **Mitigating factor:** Same socket access control as all other IPC methods. The cert is self-signed, so impersonation is only meaningful if the user has already trusted it.
 
@@ -400,7 +400,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Risk:** A process that can read Unix socket traffic (e.g., root using `strace` or `socat` on the socket path) could capture plaintext passwords. In practice, a root attacker can already read the hash from the DB directly.
 
-**Mitigating factor:** Unix socket traffic is local-only and not network-observable. However, the socket is `0666` (see issue #49), so any local process can connect and send `verify_password` requests. The previous approach (web UI reading the hash) was worse — the hash could be extracted and cracked offline, while a plaintext password captured from a single request has limited replay value if sessions are used.
+**Mitigating factor:** Unix socket traffic is local-only and not network-observable. However, the socket is `0660` (see issue #49), so only root and group members can connect and send `verify_password` requests. The previous approach (web UI reading the hash) was worse — the hash could be extracted and cracked offline, while a plaintext password captured from a single request has limited replay value if sessions are used.
 
 **Proper fix:** Acceptable for the threat model. A challenge-response protocol (e.g., SRP) would avoid sending the plaintext, but adds significant complexity for no practical security gain on a local socket.
 
@@ -464,7 +464,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Why:** The auth middleware always calls `verify_session` (which checks both idle and absolute timeouts) before calling `refresh_session`. An idle-expired token is rejected at the `verify_session` step and never reaches `refresh_session`.
 
-**Risk:** A direct IPC caller (not going through the web UI middleware) could refresh an idle-expired token by calling `refresh_session` directly, bypassing the idle timeout. The socket is `0666` (see issue #49), so any local process can do this.
+**Risk:** A direct IPC caller (not going through the web UI middleware) could refresh an idle-expired token by calling `refresh_session` directly, bypassing the idle timeout. The socket is `0660` (see issue #49), so only root and group members can do this.
 
 **Proper fix:** Add idle timeout checking to `refresh_session` so it is self-contained. This would make the IPC API consistent — both methods enforce both timeouts.
 
@@ -528,7 +528,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Why:** Simplicity. IPC callers are expected to send well-formed, reasonably-sized JSON.
 
-**Risk:** Any process with socket access can send a multi-gigabyte line (no newline) to exhaust agent memory. The socket is `0666` (see issue #49), so any local user can trigger this.
+**Risk:** Any process with socket access can send a multi-gigabyte line (no newline) to exhaust agent memory. The socket is `0660` (see issue #49), so only root and group members can trigger this.
 
 **Mitigating factor:** The DHCP server's requests are bounded by the 1500-byte UDP packet that triggered them, so this is only exploitable by a direct socket client.
 
@@ -581,6 +581,8 @@ This document tracks security compromises made during implementation, why they w
 **Mitigating factor:** The router is a single-purpose appliance. In the install mode, only `root` and `hermitshell` user processes should be running. On a dedicated router, there are no untrusted local users. The agent's sensitive key protections (#1 Status: Fixed) and rate limiting (#8 Status: Fixed) still apply regardless of socket permissions.
 
 **Proper fix:** Detect the web UI user at startup and `chown` the socket to match. In install mode, read the `hermitshell` user's GID via `getgrnam("hermitshell")`. In direct mode, use GID 1000 (matching the container user). In docker mode, skip the `chown` entirely (all processes are root). Alternatively, create a `hermitshell` group during install and ensure all web UI processes run with that group, then `chown root:hermitshell 0660`.
+
+**Status: Mitigated.** Socket permissions tightened from `0666` to `0660` (root + group only). The web UI container must run in the same group as the agent to access the socket. Integration tests `chmod 666` the socket after agent restarts so the unprivileged test user can connect.
 
 ## 50. Docker all-in-one container runs with --privileged
 
