@@ -19,7 +19,9 @@ mod wireguard;
 use hermitshell_common::subnet;
 
 use anyhow::Result;
+use std::io::{BufRead, BufReader, Write};
 use std::net::Ipv4Addr;
+use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error, info, warn};
 
@@ -77,8 +79,283 @@ const POLL_INTERVAL_SECS: u64 = 10;
 const LAN_ADDR: &str = "10.0.0.1/32";
 const LAN_ADDR_V6: &str = "fd00::1/128";
 
+/// Send a JSON request to the agent socket and return the parsed response.
+fn socket_request(req: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let mut stream = UnixStream::connect(SOCKET_PATH)
+        .map_err(|e| format!("failed to connect to {}: {}", SOCKET_PATH, e))?;
+    let mut payload = serde_json::to_string(req).map_err(|e| format!("JSON encode: {}", e))?;
+    payload.push('\n');
+    stream
+        .write_all(payload.as_bytes())
+        .map_err(|e| format!("write: {}", e))?;
+    stream
+        .shutdown(std::net::Shutdown::Write)
+        .map_err(|e| format!("shutdown write: {}", e))?;
+    let mut reader = BufReader::new(&stream);
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .map_err(|e| format!("read: {}", e))?;
+    serde_json::from_str(&line).map_err(|e| format!("JSON decode: {}", e))
+}
+
+/// Read a line from stdin with echo disabled (for passphrase entry on a TTY).
+fn rpassword_fallback() -> String {
+    let _ = std::process::Command::new("stty")
+        .arg("-echo")
+        .stdin(std::process::Stdio::inherit())
+        .status();
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+    let _ = std::process::Command::new("stty")
+        .arg("echo")
+        .stdin(std::process::Stdio::inherit())
+        .status();
+    eprint!("\n");
+    line.trim_end_matches('\n').trim_end_matches('\r').to_string()
+}
+
+/// Export subcommand: dump config JSON from the running agent.
+fn cli_export(args: &[String]) -> i32 {
+    let mut include_secrets = false;
+    let mut encrypt = false;
+    let mut passphrase_from_stdin = false;
+    let mut output_file: Option<String> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--include-secrets" => include_secrets = true,
+            "--encrypt" => {
+                encrypt = true;
+                include_secrets = true;
+            }
+            "--passphrase-from-stdin" => passphrase_from_stdin = true,
+            "-o" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("error: -o requires a filename");
+                    return 1;
+                }
+                output_file = Some(args[i].clone());
+            }
+            other => {
+                eprintln!("error: unknown flag: {}", other);
+                return 1;
+            }
+        }
+        i += 1;
+    }
+
+    let passphrase = if encrypt {
+        if passphrase_from_stdin {
+            let mut line = String::new();
+            if std::io::stdin().read_line(&mut line).is_err() {
+                eprintln!("error: failed to read passphrase from stdin");
+                return 1;
+            }
+            let p = line.trim_end_matches('\n').trim_end_matches('\r').to_string();
+            if p.is_empty() {
+                eprintln!("error: passphrase cannot be empty");
+                return 1;
+            }
+            Some(p)
+        } else {
+            eprint!("Enter passphrase: ");
+            let _ = std::io::stderr().flush();
+            let p1 = rpassword_fallback();
+            if p1.is_empty() {
+                eprintln!("error: passphrase cannot be empty");
+                return 1;
+            }
+            eprint!("Confirm passphrase: ");
+            let _ = std::io::stderr().flush();
+            let p2 = rpassword_fallback();
+            if p1 != p2 {
+                eprintln!("error: passphrases do not match");
+                return 1;
+            }
+            Some(p1)
+        }
+    } else {
+        None
+    };
+
+    let mut req = serde_json::json!({
+        "method": "export_config",
+        "include_secrets": include_secrets,
+    });
+    if let Some(ref p) = passphrase {
+        req["passphrase"] = serde_json::Value::String(p.clone());
+    }
+
+    let resp = match socket_request(&req) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: {}", e);
+            return 1;
+        }
+    };
+
+    if resp.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let msg = resp
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown error");
+        eprintln!("error: {}", msg);
+        return 1;
+    }
+
+    let data = resp
+        .get("config_value")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if let Some(ref path) = output_file {
+        match std::fs::write(path, data) {
+            Ok(_) => {
+                eprintln!("Exported to {}", path);
+                0
+            }
+            Err(e) => {
+                eprintln!("error: failed to write {}: {}", path, e);
+                1
+            }
+        }
+    } else {
+        print!("{}", data);
+        0
+    }
+}
+
+/// Import subcommand: restore config JSON into the running agent.
+fn cli_import(args: &[String]) -> i32 {
+    let mut input_file: Option<String> = None;
+    let mut passphrase_from_stdin = false;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-f" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("error: -f requires a filename");
+                    return 1;
+                }
+                input_file = Some(args[i].clone());
+            }
+            "--passphrase-from-stdin" => passphrase_from_stdin = true,
+            other => {
+                eprintln!("error: unknown flag: {}", other);
+                return 1;
+            }
+        }
+        i += 1;
+    }
+
+    // Read the JSON data
+    let data = if let Some(ref path) = input_file {
+        match std::fs::read_to_string(path) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("error: failed to read {}: {}", path, e);
+                return 1;
+            }
+        }
+    } else {
+        if passphrase_from_stdin {
+            eprintln!("error: --passphrase-from-stdin cannot be used when reading data from stdin; use -f");
+            return 1;
+        }
+        let mut buf = String::new();
+        if std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf).is_err() {
+            eprintln!("error: failed to read from stdin");
+            return 1;
+        }
+        buf
+    };
+
+    // Parse to check if secrets are encrypted
+    let parsed: serde_json::Value = match serde_json::from_str(&data) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("error: invalid JSON: {}", e);
+            return 1;
+        }
+    };
+
+    let needs_passphrase = parsed
+        .get("secrets_encrypted")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let passphrase = if needs_passphrase {
+        if passphrase_from_stdin {
+            let mut line = String::new();
+            if std::io::stdin().read_line(&mut line).is_err() {
+                eprintln!("error: failed to read passphrase from stdin");
+                return 1;
+            }
+            line.trim_end_matches('\n')
+                .trim_end_matches('\r')
+                .to_string()
+        } else {
+            eprint!("Enter passphrase: ");
+            let _ = std::io::stderr().flush();
+            rpassword_fallback()
+        }
+    } else {
+        String::new()
+    };
+
+    let mut req = serde_json::json!({
+        "method": "import_config",
+        "value": data,
+    });
+    if !passphrase.is_empty() {
+        req["passphrase"] = serde_json::Value::String(passphrase);
+    }
+
+    let resp = match socket_request(&req) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: {}", e);
+            return 1;
+        }
+    };
+
+    if resp.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let msg = resp
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown error");
+        eprintln!("error: {}", msg);
+        return 1;
+    }
+
+    eprintln!("Import successful");
+    0
+}
+
+/// Check if a CLI subcommand was requested; return Some(exit_code) to short-circuit daemon startup.
+fn cli_main() -> Option<i32> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 2 {
+        return None;
+    }
+    match args[1].as_str() {
+        "export" => Some(cli_export(&args[2..])),
+        "import" => Some(cli_import(&args[2..])),
+        _ => None,
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    if let Some(exit_code) = cli_main() {
+        std::process::exit(exit_code);
+    }
+
     let use_json = db::Db::open(DB_PATH)
         .ok()
         .and_then(|d| d.get_config("log_format").ok().flatten())
