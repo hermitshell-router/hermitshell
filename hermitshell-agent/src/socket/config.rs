@@ -481,6 +481,20 @@ pub(super) fn handle_set_qos_test_url(req: &Request, db: &Arc<Mutex<Db>>) -> Res
     Response::ok()
 }
 
+pub(super) fn handle_check_update(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let db = db.lock().unwrap();
+    let current = env!("CARGO_PKG_VERSION").to_string();
+    let latest = db.get_config("update_latest_version").ok().flatten();
+    let last_check = db.get_config("update_last_check").ok().flatten();
+    let mut resp = Response::ok();
+    resp.update_info = Some(serde_json::json!({
+        "current_version": current,
+        "latest_version": latest,
+        "last_check": last_check,
+    }));
+    resp
+}
+
 pub(super) fn handle_run_speed_test(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let db = db.lock().unwrap();
     let url = match db.get_config("qos_test_url") {

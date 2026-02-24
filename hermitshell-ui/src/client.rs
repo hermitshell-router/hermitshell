@@ -40,6 +40,7 @@ pub struct Response {
     pub wifi_ssids: Option<Vec<hermitshell_common::WifiSsidConfig>>,
     pub wifi_radios: Option<Vec<hermitshell_common::WifiRadioConfig>>,
     pub interfaces: Option<Vec<hermitshell_common::NetworkInterface>>,
+    pub update_info: Option<serde_json::Value>,
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
@@ -472,6 +473,11 @@ pub fn list_interfaces() -> Result<Vec<hermitshell_common::NetworkInterface>, St
 pub fn set_interfaces(wan: &str, lan: &str) -> Result<(), String> {
     ok_or_err(send(json!({"method": "set_interfaces", "key": wan, "value": lan}))?)?;
     Ok(())
+}
+
+pub fn check_update() -> Result<serde_json::Value, String> {
+    let resp = ok_or_err(send(json!({"method": "check_update"}))?)?;
+    resp.update_info.ok_or_else(|| "no update_info in response".to_string())
 }
 
 #[cfg(test)]

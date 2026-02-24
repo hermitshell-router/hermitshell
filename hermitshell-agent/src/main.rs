@@ -11,6 +11,7 @@ mod qos;
 mod ra;
 mod socket;
 mod tls;
+mod update;
 mod runzero;
 mod wifi;
 mod wireguard;
@@ -464,6 +465,9 @@ async fn main() -> Result<()> {
     tokio::spawn(async move {
         wifi::run(db_wifi).await;
     });
+
+    // Spawn update check loop
+    update::spawn_update_loop(db.clone());
 
     // Spawn DHCP server as child process
     let db_for_counters = db.clone();
