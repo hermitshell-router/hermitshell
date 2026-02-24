@@ -125,6 +125,8 @@ struct Request {
     channel: Option<String>,
     channel_width: Option<String>,
     tx_power: Option<String>,
+    include_secrets: Option<bool>,
+    passphrase: Option<String>,
 }
 
 /// JSON response envelope. `ok` indicates success; `error` carries failure details.

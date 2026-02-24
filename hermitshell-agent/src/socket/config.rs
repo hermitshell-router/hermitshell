@@ -57,8 +57,13 @@ pub(super) fn handle_set_ad_blocking(req: &Request, db: &Arc<Mutex<Db>>, blocky:
     resp
 }
 
-pub(super) fn handle_export_config(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+pub(super) fn handle_export_config(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let include_secrets = req.include_secrets.unwrap_or(false);
     let db = db.lock().unwrap();
+
+    // Audit log the export
+    let _ = db.log_audit("config_export", &format!("include_secrets={}", include_secrets));
+
     let devices = db.list_devices().unwrap_or_default();
     let reservations = db.list_dhcp_reservations().unwrap_or_default();
     let forwards = db.list_port_forwards().unwrap_or_default();
@@ -67,8 +72,20 @@ pub(super) fn handle_export_config(_req: &Request, db: &Arc<Mutex<Db>>) -> Respo
         .into_iter()
         .filter(|p| matches!(p.get("protocol").and_then(|v| v.as_str()), Some("tcp" | "udp")))
         .collect();
+    let wifi_aps = db.list_wifi_aps().unwrap_or_default();
 
-    let config_keys = ["ad_blocking_enabled", "wg_listen_port", "dmz_host_ip", "log_format", "syslog_target", "webhook_url", "log_retention_days", "runzero_url", "runzero_sync_interval", "runzero_enabled", "qos_enabled", "qos_upload_mbps", "qos_download_mbps", "qos_test_url"];
+    // v2 expanded config allowlist
+    let config_keys = [
+        "ad_blocking_enabled", "wg_listen_port", "dmz_host_ip", "log_format",
+        "syslog_target", "webhook_url", "log_retention_days", "runzero_url",
+        "runzero_sync_interval", "runzero_enabled", "qos_enabled", "qos_upload_mbps",
+        "qos_download_mbps", "qos_test_url",
+        // v2 additions
+        "wg_enabled", "tls_mode", "analyzer_enabled",
+        "alert_rule_dns_beaconing", "alert_rule_dns_volume_spike",
+        "alert_rule_new_dest_spike", "alert_rule_suspicious_ports",
+        "alert_rule_bandwidth_spike", "wan_iface", "lan_iface",
+    ];
     let mut config_map = serde_json::Map::new();
     for key in &config_keys {
         if let Ok(Some(val)) = db.get_config(key) {
@@ -76,22 +93,76 @@ pub(super) fn handle_export_config(_req: &Request, db: &Arc<Mutex<Db>>) -> Respo
         }
     }
 
+    // Build secrets section if requested
+    let (secrets_value, secrets_encrypted) = if include_secrets {
+        // Read all blocked config keys directly (bypassing the blocked check)
+        let mut secrets_map = serde_json::Map::new();
+        for key in super::BLOCKED_CONFIG_KEYS {
+            if let Ok(Some(val)) = db.get_config(key) {
+                secrets_map.insert(key.to_string(), serde_json::Value::String(val));
+            }
+        }
+
+        // Decrypt WiFi AP passwords
+        let session_secret = db.get_config("session_secret").ok().flatten().unwrap_or_default();
+        let mut wifi_ap_passwords = serde_json::Map::new();
+        for ap in &wifi_aps {
+            if let Ok(Some((_ip, _username, password_enc))) = db.get_wifi_ap_credentials(&ap.mac) {
+                if !password_enc.is_empty() {
+                    let plaintext = if crate::crypto::is_encrypted(&password_enc) {
+                        crate::crypto::decrypt_password(&password_enc, &session_secret)
+                            .unwrap_or_else(|_| password_enc.clone())
+                    } else {
+                        password_enc
+                    };
+                    wifi_ap_passwords.insert(ap.mac.clone(), serde_json::Value::String(plaintext));
+                }
+            }
+        }
+        secrets_map.insert("wifi_ap_passwords".to_string(), serde_json::Value::Object(wifi_ap_passwords));
+
+        let secrets_json = serde_json::Value::Object(secrets_map);
+
+        // Optionally encrypt with passphrase
+        let passphrase = req.passphrase.as_deref().unwrap_or("");
+        if !passphrase.is_empty() {
+            let secrets_str = serde_json::to_string(&secrets_json).unwrap_or_default();
+            match crate::crypto::encrypt_with_passphrase(&secrets_str, passphrase) {
+                Ok(encrypted) => (serde_json::Value::String(encrypted), true),
+                Err(e) => return Response::err(&format!("failed to encrypt secrets: {}", e)),
+            }
+        } else {
+            (secrets_json, false)
+        }
+    } else {
+        (serde_json::Value::Null, false)
+    };
+
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH).expect("system clock before epoch").as_secs();
 
     let export = serde_json::json!({
-        "version": 1,
+        "version": 2,
+        "agent_version": env!("CARGO_PKG_VERSION"),
         "exported_at": now,
         "devices": devices.iter().map(|d| serde_json::json!({
-            "mac": d.mac, "hostname": d.hostname, "device_group": d.device_group, "subnet_id": d.subnet_id
+            "mac": d.mac, "hostname": d.hostname, "device_group": d.device_group,
+            "subnet_id": d.subnet_id, "nickname": d.nickname
         })).collect::<Vec<_>>(),
         "dhcp_reservations": reservations,
         "port_forwards": forwards,
         "wg_peers": peers.iter().map(|p| serde_json::json!({
-            "public_key": p.public_key, "name": p.name, "subnet_id": p.subnet_id, "device_group": p.device_group
+            "public_key": p.public_key, "name": p.name, "subnet_id": p.subnet_id,
+            "device_group": p.device_group, "enabled": p.enabled
         })).collect::<Vec<_>>(),
         "ipv6_pinholes": pinholes,
+        "wifi_aps": wifi_aps.iter().map(|ap| serde_json::json!({
+            "mac": ap.mac, "ip": ap.ip, "name": ap.name, "provider": ap.provider,
+            "model": ap.model, "firmware": ap.firmware, "enabled": ap.enabled
+        })).collect::<Vec<_>>(),
         "config": config_map,
+        "secrets": secrets_value,
+        "secrets_encrypted": secrets_encrypted,
     });
 
     let mut resp = Response::ok();
