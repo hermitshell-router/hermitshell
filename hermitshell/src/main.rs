@@ -17,14 +17,54 @@ async fn serve_css() -> impl IntoResponse {
     ([("content-type", "text/css")], STYLE_CSS)
 }
 
-async fn handle_backup_config() -> impl IntoResponse {
-    match client::export_config() {
+async fn handle_backup_config(
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let include_secrets = params.get("secrets").map(|v| v == "1").unwrap_or(false);
+    let passphrase = params.get("passphrase").cloned();
+    match client::export_config_v2(include_secrets, passphrase.as_deref()) {
         Ok(data) => (
             [(axum::http::header::CONTENT_TYPE, "application/json"),
              (axum::http::header::CONTENT_DISPOSITION, "attachment; filename=hermitshell-config.json")],
             data
         ).into_response(),
         Err(e) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+async fn handle_restore_config(
+    mut multipart: axum::extract::Multipart,
+) -> impl IntoResponse {
+    let mut file_data: Option<String> = None;
+    let mut passphrase: Option<String> = None;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "file" => {
+                if let Ok(bytes) = field.bytes().await {
+                    file_data = String::from_utf8(bytes.to_vec()).ok();
+                }
+            }
+            "passphrase" => {
+                if let Ok(bytes) = field.bytes().await {
+                    let s = String::from_utf8(bytes.to_vec()).unwrap_or_default();
+                    if !s.is_empty() {
+                        passphrase = Some(s);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let Some(data) = file_data else {
+        return (axum::http::StatusCode::BAD_REQUEST, "file field required").into_response();
+    };
+
+    match client::import_config_v2(&data, passphrase.as_deref()) {
+        Ok(()) => axum::response::Redirect::to("/settings").into_response(),
+        Err(e) => (axum::http::StatusCode::BAD_REQUEST, e).into_response(),
     }
 }
 
@@ -202,6 +242,7 @@ async fn main() {
     let app = Router::new()
         .route("/style.css", axum::routing::get(serve_css))
         .route("/api/backup/config", axum::routing::get(handle_backup_config))
+        .route("/api/restore/config", axum::routing::post(handle_restore_config))
         .leptos_routes(&leptos_options, routes, App)
         .layer(axum::middleware::from_fn(auth_middleware))
         .layer(axum::middleware::from_fn_with_state(

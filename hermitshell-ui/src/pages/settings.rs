@@ -68,8 +68,40 @@ pub fn Settings() -> impl IntoView {
 
                             <div class="settings-section">
                                 <h3>"Backup & Restore"</h3>
-                                <div class="actions-bar">
-                                    <a href="/api/backup/config" class="btn btn-primary btn-sm">"Download Config (JSON)"</a>
+                                <div class="actions-bar" style="flex-direction:column;gap:1rem;align-items:flex-start">
+                                    <div>
+                                        <h4 style="margin:0 0 0.5rem 0">"Download Backup"</h4>
+                                        <form method="get" action="/api/backup/config" style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center">
+                                            <label style="display:flex;align-items:center;gap:0.25rem">
+                                                <input type="checkbox" name="secrets" value="1" id="backup-secrets-cb" />
+                                                " Include secrets"
+                                            </label>
+                                            <div id="backup-passphrase-row" style="display:none;align-items:center;gap:0.25rem">
+                                                <label style="display:flex;align-items:center;gap:0.25rem">
+                                                    <input type="checkbox" id="backup-encrypt-cb" />
+                                                    " Encrypt"
+                                                </label>
+                                                <input type="password" name="passphrase" placeholder="Passphrase" style="width:12rem" disabled />
+                                            </div>
+                                            <button type="submit" class="btn btn-primary btn-sm">"Download"</button>
+                                        </form>
+                                        <script>"
+                                            document.getElementById('backup-secrets-cb').addEventListener('change', function() {
+                                                document.getElementById('backup-passphrase-row').style.display = this.checked ? 'flex' : 'none';
+                                            });
+                                            document.getElementById('backup-encrypt-cb').addEventListener('change', function() {
+                                                this.closest('#backup-passphrase-row').querySelector('input[type=password]').disabled = !this.checked;
+                                            });
+                                        "</script>
+                                    </div>
+                                    <div>
+                                        <h4 style="margin:0 0 0.5rem 0">"Restore from Backup"</h4>
+                                        <form method="post" action="/api/restore/config" enctype="multipart/form-data" style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center">
+                                            <input type="file" name="file" accept=".json" required />
+                                            <input type="password" name="passphrase" placeholder="Passphrase (if encrypted)" style="width:12rem" />
+                                            <button type="submit" class="btn btn-primary btn-sm">"Restore"</button>
+                                        </form>
+                                    </div>
                                 </div>
                             </div>
 

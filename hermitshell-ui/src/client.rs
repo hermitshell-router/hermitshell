@@ -238,6 +238,27 @@ pub fn import_config(data: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub fn export_config_v2(include_secrets: bool, passphrase: Option<&str>) -> Result<String, String> {
+    let mut req = json!({"method": "export_config"});
+    if include_secrets {
+        req["include_secrets"] = serde_json::Value::Bool(true);
+    }
+    if let Some(p) = passphrase {
+        req["passphrase"] = serde_json::Value::String(p.to_string());
+    }
+    let resp = ok_or_err(send(req)?)?;
+    resp.config_value.ok_or_else(|| "No config data".to_string())
+}
+
+pub fn import_config_v2(data: &str, passphrase: Option<&str>) -> Result<(), String> {
+    let mut req = json!({"method": "import_config", "value": data});
+    if let Some(p) = passphrase {
+        req["passphrase"] = serde_json::Value::String(p.to_string());
+    }
+    ok_or_err(send(req)?)?;
+    Ok(())
+}
+
 pub fn list_connection_logs(device_ip: Option<&str>, limit: i64) -> Result<Vec<ConnectionLog>, String> {
     let mut req = json!({"method": "list_connection_logs", "limit": limit});
     if let Some(ip) = device_ip {
