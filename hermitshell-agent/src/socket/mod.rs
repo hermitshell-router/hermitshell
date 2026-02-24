@@ -195,6 +195,8 @@ struct Response {
     wifi_radios: Option<Vec<hermitshell_common::WifiRadioConfig>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     interfaces: Option<Vec<hermitshell_common::NetworkInterface>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    update_info: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -377,6 +379,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "wifi_adopt_ap" => wifi::handle_wifi_adopt_ap(&req, db),
         "wifi_remove_ap" => wifi::handle_wifi_remove_ap(&req, db),
         "wifi_get_clients" => wifi::handle_wifi_get_clients(&req, db),
+        "check_update" => config::handle_check_update(&req, db),
         "list_interfaces" => setup::handle_list_interfaces(&req, db),
         "set_interfaces" => setup::handle_set_interfaces(&req, db),
         _ => Response::err("unknown method"),

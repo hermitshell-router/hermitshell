@@ -52,14 +52,6 @@ pub(super) fn handle_list_interfaces(_req: &Request, _db: &Arc<Mutex<Db>>) -> Re
 }
 
 pub(super) fn handle_set_interfaces(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
-    // Only allowed during initial setup (no password set yet)
-    {
-        let db = db.lock().unwrap();
-        if db.get_config("admin_password_hash").ok().flatten().is_some() {
-            return Response::err("interfaces can only be set during initial setup");
-        }
-    }
-
     let Some(ref wan) = req.key else {
         return Response::err("key required (WAN interface name)");
     };
@@ -71,6 +63,14 @@ pub(super) fn handle_set_interfaces(req: &Request, db: &Arc<Mutex<Db>>) -> Respo
         return Response::err("WAN and LAN must be different interfaces");
     }
 
+    // Validate interface names before acquiring lock
+    if let Err(e) = nftables::validate_iface(wan) {
+        return Response::err(&format!("invalid WAN interface name: {}", e));
+    }
+    if let Err(e) = nftables::validate_iface(lan) {
+        return Response::err(&format!("invalid LAN interface name: {}", e));
+    }
+
     // Validate interfaces exist
     if !std::path::Path::new(&format!("/sys/class/net/{}", wan)).exists() {
         return Response::err(&format!("WAN interface '{}' not found", wan));
@@ -79,15 +79,11 @@ pub(super) fn handle_set_interfaces(req: &Request, db: &Arc<Mutex<Db>>) -> Respo
         return Response::err(&format!("LAN interface '{}' not found", lan));
     }
 
-    // Validate interface names
-    if let Err(e) = nftables::validate_iface(wan) {
-        return Response::err(&format!("invalid WAN interface name: {}", e));
-    }
-    if let Err(e) = nftables::validate_iface(lan) {
-        return Response::err(&format!("invalid LAN interface name: {}", e));
-    }
-
+    // Hold lock from password check through DB writes to prevent race condition
     let db = db.lock().unwrap();
+    if db.get_config("admin_password_hash").ok().flatten().is_some() {
+        return Response::err("interfaces can only be set during initial setup");
+    }
     if let Err(e) = db.set_config("wan_iface", wan) {
         return Response::err(&format!("failed to store WAN: {}", e));
     }
