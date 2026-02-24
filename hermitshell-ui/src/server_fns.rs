@@ -325,6 +325,49 @@ pub async fn remove_wifi_ap(mac: String) -> Result<(), ServerFnError> {
 }
 
 #[server]
+pub async fn set_wifi_ssid(
+    mac: String,
+    ssid_name: String,
+    password: Option<String>,
+    band: String,
+    security: String,
+    hidden: Option<String>,
+) -> Result<(), ServerFnError> {
+    let hidden = hidden.as_deref() == Some("on");
+    crate::client::wifi_set_ssid(&mac, &ssid_name, password.as_deref(), &band, &security, hidden)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("wifi_set_ssid", &format!("{}: {} on {}", mac, ssid_name, band));
+    leptos_axum::redirect(&format!("/wifi?ap={}", mac));
+    Ok(())
+}
+
+#[server]
+pub async fn delete_wifi_ssid(mac: String, ssid_name: String, band: String) -> Result<(), ServerFnError> {
+    crate::client::wifi_delete_ssid(&mac, &ssid_name, &band)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("wifi_delete_ssid", &format!("{}: {} on {}", mac, ssid_name, band));
+    leptos_axum::redirect(&format!("/wifi?ap={}", mac));
+    Ok(())
+}
+
+#[server]
+pub async fn set_wifi_radio(
+    mac: String,
+    band: String,
+    channel: String,
+    channel_width: String,
+    tx_power: String,
+    enabled: Option<String>,
+) -> Result<(), ServerFnError> {
+    let enabled = enabled.as_deref() == Some("on");
+    crate::client::wifi_set_radio(&mac, &band, &channel, &channel_width, &tx_power, enabled)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("wifi_set_radio", &format!("{}: {}", mac, band));
+    leptos_axum::redirect(&format!("/wifi?ap={}", mac));
+    Ok(())
+}
+
+#[server]
 pub async fn setup_interfaces(wan: String, lan: String) -> Result<(), ServerFnError> {
     crate::client::set_interfaces(&wan, &lan)
         .map_err(|e| ServerFnError::new(e))?;
