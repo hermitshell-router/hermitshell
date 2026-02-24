@@ -342,7 +342,7 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, wan_iface
 
             // Delete existing AP with same MAC, then insert
             let _ = db.remove_wifi_ap(mac);
-            let _ = db.insert_wifi_ap(mac, ip, name, provider, "", &password_enc);
+            let _ = db.insert_wifi_ap(mac, ip, name, provider, "admin", &password_enc);
 
             // Update model/firmware if present
             let model = ap.get("model").and_then(|v| v.as_str());
@@ -353,7 +353,7 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, wan_iface
 
             // Set enabled state: insert defaults to enabled, so only update if disabled
             if !enabled {
-                let _ = db.set_config(&format!("wifi_ap_{}_enabled", mac), "false");
+                let _ = db.set_wifi_ap_enabled(mac, false);
             }
         }
     }

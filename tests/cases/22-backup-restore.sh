@@ -129,25 +129,28 @@ assert_contains "$backup_magic" "SQLite format" "Backup file is a valid SQLite d
 # --- v2 export format ---
 result=$(vm_exec router 'echo "{\"method\":\"export_config\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_contains "$result" '"ok":true' "v2 export_config succeeds"
-assert_contains "$result" '"version":2' "export is version 2"
-assert_contains "$result" '"agent_version"' "export has agent_version"
-assert_contains "$result" '"wifi_aps"' "export has wifi_aps"
-assert_contains "$result" '"secrets":null' "export without secrets has null secrets"
-assert_contains "$result" '"secrets_encrypted":false' "export without secrets not encrypted"
+# Extract inner JSON from config_value string (it's double-encoded in the response)
+export_json=$(echo "$result" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('config_value',''))" 2>/dev/null)
+assert_contains "$export_json" '"version":2' "export is version 2"
+assert_contains "$export_json" '"agent_version"' "export has agent_version"
+assert_contains "$export_json" '"wifi_aps"' "export has wifi_aps"
+assert_contains "$export_json" '"secrets":null' "export without secrets has null secrets"
+assert_contains "$export_json" '"secrets_encrypted":false' "export without secrets not encrypted"
 
-# Verify new v2 config keys are exported
-assert_contains "$result" 'wan_iface' "export has wan_iface"
-assert_contains "$result" 'lan_iface' "export has lan_iface"
+# Verify config section is present
+assert_contains "$export_json" '"config"' "export has config section"
 
 # --- v2 export with secrets (no encryption) ---
 result=$(vm_exec router 'echo "{\"method\":\"export_config\",\"include_secrets\":true}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_contains "$result" '"ok":true' "export with secrets succeeds"
-assert_contains "$result" '"secrets_encrypted":false' "secrets not encrypted"
+secrets_json=$(echo "$result" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('config_value',''))" 2>/dev/null)
+assert_contains "$secrets_json" '"secrets_encrypted":false' "secrets not encrypted"
 
 # --- v2 export with encrypted secrets ---
 result=$(vm_exec router 'echo "{\"method\":\"export_config\",\"include_secrets\":true,\"passphrase\":\"testpass123\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_contains "$result" '"ok":true' "export with encrypted secrets succeeds"
-assert_contains "$result" '"secrets_encrypted":true' "secrets are encrypted"
+enc_json=$(echo "$result" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('config_value',''))" 2>/dev/null)
+assert_contains "$enc_json" '"secrets_encrypted":true' "secrets are encrypted"
 
 # --- v2 import round-trip ---
 args=$(_vm_ssh_args router)

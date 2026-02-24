@@ -1108,6 +1108,14 @@ impl Db {
         Ok(())
     }
 
+    pub fn set_wifi_ap_enabled(&self, mac: &str, enabled: bool) -> Result<()> {
+        self.conn.execute(
+            "UPDATE wifi_aps SET enabled = ?1 WHERE mac = ?2",
+            (enabled as i32, mac),
+        )?;
+        Ok(())
+    }
+
     pub fn remove_wifi_ap(&self, mac: &str) -> Result<()> {
         self.conn.execute("DELETE FROM wifi_ssid_configs WHERE ap_mac = ?1", [mac])?;
         self.conn.execute("DELETE FROM wifi_aps WHERE mac = ?1", [mac])?;
