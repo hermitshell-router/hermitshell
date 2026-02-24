@@ -1,6 +1,7 @@
 mod analyzer;
 mod blocky;
 mod conntrack;
+mod crypto;
 mod db;
 mod dns_log;
 mod log_export;
@@ -197,6 +198,16 @@ async fn main() -> Result<()> {
             let secret = hex::encode(rand::Rng::r#gen::<[u8; 32]>(&mut rand::thread_rng()));
             let _ = db_guard.set_config("session_secret", &secret);
             info!("session secret generated");
+        }
+    }
+
+    // Encrypt any legacy plaintext WiFi AP passwords
+    {
+        let db_lock = db.lock().unwrap();
+        if let Ok(Some(secret)) = db_lock.get_config("session_secret") {
+            if let Err(e) = db_lock.encrypt_wifi_passwords(&secret) {
+                warn!(error = %e, "failed to encrypt legacy WiFi passwords");
+            }
         }
     }
 

@@ -26,6 +26,9 @@ pub(super) fn handle_wifi_adopt_ap(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
     let Some(ref password) = req.value else {
         return Response::err("value required (AP password)");
     };
+    if password.is_empty() {
+        return Response::err("password cannot be empty");
+    }
     let provider = req.protocol.as_deref().unwrap_or("eap_standalone");
 
     // Validate inputs
@@ -42,8 +45,19 @@ pub(super) fn handle_wifi_adopt_ap(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
         return Response::err("unknown provider");
     }
 
-    // TODO: encrypt password before storing
-    let password_enc = password.clone();
+    let session_secret = {
+        let db_locked = db.lock().unwrap();
+        db_locked.get_config("session_secret").ok().flatten()
+            .unwrap_or_default()
+    };
+    let password_enc = if session_secret.is_empty() {
+        password.clone()
+    } else {
+        match crate::crypto::encrypt_password(password, &session_secret) {
+            Ok(enc) => enc,
+            Err(e) => return Response::err(&format!("encryption failed: {}", e)),
+        }
+    };
 
     let db = db.lock().unwrap();
     if let Err(e) = db.insert_wifi_ap(mac, ip, name, provider, username, &password_enc) {

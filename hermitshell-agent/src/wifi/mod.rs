@@ -73,8 +73,23 @@ pub async fn run(db: Arc<Mutex<Db>>) {
                 continue;
             };
 
-            // TODO: decrypt password_enc. For now, treat as plaintext.
-            let password = password_enc;
+            let password = {
+                let session_secret = {
+                    let db_lock = db.lock().unwrap();
+                    db_lock.get_config("session_secret").ok().flatten().unwrap_or_default()
+                };
+                if session_secret.is_empty() || !crate::crypto::is_encrypted(&password_enc) {
+                    password_enc
+                } else {
+                    match crate::crypto::decrypt_password(&password_enc, &session_secret) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            warn!(ap = %ap.name, error = %e, "failed to decrypt AP password");
+                            continue;
+                        }
+                    }
+                }
+            };
 
             match connect(&ap.provider, &ip, &username, &password).await {
                 Ok(session) => {

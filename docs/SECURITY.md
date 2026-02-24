@@ -634,6 +634,8 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Hardware security module or separate credential store with process-level isolation. Out of scope for a commodity router.
 
+**Status: Mitigated.** Passwords are now encrypted at rest with AES-256-GCM, keyed from session_secret via HKDF-SHA256. Existing plaintext passwords are migrated on startup. Root can still derive the key from the session_secret in the config DB, so this is defense-in-depth, not a complete fix.
+
 ## 55. TLS verification disabled for WiFi AP HTTPS connections
 
 **What:** The EAP standalone provider uses `danger_accept_invalid_certs(true)` when connecting to access points via HTTPS.

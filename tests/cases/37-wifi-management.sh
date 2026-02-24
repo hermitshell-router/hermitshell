@@ -14,6 +14,14 @@ assert_match "$result" '"wifi_aps":\[\]' "no APs adopted by default"
 result=$(vm_exec router 'echo "{\"method\":\"wifi_adopt_ap\",\"mac\":\"aa:bb:cc:dd:ee:01\",\"url\":\"192.168.1.100\",\"name\":\"Office AP\",\"key\":\"admin\",\"value\":\"testpass123\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$result" '"ok":true' "wifi_adopt_ap succeeds"
 
+# --- verify password is encrypted (not plaintext) ---
+stored_pass=$(vm_exec router "sqlite3 /data/hermitshell/db/hermitshell.db \"SELECT password_enc FROM wifi_aps WHERE mac='aa:bb:cc:dd:ee:01'\"")
+if [ "$stored_pass" = "testpass123" ]; then
+    fail "password stored as plaintext"
+fi
+assert_match "$stored_pass" '.' "password_enc is not empty"
+echo "PASS: password is encrypted (not plaintext)"
+
 # --- wifi_list_aps shows adopted AP ---
 result=$(vm_exec router "echo '{\"method\":\"wifi_list_aps\"}' | socat - $SOCK")
 assert_match "$result" '"ok":true' "wifi_list_aps after adopt succeeds"

@@ -269,8 +269,13 @@ impl Db {
             )?;
         }
 
-        // Future migrations go here:
-        // if version < 3 { ... }
+        if version < 3 {
+            conn.execute(
+                "INSERT INTO config (key, value) VALUES ('schema_version', '3')
+                 ON CONFLICT(key) DO UPDATE SET value = '3'",
+                [],
+            )?;
+        }
 
         Ok(())
     }
@@ -1145,6 +1150,24 @@ impl Db {
             "UPDATE devices SET wifi_ssid = ?1, wifi_band = ?2, wifi_rssi = ?3, wifi_ap_mac = ?4, wifi_last_seen = ?5 WHERE mac = ?6",
             rusqlite::params![ssid, band, rssi, ap_mac, now, mac],
         )?;
+        Ok(())
+    }
+
+    pub fn encrypt_wifi_passwords(&self, session_secret: &str) -> Result<()> {
+        let mut stmt = self.conn.prepare("SELECT mac, password_enc FROM wifi_aps")?;
+        let rows: Vec<(String, String)> = stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?.filter_map(|r| r.ok()).collect();
+
+        for (mac, password_enc) in rows {
+            if !crate::crypto::is_encrypted(&password_enc) {
+                let encrypted = crate::crypto::encrypt_password(&password_enc, session_secret)?;
+                self.conn.execute(
+                    "UPDATE wifi_aps SET password_enc = ?1 WHERE mac = ?2",
+                    (&encrypted, &mac),
+                )?;
+            }
+        }
         Ok(())
     }
 }
