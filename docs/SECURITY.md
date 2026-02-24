@@ -717,3 +717,13 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** If the backup file is compromised, an attacker gains all router credentials. The admin password hash (Argon2id) still requires cracking, but WireGuard keys, TLS keys, and API tokens are immediately usable.
 
 **Proper fix:** Always use `--encrypt` with a strong passphrase. The encrypted backup uses Argon2id key derivation (m=64MB, t=3) + AES-256-GCM, making brute-force impractical with a decent passphrase. Store backup files with restricted permissions (0600) and on encrypted storage.
+
+## 63. Backup passphrase in URL query parameter
+
+**What:** The web UI backup download endpoint (`/api/backup/config`) accepts the encryption passphrase as a URL query parameter (`?secrets=1&passphrase=...`).
+
+**Why:** Browser download flows require GET requests. Sending the passphrase in a POST body would prevent the browser from initiating a file download directly (it would require JavaScript to fetch the response and trigger a download, or a two-step flow).
+
+**Risk:** The passphrase appears in the URL. HTTPS encrypts the URL in transit, so it is not visible on the wire. However, the URL may be logged in browser history, proxy logs (if TLS-terminating), or the `Referer` header on subsequent navigation. The agent does not log query parameters.
+
+**Proper fix:** Use a POST-based download flow with JavaScript: submit the form via `fetch()`, receive the response as a blob, and trigger a download via `URL.createObjectURL()`. This keeps the passphrase in the POST body, out of URL logs. The tradeoff is requiring JavaScript for the download (currently works without JS).
