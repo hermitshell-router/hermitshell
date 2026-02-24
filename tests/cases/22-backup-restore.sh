@@ -15,7 +15,7 @@ vm_exec router 'echo "{\"method\":\"set_log_config\",\"value\":\"{\\\"log_retent
 # Note: export_config returns config_value as a JSON string, so inner keys are backslash-escaped
 result=$(vm_exec router 'echo "{\"method\":\"export_config\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_contains "$result" '"ok":true' "export_config succeeds"
-assert_match "$result" 'version.*:.*1' "export has version 1"
+assert_match "$result" 'version.*:.*2' "export has version 2"
 assert_match "$result" 'devices' "export contains devices"
 assert_match "$result" 'config' "export contains config"
 assert_match "$result" 'port_forwards' "export contains port_forwards"
@@ -121,3 +121,126 @@ assert_match "$perms" "600" "Backup file has 0600 permissions"
 # Verify backup is a valid SQLite database (check magic bytes)
 backup_magic=$(vm_exec router "sudo head -c 15 /data/hermitshell/hermitshell-backup.db" 2>/dev/null || echo "")
 assert_contains "$backup_magic" "SQLite format" "Backup file is a valid SQLite database"
+
+# =====================================================
+# v2 Backup/Restore Tests
+# =====================================================
+
+# --- v2 export format ---
+result=$(vm_exec router 'echo "{\"method\":\"export_config\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_contains "$result" '"ok":true' "v2 export_config succeeds"
+assert_contains "$result" '"version":2' "export is version 2"
+assert_contains "$result" '"agent_version"' "export has agent_version"
+assert_contains "$result" '"wifi_aps"' "export has wifi_aps"
+assert_contains "$result" '"secrets":null' "export without secrets has null secrets"
+assert_contains "$result" '"secrets_encrypted":false' "export without secrets not encrypted"
+
+# Verify new v2 config keys are exported
+assert_contains "$result" 'wan_iface' "export has wan_iface"
+assert_contains "$result" 'lan_iface' "export has lan_iface"
+
+# --- v2 export with secrets (no encryption) ---
+result=$(vm_exec router 'echo "{\"method\":\"export_config\",\"include_secrets\":true}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_contains "$result" '"ok":true' "export with secrets succeeds"
+assert_contains "$result" '"secrets_encrypted":false' "secrets not encrypted"
+
+# --- v2 export with encrypted secrets ---
+result=$(vm_exec router 'echo "{\"method\":\"export_config\",\"include_secrets\":true,\"passphrase\":\"testpass123\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_contains "$result" '"ok":true' "export with encrypted secrets succeeds"
+assert_contains "$result" '"secrets_encrypted":true' "secrets are encrypted"
+
+# --- v2 import round-trip ---
+args=$(_vm_ssh_args router)
+v2_trip=$(ssh $SSH_COMMON $args 'bash -s' 2>/dev/null <<'V2SCRIPT'
+SOCK=/run/hermitshell/agent.sock
+
+# 1. Set up test data
+echo '{"method":"set_config","key":"analyzer_enabled","value":"false"}' | socat - UNIX-CONNECT:$SOCK > /dev/null
+echo '{"method":"add_port_forward","protocol":"tcp","external_port_start":9999,"external_port_end":9999,"internal_ip":"10.0.1.1","internal_port":9090,"description":"v2-test"}' | socat - UNIX-CONNECT:$SOCK > /dev/null
+
+# 2. Export v2
+export_resp=$(echo '{"method":"export_config"}' | socat - UNIX-CONNECT:$SOCK)
+config_json=$(echo "$export_resp" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('config_value',''))" 2>/dev/null)
+echo "$config_json" > /tmp/test-v2-export.json
+
+# 3. Verify export is v2
+echo "EXPORT_V2:$(echo "$config_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('version',0))" 2>/dev/null)"
+
+# 4. Delete test data
+fwd_id=$(echo '{"method":"list_port_forwards"}' | socat - UNIX-CONNECT:$SOCK | grep -oP '"id":\K[0-9]+' | tail -1)
+[ -n "$fwd_id" ] && echo "{\"method\":\"remove_port_forward\",\"id\":$fwd_id}" | socat - UNIX-CONNECT:$SOCK > /dev/null
+echo '{"method":"set_config","key":"analyzer_enabled","value":"true"}' | socat - UNIX-CONNECT:$SOCK > /dev/null
+
+# 5. Import
+import_payload=$(python3 -c "import sys,json; d=open('/tmp/test-v2-export.json').read(); print(json.dumps({'method':'import_config','value':d}))" 2>/dev/null)
+echo "$import_payload" | socat - UNIX-CONNECT:$SOCK
+
+# 6. Verify
+fwd_post=$(echo '{"method":"list_port_forwards"}' | socat - UNIX-CONNECT:$SOCK)
+echo "POST_FWD_9999:$(echo "$fwd_post" | grep -c '9999')"
+analyzer_post=$(echo '{"method":"get_config","key":"analyzer_enabled"}' | socat - UNIX-CONNECT:$SOCK)
+echo "POST_ANALYZER:$(echo "$analyzer_post" | grep -c '"false"')"
+
+# 7. Clean up
+fwd_id=$(echo '{"method":"list_port_forwards"}' | socat - UNIX-CONNECT:$SOCK | grep -oP '"id":\K[0-9]+' | tail -1)
+[ -n "$fwd_id" ] && echo "{\"method\":\"remove_port_forward\",\"id\":$fwd_id}" | socat - UNIX-CONNECT:$SOCK > /dev/null
+echo '{"method":"set_config","key":"analyzer_enabled","value":"true"}' | socat - UNIX-CONNECT:$SOCK > /dev/null
+rm -f /tmp/test-v2-export.json
+V2SCRIPT
+)
+
+assert_contains "$v2_trip" '"ok":true' "v2 import succeeds"
+assert_contains "$v2_trip" "EXPORT_V2:2" "exported version is 2"
+assert_contains "$v2_trip" "POST_FWD_9999:1" "v2 port forward restored"
+assert_contains "$v2_trip" "POST_ANALYZER:1" "v2 analyzer_enabled restored"
+
+# --- Version rejection ---
+result=$(vm_exec router 'echo "{\"method\":\"import_config\",\"value\":\"{\\\"version\\\":99}\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_contains "$result" '"ok":false' "import rejects future version"
+assert_contains "$result" "newer version" "error mentions newer version"
+
+# --- v1 backward compat ---
+result=$(vm_exec router 'echo "{\"method\":\"import_config\",\"value\":\"{\\\"version\\\":1,\\\"devices\\\":[],\\\"config\\\":{}}\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_contains "$result" '"ok":true' "v1 import still works"
+
+# --- Encrypted secrets round-trip ---
+args=$(_vm_ssh_args router)
+enc_trip=$(ssh $SSH_COMMON $args 'bash -s' 2>/dev/null <<'ENCSCRIPT'
+SOCK=/run/hermitshell/agent.sock
+
+# Export with encryption
+export_resp=$(echo '{"method":"export_config","include_secrets":true,"passphrase":"mypass"}' | socat - UNIX-CONNECT:$SOCK)
+config_json=$(echo "$export_resp" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('config_value',''))" 2>/dev/null)
+echo "$config_json" > /tmp/test-enc-export.json
+
+# Verify it's encrypted
+echo "ENC:$(echo "$config_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('secrets_encrypted',False))" 2>/dev/null)"
+
+# Try import without passphrase (should fail)
+import_payload=$(python3 -c "import sys,json; d=open('/tmp/test-enc-export.json').read(); print(json.dumps({'method':'import_config','value':d}))" 2>/dev/null)
+fail_resp=$(echo "$import_payload" | socat - UNIX-CONNECT:$SOCK)
+echo "NO_PASS:$(echo "$fail_resp" | grep -c 'passphrase required')"
+
+# Import with wrong passphrase (should fail)
+import_payload=$(python3 -c "import sys,json; d=open('/tmp/test-enc-export.json').read(); print(json.dumps({'method':'import_config','value':d,'passphrase':'wrongpass'}))" 2>/dev/null)
+fail_resp2=$(echo "$import_payload" | socat - UNIX-CONNECT:$SOCK)
+echo "WRONG_PASS:$(echo "$fail_resp2" | grep -c 'decryption failed')"
+
+# Import with correct passphrase (should succeed)
+import_payload=$(python3 -c "import sys,json; d=open('/tmp/test-enc-export.json').read(); print(json.dumps({'method':'import_config','value':d,'passphrase':'mypass'}))" 2>/dev/null)
+ok_resp=$(echo "$import_payload" | socat - UNIX-CONNECT:$SOCK)
+echo "$ok_resp"
+
+rm -f /tmp/test-enc-export.json
+ENCSCRIPT
+)
+
+assert_contains "$enc_trip" "ENC:True" "export is encrypted"
+assert_contains "$enc_trip" "NO_PASS:1" "import without passphrase rejected"
+assert_contains "$enc_trip" "WRONG_PASS:1" "import with wrong passphrase rejected"
+assert_contains "$enc_trip" '"ok":true' "import with correct passphrase succeeds"
+
+# --- Audit log records export and import ---
+result=$(vm_exec router 'echo "{\"method\":\"list_audit_logs\",\"limit\":20}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_contains "$result" "config_export" "audit log has config_export entry"
+assert_contains "$result" "config_import" "audit log has config_import entry"
