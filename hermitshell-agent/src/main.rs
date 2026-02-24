@@ -104,8 +104,19 @@ async fn main() -> Result<()> {
     info!("hermitshell-agent starting");
     let start_time = std::time::Instant::now();
 
-    let wan_iface = std::env::var("WAN_IFACE").unwrap_or_else(|_| "eth1".into());
-    let lan_iface = std::env::var("LAN_IFACE").unwrap_or_else(|_| "eth2".into());
+    let wan_iface = {
+        db::Db::open(DB_PATH)
+            .ok()
+            .and_then(|d| d.get_config("wan_iface").ok().flatten())
+    }
+    .unwrap_or_else(|| std::env::var("WAN_IFACE").unwrap_or_else(|_| "eth1".into()));
+
+    let lan_iface = {
+        db::Db::open(DB_PATH)
+            .ok()
+            .and_then(|d| d.get_config("lan_iface").ok().flatten())
+    }
+    .unwrap_or_else(|| std::env::var("LAN_IFACE").unwrap_or_else(|_| "eth2".into()));
 
     // Validate interface names
     nftables::validate_iface(&wan_iface)?;

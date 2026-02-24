@@ -86,6 +86,7 @@ async fn auth_middleware(
 
     if path == "/login" || path == "/setup" || path == "/style.css"
         || path.starts_with("/api/login") || path.starts_with("/api/setup_password")
+        || path.starts_with("/api/setup_interfaces") || path.starts_with("/api/get_interfaces")
     {
         return next.run(req).await;
     }

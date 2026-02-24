@@ -39,6 +39,7 @@ pub struct Response {
     pub wifi_clients: Option<Vec<hermitshell_common::WifiClient>>,
     pub wifi_ssids: Option<Vec<hermitshell_common::WifiSsidConfig>>,
     pub wifi_radios: Option<Vec<hermitshell_common::WifiRadioConfig>>,
+    pub interfaces: Option<Vec<hermitshell_common::NetworkInterface>>,
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
@@ -460,6 +461,16 @@ pub fn wifi_set_radio(mac: &str, band: &str, channel: &str, channel_width: &str,
         "tx_power": tx_power,
         "enabled": enabled,
     }))?)?;
+    Ok(())
+}
+
+pub fn list_interfaces() -> Result<Vec<hermitshell_common::NetworkInterface>, String> {
+    let resp = ok_or_err(send(json!({"method": "list_interfaces"}))?)?;
+    Ok(resp.interfaces.unwrap_or_default())
+}
+
+pub fn set_interfaces(wan: &str, lan: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "set_interfaces", "key": wan, "value": lan}))?)?;
     Ok(())
 }
 

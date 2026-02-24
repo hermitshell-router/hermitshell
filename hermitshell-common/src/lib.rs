@@ -188,3 +188,12 @@ pub struct WifiRadioConfig {
     pub tx_power: String,
     pub enabled: bool,
 }
+
+/// A network interface discovered on the system.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NetworkInterface {
+    pub name: String,
+    pub mac: String,
+    pub state: String,
+    pub has_carrier: bool,
+}

@@ -323,3 +323,16 @@ pub async fn remove_wifi_ap(mac: String) -> Result<(), ServerFnError> {
     leptos_axum::redirect("/wifi");
     Ok(())
 }
+
+#[server]
+pub async fn setup_interfaces(wan: String, lan: String) -> Result<(), ServerFnError> {
+    crate::client::set_interfaces(&wan, &lan)
+        .map_err(|e| ServerFnError::new(e))?;
+    Ok(())
+}
+
+#[server]
+pub async fn get_interfaces() -> Result<Vec<hermitshell_common::NetworkInterface>, ServerFnError> {
+    crate::client::list_interfaces()
+        .map_err(|e| ServerFnError::new(e))
+}

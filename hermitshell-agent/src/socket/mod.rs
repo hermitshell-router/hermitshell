@@ -5,6 +5,7 @@ mod logs;
 mod network;
 mod wireguard;
 mod wifi;
+mod setup;
 
 use anyhow::Result;
 use argon2::password_hash::SaltString;
@@ -192,6 +193,8 @@ struct Response {
     wifi_ssids: Option<Vec<hermitshell_common::WifiSsidConfig>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     wifi_radios: Option<Vec<hermitshell_common::WifiRadioConfig>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    interfaces: Option<Vec<hermitshell_common::NetworkInterface>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -269,12 +272,26 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
     while reader.read_line(&mut line).await? > 0 {
         let response = match serde_json::from_str::<Request>(&line) {
             Ok(req) => {
-                match req.method.as_str() {
-                    "wifi_get_ssids" | "wifi_set_ssid" | "wifi_delete_ssid"
-                    | "wifi_get_radios" | "wifi_set_radio" => {
-                        wifi::handle_wifi_async(&req, &db).await
+                if let Some(ref mac) = req.mac {
+                    if let Err(e) = nftables::validate_mac(mac) {
+                        Response::err(&e.to_string())
+                    } else {
+                        match req.method.as_str() {
+                            "wifi_get_ssids" | "wifi_set_ssid" | "wifi_delete_ssid"
+                            | "wifi_get_radios" | "wifi_set_radio" => {
+                                wifi::handle_wifi_async(&req, &db).await
+                            }
+                            _ => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock),
+                        }
                     }
-                    _ => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock),
+                } else {
+                    match req.method.as_str() {
+                        "wifi_get_ssids" | "wifi_set_ssid" | "wifi_delete_ssid"
+                        | "wifi_get_radios" | "wifi_set_radio" => {
+                            wifi::handle_wifi_async(&req, &db).await
+                        }
+                        _ => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock),
+                    }
                 }
             }
             Err(e) => Response::err(&format!("Invalid JSON: {}", e)),
@@ -360,6 +377,8 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "wifi_adopt_ap" => wifi::handle_wifi_adopt_ap(&req, db),
         "wifi_remove_ap" => wifi::handle_wifi_remove_ap(&req, db),
         "wifi_get_clients" => wifi::handle_wifi_get_clients(&req, db),
+        "list_interfaces" => setup::handle_list_interfaces(&req, db),
+        "set_interfaces" => setup::handle_set_interfaces(&req, db),
         _ => Response::err("unknown method"),
     }
 }
