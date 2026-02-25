@@ -76,6 +76,19 @@ pub(super) fn handle_wifi_adopt_ap(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
     if let Err(e) = db.insert_wifi_ap(mac, ip, name, provider, username, &password_enc) {
         return Response::err(&format!("failed to adopt AP: {}", e));
     }
+
+    // Store CA cert if provided
+    if let Some(ref ca_cert) = req.ca_cert {
+        if !ca_cert.is_empty() {
+            if let Err(msg) = validate_ca_cert_pem(ca_cert) {
+                // Roll back: remove the AP we just inserted
+                let _ = db.remove_wifi_ap(mac);
+                return Response::err(&msg);
+            }
+            let _ = db.set_wifi_ap_ca_cert(mac, Some(ca_cert));
+        }
+    }
+
     let _ = db.log_audit("wifi_adopt_ap", &format!("adopted {} ({})", name, mac));
     Response::ok()
 }
@@ -89,6 +102,35 @@ pub(super) fn handle_wifi_remove_ap(req: &Request, db: &Arc<Mutex<Db>>) -> Respo
         return Response::err(&format!("failed to remove AP: {}", e));
     }
     let _ = db.log_audit("wifi_remove_ap", &format!("removed AP {}", mac));
+    Response::ok()
+}
+
+pub(super) fn handle_wifi_set_ap_ca_cert(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref mac) = req.mac else {
+        return Response::err("mac required");
+    };
+    let db = db.lock().unwrap();
+
+    // Check AP exists
+    match db.get_wifi_ap(mac) {
+        Ok(Some(_)) => {}
+        Ok(None) => return Response::err("AP not found"),
+        Err(e) => return Response::err(&format!("DB error: {}", e)),
+    }
+
+    // Empty or missing value clears the CA cert
+    let ca_cert = req.value.as_deref().unwrap_or("");
+    if ca_cert.is_empty() {
+        let _ = db.set_wifi_ap_ca_cert(mac, None);
+        let _ = db.log_audit("wifi_set_ap_ca_cert", &format!("cleared CA cert for {}", mac));
+        return Response::ok();
+    }
+
+    if let Err(msg) = validate_ca_cert_pem(ca_cert) {
+        return Response::err(&msg);
+    }
+    let _ = db.set_wifi_ap_ca_cert(mac, Some(ca_cert));
+    let _ = db.log_audit("wifi_set_ap_ca_cert", &format!("set CA cert for {}", mac));
     Response::ok()
 }
 

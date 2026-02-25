@@ -481,12 +481,14 @@ pub(super) fn handle_get_runzero_config(_req: &Request, db: &Arc<Mutex<Db>>) -> 
     let sync_interval = db.get_config("runzero_sync_interval").ok().flatten().unwrap_or_else(|| "3600".to_string());
     let enabled = db.get_config_bool("runzero_enabled", false);
     let has_token = db.get_config("runzero_token").ok().flatten().map(|t| !t.is_empty()).unwrap_or(false);
+    let has_ca_cert = db.get_config("runzero_ca_cert").ok().flatten().map(|c| !c.is_empty()).unwrap_or(false);
     let mut resp = Response::ok();
     resp.runzero_config = Some(serde_json::json!({
         "runzero_url": url,
         "runzero_sync_interval": sync_interval,
         "enabled": enabled,
         "has_token": has_token,
+        "has_ca_cert": has_ca_cert,
     }));
     resp
 }
@@ -520,6 +522,18 @@ pub(super) fn handle_set_runzero_config(req: &Request, db: &Arc<Mutex<Db>>) -> R
     }
     if let Some(enabled) = parsed.get("runzero_enabled").and_then(|v| v.as_str()) {
         let _ = db.set_config("runzero_enabled", enabled);
+    }
+    if let Some(ca_cert) = parsed.get("runzero_ca_cert").and_then(|v| v.as_str()) {
+        if ca_cert.is_empty() {
+            let _ = db.set_config("runzero_ca_cert", "");
+        } else {
+            let mut reader = std::io::BufReader::new(ca_cert.as_bytes());
+            let certs: Vec<_> = rustls_pemfile::certs(&mut reader).collect();
+            if certs.is_empty() || certs.iter().any(|c| c.is_err()) {
+                return Response::err("invalid CA certificate PEM");
+            }
+            let _ = db.set_config("runzero_ca_cert", ca_cert);
+        }
     }
     Response::ok()
 }

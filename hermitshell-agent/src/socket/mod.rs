@@ -31,6 +31,7 @@ const BLOCKED_CONFIG_KEYS: &[&str] = &[
     "tls_key_pem",
     "tls_cert_pem",
     "runzero_token",
+    "runzero_ca_cert",
     "acme_cf_api_token",
     "acme_account_key",
     "webhook_secret",
@@ -127,6 +128,7 @@ struct Request {
     tx_power: Option<String>,
     include_secrets: Option<bool>,
     passphrase: Option<String>,
+    ca_cert: Option<String>,
 }
 
 /// JSON response envelope. `ok` indicates success; `error` carries failure details.
@@ -380,6 +382,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "wifi_list_aps" => wifi::handle_wifi_list_aps(&req, db),
         "wifi_adopt_ap" => wifi::handle_wifi_adopt_ap(&req, db),
         "wifi_remove_ap" => wifi::handle_wifi_remove_ap(&req, db),
+        "wifi_set_ap_ca_cert" => wifi::handle_wifi_set_ap_ca_cert(&req, db),
         "wifi_get_clients" => wifi::handle_wifi_get_clients(&req, db),
         "check_update" => config::handle_check_update(&req, db),
         "list_interfaces" => setup::handle_list_interfaces(&req, db),
