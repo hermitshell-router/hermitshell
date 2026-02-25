@@ -109,6 +109,43 @@ pub fn DeviceDetail() -> impl IntoView {
                                 </div>
                             </div>
 
+                            // Bandwidth history chart and top destinations
+                            {
+                                let bw_mac = d.mac.clone();
+                                let bw_data = client::get_bandwidth_history(Some(&bw_mac), "24h").unwrap_or_default();
+                                let chart_svg = crate::charts::bandwidth_chart(&bw_data, 800, 200);
+                                let top_dests = client::get_top_destinations(&bw_mac, "24h", 10).unwrap_or_default();
+
+                                view! {
+                                    <h2 class="section-header">"Bandwidth (24h)"</h2>
+                                    <div inner_html={chart_svg}></div>
+
+                                    {if !top_dests.is_empty() {
+                                        view! {
+                                            <h2 class="section-header">"Top Destinations"</h2>
+                                            <table class="data-table">
+                                                <thead><tr>
+                                                    <th>"Destination"</th><th>"Port"</th><th>"Total"</th>
+                                                </tr></thead>
+                                                <tbody>
+                                                    {top_dests.iter().map(|td| {
+                                                        view! {
+                                                            <tr>
+                                                                <td>{td.dest_ip.clone()}</td>
+                                                                <td>{td.dest_port}</td>
+                                                                <td>{crate::format_bytes(td.total_bytes)}</td>
+                                                            </tr>
+                                                        }
+                                                    }).collect_view()}
+                                                </tbody>
+                                            </table>
+                                        }.into_any()
+                                    } else {
+                                        view! { <span></span> }.into_any()
+                                    }}
+                                }
+                            }
+
                             {if d.runzero_last_sync.is_some() {
                                 view! {
                                     <h2 class="section-header">"Device Identity (runZero)"</h2>
