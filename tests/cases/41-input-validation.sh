@@ -6,17 +6,26 @@ require_agent
 SOCK="UNIX-CONNECT:/run/hermitshell/agent.sock"
 
 # --- #68: webhook_secret blocked in set_log_config ---
-result=$(vm_exec router "echo '{\"method\":\"set_log_config\",\"value\":\"{\\\\\"webhook_secret\\\\\":\\\\\"hacked\\\\\",\\\\\"log_format\\\\\":\\\\\"json\\\\\"}\"}' | socat - $SOCK")
+LOG_CFG_JSON=$(python3 -c "
+import json
+req = {'method': 'set_log_config', 'value': json.dumps({'webhook_secret': 'hacked', 'log_format': 'json'})}
+print(json.dumps(req))
+")
+result=$(vm_exec router "echo '$LOG_CFG_JSON' | socat - $SOCK")
 assert_match "$result" '"ok":true' "set_log_config accepts valid JSON"
 
-# Verify webhook_secret was NOT written by trying to read it via get_config (blocked, so check differently)
-# Instead: set_log_config should silently ignore webhook_secret since it's not in allowed_keys.
+# Verify webhook_secret was NOT written (set_log_config ignores it since it's not in allowed_keys)
 # Verify log_format WAS written (proving the handler works, just skips webhook_secret)
 result=$(vm_exec router "echo '{\"method\":\"get_log_config\"}' | socat - $SOCK")
 assert_contains "$result" '"log_format":"json"' "set_log_config wrote log_format"
 
 # Restore log_format
-vm_exec router "echo '{\"method\":\"set_log_config\",\"value\":\"{\\\\\"log_format\\\\\":\\\\\"text\\\\\"}\"}' | socat - $SOCK" >/dev/null
+RESTORE_JSON=$(python3 -c "
+import json
+req = {'method': 'set_log_config', 'value': json.dumps({'log_format': 'text'})}
+print(json.dumps(req))
+")
+vm_exec router "echo '$RESTORE_JSON' | socat - $SOCK" >/dev/null
 
 # --- #71: set_config value length limit ---
 long_value=$(python3 -c "print('x' * 5000)")

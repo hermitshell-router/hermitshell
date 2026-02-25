@@ -172,6 +172,8 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Truncate to a reasonable limit (e.g., 256 characters) in the `add_port_forward` handler.
 
+**Status: Fixed.** `add_port_forward` rejects descriptions longer than 256 characters.
+
 ---
 
 ## Container and Service Hardening
@@ -770,6 +772,8 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Validate in `handle_wifi_set_ssid`: reject if security is `wpa-psk` and password length is outside 8-63 characters or contains non-ASCII characters.
 
+**Status: Fixed.** `wifi_set_ssid` validates WPA-PSK passwords are 8-63 ASCII characters. Missing password is rejected for WPA-PSK mode. No validation for `none` security mode.
+
 ## 66. import_config does not validate WiFi AP records
 
 **What:** The `handle_import_config` handler (`socket/config.rs`) imports WiFi APs from a backup without validating the `ip`, `name`, or `provider` fields. The handler inserts records directly via `db.insert_wifi_ap()`. In contrast, the individual `handle_wifi_adopt_ap` handler validates IP format (`ip.parse::<IpAddr>()`), name charset and length (1-64 chars, alphanumeric/hyphen/underscore/dot/space), and provider against a whitelist.
@@ -779,6 +783,8 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** A crafted or corrupted backup file could insert invalid AP IPs (e.g., `not-an-ip`), causing the WiFi polling loop to fail on connection attempts. Invalid names could contain characters that break audit log parsing. An unknown provider string would cause the polling loop to skip the AP silently.
 
 **Proper fix:** Apply the same validation as `handle_wifi_adopt_ap`: validate IP with `ip.parse::<IpAddr>()`, validate name charset and length, and check provider against the known providers list. Skip invalid entries with a warning rather than inserting them.
+
+**Status: Fixed.** `import_config` validates each WiFi AP before insertion: IP must parse as `IpAddr`, name must be 1-64 alphanumeric characters (plus `- _ . space`), provider must be in the known providers list. Invalid entries are skipped with a warning log.
 
 ## 67. rollup_all_pending holds DB mutex for unbounded time
 
@@ -800,6 +806,8 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Remove `"webhook_secret"` from the `allowed_keys` array in `handle_set_log_config`, or add an `is_blocked_config_key()` check within the write loop.
 
+**Status: Fixed.** `webhook_secret` removed from `handle_set_log_config`'s local `allowed_keys` array. The key is now only writable through dedicated handlers that enforce proper access control.
+
 ## 69. Arbitrary audit log injection via log_audit
 
 **What:** The `handle_log_audit` handler (`socket/logs.rs`) accepts arbitrary `action` and `detail` strings and writes them to the audit log table. There is no validation on action name (no allowlist, no length limit, no character filtering) and no length limit on the detail string.
@@ -809,6 +817,8 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** A process with socket access could flood the audit log with fake entries, inject entries that mimic legitimate admin actions (undermining forensic analysis), or insert very large strings to grow the database. The audit log is informational and not used for access control.
 
 **Proper fix:** Add length limits on the `action` field (max 64 chars) and `detail` field (max 512 chars). Consider restricting `action` to a whitelist of known action names.
+
+**Status: Fixed.** `log_audit` rejects action strings longer than 64 characters and detail strings longer than 512 characters.
 
 ## 70. Speed test blocks tokio runtime thread for up to 30 seconds
 
@@ -830,6 +840,8 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Add a value length limit (e.g., 4KB) in `handle_set_config`. Config values that legitimately need more space (PEM certificates, JSON blobs) already have dedicated handlers that bypass `set_config`.
 
+**Status: Fixed.** `set_config` rejects values longer than 4,096 bytes. Config values that need more space (PEM certificates, JSON blobs) use dedicated handlers that bypass `set_config`.
+
 ## 72. HKDF key derivation for WiFi passwords uses no salt
 
 **What:** The `derive_key` function (`crypto.rs`) calls `Hkdf::<Sha256>::new(None, session_secret.as_bytes())` with `None` for the salt parameter. The HKDF output is deterministic for a given session_secret.
@@ -849,6 +861,8 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** Control characters (newlines, tabs, null bytes) or Unicode RTL override characters in nicknames could cause log injection or display rendering issues. Leptos HTML escaping prevents XSS in the web UI.
 
 **Proper fix:** Strip control characters (ASCII 0x00-0x1F, 0x7F) and restrict to printable Unicode, similar to `sanitize_hostname()` but allowing spaces.
+
+**Status: Fixed.** `set_device_nickname` strips all control characters (ASCII 0x00-0x1F, 0x7F, and Unicode control chars) before storage. Spaces and printable Unicode are preserved. The 64-character length limit is retained.
 
 ## 74. ingest_dns_logs and run_analysis have no rate limiting
 
