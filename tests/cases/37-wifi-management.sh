@@ -86,6 +86,34 @@ assert_match "$result" '"ok":false' "wifi_get_radios for missing AP fails"
 result=$(vm_exec router 'echo "{\"method\":\"wifi_adopt_ap\",\"mac\":\"aa:bb:cc:dd:ee:01\",\"url\":\"192.168.1.100\",\"name\":\"Office AP\",\"key\":\"admin\",\"value\":\"testpass123\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$result" '"ok":true' "re-adopt AP for UI tests"
 
+# --- generate test CA cert ---
+TEST_CA_PEM=$(vm_exec router 'openssl req -x509 -newkey rsa:2048 -keyout /dev/null -out /dev/stdout -days 1 -nodes -subj "/CN=testca" 2>/dev/null')
+
+# --- wifi_set_ap_ca_cert ---
+CA_REQ=$(python3 -c "import json; print(json.dumps({'method': 'wifi_set_ap_ca_cert', 'mac': 'aa:bb:cc:dd:ee:01', 'value': '''$TEST_CA_PEM'''}))")
+result=$(echo "$CA_REQ" | vm_exec router 'socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_match "$result" '"ok":true' "wifi_set_ap_ca_cert succeeds"
+
+# --- list_wifi_aps shows has_ca_cert ---
+result=$(vm_exec router "echo '{\"method\":\"wifi_list_aps\"}' | socat - $SOCK")
+assert_match "$result" '"has_ca_cert":true' "wifi_list_aps shows has_ca_cert"
+
+# --- invalid PEM rejected ---
+INVALID_REQ=$(python3 -c "import json; print(json.dumps({'method': 'wifi_set_ap_ca_cert', 'mac': 'aa:bb:cc:dd:ee:01', 'value': 'garbage'}))")
+result=$(echo "$INVALID_REQ" | vm_exec router 'socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_match "$result" '"ok":false' "wifi_set_ap_ca_cert rejects invalid PEM"
+
+# --- clear CA cert ---
+result=$(vm_exec router "echo '{\"method\":\"wifi_set_ap_ca_cert\",\"mac\":\"aa:bb:cc:dd:ee:01\",\"value\":\"\"}' | socat - $SOCK")
+assert_match "$result" '"ok":true' "wifi_set_ap_ca_cert clears cert"
+
+result=$(vm_exec router "echo '{\"method\":\"wifi_list_aps\"}' | socat - $SOCK")
+assert_match "$result" '"has_ca_cert":false' "has_ca_cert false after clear"
+
+# --- wifi_set_ap_ca_cert on non-existent AP ---
+result=$(vm_exec router "echo '{\"method\":\"wifi_set_ap_ca_cert\",\"mac\":\"ff:ff:ff:ff:ff:ff\",\"value\":\"test\"}' | socat - $SOCK")
+assert_match "$result" '"ok":false' "wifi_set_ap_ca_cert rejects missing AP"
+
 # --- wifi_set_ssid on adopted AP (will fail connecting to real AP, but validates params) ---
 result=$(vm_exec router 'echo "{\"method\":\"wifi_set_ssid\",\"mac\":\"aa:bb:cc:dd:ee:01\",\"ssid_name\":\"TestNet\",\"band\":\"5GHz\",\"security\":\"wpa2_wpa3\",\"hidden\":false}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 # Expect failure since no real AP is reachable, but the error should not be a validation error

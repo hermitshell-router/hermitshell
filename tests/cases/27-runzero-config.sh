@@ -61,5 +61,46 @@ else
     echo -e "${GREEN}PASS${NC}: export_config does not leak runzero_token"
 fi
 
+# --- generate test CA cert ---
+TEST_CA_PEM=$(vm_exec router 'openssl req -x509 -newkey rsa:2048 -keyout /dev/null -out /dev/stdout -days 1 -nodes -subj "/CN=testca" 2>/dev/null')
+
+# --- set runzero CA cert ---
+CA_JSON=$(python3 -c "import json; print(json.dumps({'runzero_ca_cert': '''$TEST_CA_PEM'''}))")
+REQ_JSON=$(python3 -c "import json; print(json.dumps({'method': 'set_runzero_config', 'value': '''$CA_JSON'''}))")
+result=$(echo "$REQ_JSON" | vm_exec router 'socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_match "$result" '"ok":true' "set_runzero_config with CA cert succeeds"
+
+# --- get_runzero_config shows has_ca_cert ---
+result=$(vm_exec router "echo '{\"method\":\"get_runzero_config\"}' | socat - $SOCK")
+assert_match "$result" '"has_ca_cert":true' "get_runzero_config shows has_ca_cert"
+
+# --- runzero_ca_cert blocked in get_config ---
+result=$(vm_exec router "echo '{\"method\":\"get_config\",\"key\":\"runzero_ca_cert\"}' | socat - $SOCK")
+assert_match "$result" '"ok":false' "get_config blocks runzero_ca_cert"
+
+# --- invalid PEM rejected ---
+INVALID_JSON=$(python3 -c "import json; print(json.dumps({'runzero_ca_cert': 'not-a-cert'}))")
+INVALID_REQ=$(python3 -c "import json; print(json.dumps({'method': 'set_runzero_config', 'value': '''$INVALID_JSON'''}))")
+result=$(echo "$INVALID_REQ" | vm_exec router 'socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_match "$result" '"ok":false' "set_runzero_config rejects invalid PEM"
+
+# --- clear CA cert ---
+CLEAR_JSON=$(python3 -c "import json; print(json.dumps({'runzero_ca_cert': ''}))")
+CLEAR_REQ=$(python3 -c "import json; print(json.dumps({'method': 'set_runzero_config', 'value': '''$CLEAR_JSON'''}))")
+result=$(echo "$CLEAR_REQ" | vm_exec router 'socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_match "$result" '"ok":true' "set_runzero_config clears CA cert"
+
+result=$(vm_exec router "echo '{\"method\":\"get_runzero_config\"}' | socat - $SOCK")
+assert_match "$result" '"has_ca_cert":false' "get_runzero_config shows has_ca_cert false after clear"
+
+# --- export includes runzero_ca_cert ---
+# Set it again for export test
+result=$(echo "$REQ_JSON" | vm_exec router 'socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+result=$(vm_exec router "echo '{\"method\":\"export_config\"}' | socat - $SOCK")
+assert_contains "$result" 'runzero_ca_cert' "export includes runzero_ca_cert"
+
+# --- clear for subsequent tests ---
+result=$(echo "$CLEAR_REQ" | vm_exec router 'socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+
 # --- Disable runzero for subsequent tests ---
 vm_exec router 'echo "{\"method\":\"set_runzero_config\",\"value\":\"{\\\"runzero_enabled\\\":\\\"false\\\"}\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' >/dev/null
