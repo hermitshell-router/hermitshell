@@ -90,14 +90,15 @@ table inet filter {{
         type filter hook input priority 0; policy drop;
         ct state established,related accept
         iifname "lo" accept
-        tcp dport 22 accept
-        iifname "{lan_iface}" tcp dport {{ 8080, 8443 }} accept
+        iifname {{ "{lan_iface}", "tailscale0" }} tcp dport 22 accept
+        iifname {{ "{lan_iface}", "tailscale0" }} tcp dport {{ 8080, 8443 }} accept
         iifname "{lan_iface}" udp dport 67 accept
         iifname "{lan_iface}" tcp dport 53 accept
         iifname "{lan_iface}" udp dport 53 accept
         iifname "{lan_iface}" udp dport {{ 546, 547 }} accept
-        icmp type echo-request accept
-        icmpv6 type {{ echo-request, nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert }} accept
+        iifname {{ "{lan_iface}", "tailscale0" }} icmp type echo-request accept
+        icmpv6 type {{ nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert }} accept
+        iifname {{ "{lan_iface}", "tailscale0" }} icmpv6 type echo-request accept
     }}
     chain forward {{
         type filter hook forward priority 0; policy drop;
