@@ -169,6 +169,7 @@ fn main() -> Result<()> {
 fn agent_request(req: &serde_json::Value) -> Result<serde_json::Value> {
     let mut stream = UnixStream::connect(AGENT_SOCKET)
         .context("failed to connect to agent DHCP socket")?;
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
 
     let mut json = serde_json::to_string(req)?;
     json.push('\n');
