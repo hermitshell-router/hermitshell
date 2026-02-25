@@ -64,6 +64,8 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Restrict to LAN and management interfaces: `iifname { "eth2", "eth0" } tcp dport 22 accept`. In production, SSH should never be open on the WAN interface without explicit user opt-in.
 
+**Status: Fixed.** SSH now uses `iifname != "{wan_iface}"` — blocked on WAN, allowed on all other interfaces (LAN, tailscale0, management). This is more permissive than a strict whitelist (`iifname { lan, tailscale0 }`) but avoids breaking management access from non-LAN interfaces (IPMI, serial console, Vagrant management network). The trade-off: any future non-WAN interface automatically gets SSH access.
+
 ## 6. ICMP open on all interfaces
 
 **What:** The rule `icmp type echo-request accept` allows ping from any interface, including WAN.
@@ -73,6 +75,8 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** The router responds to pings from the WAN, revealing its presence to scanners. Low severity — most ISPs allow ICMP anyway — but unnecessary exposure.
 
 **Proper fix:** `iifname { "eth1", "eth2" } icmp type echo-request accept` to explicitly list WAN and LAN.
+
+**Status: Fixed.** ICMP echo-request (IPv4 and IPv6) scoped to `iifname { "{lan_iface}", "tailscale0" }`. ICMPv6 neighbor discovery (nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert) remains global as required for IPv6 link-layer operation. Web UI ports (8080/8443) also added tailscale0 for remote management via Tailscale.
 
 ## 7. No CSRF protection on form endpoints
 
@@ -311,6 +315,8 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** Forwarding WAN port 22 to an internal host means the admin can no longer SSH to the router from the WAN (if SSH were WAN-accessible). Forwarding port 53 could redirect external DNS queries. Low severity because WAN management access is already limited by the input chain.
 
 **Proper fix:** Reject port forwards for ports in a reserved set: `{22, 53, 67, 68, 80, 443, 51820}`. Or warn the user in the web UI.
+
+**Status: Mitigated.** WAN hardening (#5, #6) blocks SSH and ICMP on WAN, reducing the set of shadowable services. Additionally, overlapping port forward ranges are now rejected — the agent checks all existing forwards before inserting a new one and rejects if the external port range and protocol overlap with any existing forward. The system-port shadowing risk is further reduced because no management services are WAN-accessible (only WireGuard, which is dynamically opened). A static reserved-port check was not added because WAN hardening made it redundant.
 
 ## 26. Web UI form handlers silently discard errors
 
