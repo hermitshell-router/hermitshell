@@ -226,10 +226,18 @@ pub async fn run_speed_test(url: &str) -> Result<u32> {
     let parsed = reqwest::Url::parse(url)
         .map_err(|_| anyhow::anyhow!("invalid url"))?;
 
-    // SSRF check
+    // SSRF check: resolve hostname and verify all addresses are public
     if let Some(host) = parsed.host_str() {
-        if let Ok(addr) = host.parse::<std::net::IpAddr>() {
-            if !is_public_ip(&addr) {
+        let port = parsed.port_or_known_default().unwrap_or(80);
+        let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host(format!("{}:{}", host, port))
+            .await
+            .map_err(|e| anyhow::anyhow!("DNS resolution failed: {}", e))?
+            .collect();
+        if addrs.is_empty() {
+            anyhow::bail!("hostname did not resolve to any address");
+        }
+        for addr in &addrs {
+            if !is_public_ip(&addr.ip()) {
                 anyhow::bail!("url must not point to private/loopback address");
             }
         }
