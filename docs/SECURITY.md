@@ -796,17 +796,15 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Cap iterations per call (e.g., max 168 hours per invocation) so the rollup catches up incrementally across multiple hourly triggers, or release and re-acquire the mutex between iterations.
 
-## 68. set_log_config bypasses BLOCKED_CONFIG_KEYS for webhook_secret
+## 68. set_log_config writes webhook_secret via domain-specific handler
 
-**What:** The `handle_set_log_config` handler (`socket/config.rs`) defines a local `allowed_keys` array that includes `"webhook_secret"`. This handler writes matching keys directly via `db.set_config()` without calling `is_blocked_config_key()`. The generic `handle_set_config` handler correctly blocks writes to `webhook_secret`, but `set_log_config` is a separate code path that sidesteps this check.
+**What:** The `handle_set_log_config` handler (`socket/config.rs`) defines a local `allowed_keys` array that includes `"webhook_secret"`. This handler writes matching keys directly via `db.set_config()` without calling `is_blocked_config_key()`. The generic `handle_set_config` handler blocks writes to `webhook_secret`.
 
-**Why:** The log config handler was written with its own allowlist for convenience, not realizing `webhook_secret` was later added to the global blocked keys list.
+**Why:** `set_log_config` is the dedicated write path for `webhook_secret`, just as `set_runzero_config` is the dedicated write path for `runzero_token`. Domain-specific handlers intentionally bypass `BLOCKED_CONFIG_KEYS` because they *are* the controlled access path. The web UI settings form submits the webhook secret through `set_log_config`.
 
-**Risk:** Any IPC client can overwrite `webhook_secret` via `set_log_config`, enabling them to set a known HMAC secret and forge authenticated webhook payloads. This bypasses the protection documented in #24.
+**Risk:** Any IPC client with socket access can set the webhook secret via `set_log_config`. This is by design — the socket is `0660` (see #49) and `set_log_config` is the intended configuration interface. The `BLOCKED_CONFIG_KEYS` mechanism prevents accidental exposure through the generic `get_config`/`set_config` catch-all, not through domain-specific handlers.
 
-**Proper fix:** Remove `"webhook_secret"` from the `allowed_keys` array in `handle_set_log_config`, or add an `is_blocked_config_key()` check within the write loop.
-
-**Status: Fixed.** `webhook_secret` removed from `handle_set_log_config`'s local `allowed_keys` array. The key is now only writable through dedicated handlers that enforce proper access control.
+**Status: Not a vulnerability.** This follows the same pattern as `set_runzero_config` writing `runzero_token` and `set_runzero_config` writing `runzero_ca_cert`. The `get_config` read path correctly blocks `webhook_secret`.
 
 ## 69. Arbitrary audit log injection via log_audit
 

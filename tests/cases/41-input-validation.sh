@@ -5,17 +5,22 @@ require_agent
 
 SOCK="UNIX-CONNECT:/run/hermitshell/agent.sock"
 
-# --- #68: webhook_secret blocked in set_log_config ---
+# --- #68: webhook_secret writable via set_log_config (domain-specific handler) ---
+# set_log_config is the dedicated write path for webhook_secret, same as set_runzero_config for runzero_token.
+# Verify it works and that get_config still blocks reads.
 LOG_CFG_JSON=$(python3 -c "
 import json
-req = {'method': 'set_log_config', 'value': json.dumps({'webhook_secret': 'hacked', 'log_format': 'json'})}
+req = {'method': 'set_log_config', 'value': json.dumps({'webhook_secret': 'testsecret41', 'log_format': 'json'})}
 print(json.dumps(req))
 ")
 result=$(vm_exec router "echo '$LOG_CFG_JSON' | socat - $SOCK")
-assert_match "$result" '"ok":true' "set_log_config accepts valid JSON"
+assert_match "$result" '"ok":true' "set_log_config writes webhook_secret and log_format"
 
-# Verify webhook_secret was NOT written (set_log_config ignores it since it's not in allowed_keys)
-# Verify log_format WAS written (proving the handler works, just skips webhook_secret)
+# Verify get_config blocks reading webhook_secret (it's in BLOCKED_CONFIG_KEYS)
+result=$(vm_exec router "echo '{\"method\":\"get_config\",\"key\":\"webhook_secret\"}' | socat - $SOCK")
+assert_match "$result" '"ok":false' "get_config blocks webhook_secret read"
+
+# Verify log_format was written
 result=$(vm_exec router "echo '{\"method\":\"get_log_config\"}' | socat - $SOCK")
 assert_contains "$result" '"log_format":"json"' "set_log_config wrote log_format"
 
