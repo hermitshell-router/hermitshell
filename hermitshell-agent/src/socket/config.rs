@@ -341,6 +341,23 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, wan_iface
             let provider = ap.get("provider").and_then(|v| v.as_str()).unwrap_or("eap_standalone");
             let enabled = ap.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
 
+            // Validate AP fields (same checks as handle_wifi_adopt_ap)
+            if ip.parse::<std::net::IpAddr>().is_err() {
+                warn!(ip = %ip, "import_config: skipping WiFi AP with invalid IP");
+                continue;
+            }
+            if name.len() > 64
+                || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ' ' || c == '.')
+            {
+                warn!(name = %name, "import_config: skipping WiFi AP with invalid name");
+                continue;
+            }
+            let valid_providers = ["eap_standalone"];
+            if !valid_providers.contains(&provider) {
+                warn!(provider = %provider, "import_config: skipping WiFi AP with unknown provider");
+                continue;
+            }
+
             // Look up plaintext password from secrets, re-encrypt with current session_secret
             let password_enc = ap_passwords
                 .and_then(|m| m.get(mac))
