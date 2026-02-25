@@ -530,6 +530,8 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Call `stream.set_read_timeout(Some(Duration::from_secs(5)))` before `read_line()` in `agent_request()`. On timeout, log the error and return `Err` so the DHCP handler can continue processing other packets.
 
+**Status: Fixed.** `agent_request()` now calls `stream.set_read_timeout(Some(Duration::from_secs(5)))` after connecting. On timeout, `read_line()` returns an I/O error which propagates to callers. DHCP handlers already handle errors by logging and skipping the reply, so the client retries via standard DHCP backoff.
+
 ## 45. Agent IPC read_line has no size limit
 
 **What:** The agent's IPC handler (`hermitshell-agent/src/socket.rs:246`) reads lines with `reader.read_line(&mut line)` which grows the buffer until it finds a newline. There is no cap on line length.
@@ -541,6 +543,8 @@ This document tracks security compromises made during implementation, why they w
 **Mitigating factor:** The DHCP server's requests are bounded by the 1500-byte UDP packet that triggered them, so this is only exploitable by a direct socket client.
 
 **Proper fix:** Use `read_line()` with a size-limited wrapper, or switch to `tokio::io::AsyncBufReadExt::read_line()` with a manual length check. Reject lines longer than 64 KB.
+
+**Status: Fixed.** Both `handle_client` and `handle_dhcp_client` now check `line.len() > 65_536` after `read_line()` and close the connection with a warning if exceeded. The check is post-allocation (tokio reads in 8KB chunks, so the String grows incrementally) but prevents processing and stops further reads. The 64KB limit is well above the largest legitimate request (`import_config`).
 
 ## 46. DHCP server opens a new IPC connection per request
 
@@ -687,6 +691,8 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** Each check reveals the router's WAN IP and the fact that it runs HermitShell to GitHub (and any network observer). The `User-Agent` header confirms the software identity. GitHub's API may log the IP for rate-limiting purposes.
 
 **Proper fix:** Make the update check opt-in (disabled by default). Add a config key `update_check_enabled` that the setup wizard or settings page can toggle. Use a generic `User-Agent` or omit it entirely. Consider proxying through a project-specific update endpoint that aggregates check counts without logging individual IPs.
+
+**Status: Fixed.** Update checker is now opt-in. Gated on `update_check_enabled` config key, which defaults to `false` (no outbound network calls unless explicitly enabled). The loop checks this flag at startup and each iteration, exiting when disabled. The `check_update` IPC response includes an `enabled` field so the UI can display the current state.
 
 ## 59. Update checker trusts GitHub API response without signature verification
 
