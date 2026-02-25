@@ -35,6 +35,23 @@ pub(super) fn handle_add_port_forward(req: &Request, db: &Arc<Mutex<Db>>, wan_if
         return Response::err(&e.to_string());
     }
     let db = db.lock().unwrap();
+    // Check for overlapping external port ranges on same protocol
+    if let Ok(existing) = db.list_port_forwards() {
+        for fwd in &existing {
+            let protocols_overlap = protocol == &fwd.protocol
+                || protocol == "both"
+                || fwd.protocol == "both";
+            let ports_overlap = ext_start <= fwd.external_port_end
+                && ext_end >= fwd.external_port_start;
+            if protocols_overlap && ports_overlap {
+                return Response::err(&format!(
+                    "external ports {}-{} overlap with existing forward '{}' (ports {}-{})",
+                    ext_start, ext_end, fwd.description,
+                    fwd.external_port_start, fwd.external_port_end
+                ));
+            }
+        }
+    }
     match db.add_port_forward(protocol, ext_start, ext_end, internal_ip, int_port, desc) {
         Ok(_id) => {
             let forwards = db.list_enabled_port_forwards().unwrap_or_default();
