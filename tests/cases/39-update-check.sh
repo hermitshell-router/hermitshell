@@ -17,3 +17,6 @@ assert_match "$result" '"current_version":"[0-9]' "current_version starts with d
 # --- latest_version and last_check fields present (may be null before first check) ---
 assert_match "$result" '"latest_version"' "response has latest_version field"
 assert_match "$result" '"last_check"' "response has last_check field"
+
+# --- enabled field present and defaults to false ---
+assert_match "$result" '"enabled":false' "update check disabled by default"

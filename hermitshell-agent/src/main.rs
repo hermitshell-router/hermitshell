@@ -743,8 +743,13 @@ async fn main() -> Result<()> {
         wifi::run(db_wifi).await;
     });
 
-    // Spawn update check loop
-    update::spawn_update_loop(db.clone());
+    // Spawn update check loop (opt-in)
+    let update_enabled = db.lock().unwrap()
+        .get_config("update_check_enabled").ok().flatten()
+        .map(|v| v == "true").unwrap_or(false);
+    if update_enabled {
+        update::spawn_update_loop(db.clone());
+    }
 
     // Spawn DHCP server as child process
     let db_for_counters = db.clone();

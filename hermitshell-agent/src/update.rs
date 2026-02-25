@@ -29,6 +29,17 @@ async fn check_for_update() -> anyhow::Result<Option<String>> {
 pub fn spawn_update_loop(db: Arc<Mutex<crate::db::Db>>) {
     tokio::spawn(async move {
         loop {
+            // Exit if disabled at runtime
+            {
+                let db = db.lock().unwrap();
+                let enabled = db.get_config("update_check_enabled").ok().flatten()
+                    .map(|v| v == "true").unwrap_or(false);
+                if !enabled {
+                    debug!("update check disabled, stopping loop");
+                    return;
+                }
+            }
+
             let should_check = {
                 let db = db.lock().unwrap();
                 let last_check: i64 = db
