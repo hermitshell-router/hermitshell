@@ -448,6 +448,8 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Add a `runzero_ca_cert` config option that allows the user to upload a custom CA certificate for the runZero console. Use this CA cert for TLS verification instead of disabling it entirely.
 
+**Status: Fixed.** The `runzero_ca_cert` config option allows uploading a custom CA certificate for the runZero console. When set, TLS verification uses system trust roots plus the custom CA. When not set, only system trust roots are used. `danger_accept_invalid_certs` has been removed.
+
 ## 38. Speed test makes outbound HTTP requests to admin-configured URL
 
 **What:** The QoS speed test feature uses `reqwest` to make HTTP GET/POST requests from the router to a URL configured by the admin.
@@ -647,6 +649,8 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** An attacker in a man-in-the-middle position between the router and an AP could intercept AP credentials and client data during polling. The AP is typically on the same LAN segment as the router, so the MITM window is small.
 
 **Proper fix:** Add a `wifi_ap_ca_cert` config option allowing the user to upload a custom CA certificate per AP. Same approach as the runZero TLS fix (#37).
+
+**Status: Fixed.** Each WiFi AP record supports an optional `ca_cert_pem` field for a custom CA certificate. When set, TLS verification uses system trust roots plus the custom CA. When not set, only system trust roots are used. `danger_accept_invalid_certs` has been removed.
 
 ## 56. AP password sent as MD5 hash, not plaintext TLS-protected
 
