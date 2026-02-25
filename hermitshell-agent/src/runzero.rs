@@ -29,13 +29,9 @@ fn build_os_string(asset: &RunZeroAsset) -> Option<String> {
 }
 
 pub async fn sync_once(db: &Arc<Mutex<Db>>, url: &str, token: &str, ca_cert_pem: Option<&str>) -> Result<usize> {
-    let mut builder = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30));
-    if let Some(pem) = ca_cert_pem {
-        let cert = reqwest::Certificate::from_pem(pem.as_bytes())?;
-        builder = builder.add_root_certificate(cert);
-    }
-    let client = builder.build()?;
+    let client = crate::tls_client::builder_with_ca(ca_cert_pem)?
+        .timeout(Duration::from_secs(30))
+        .build()?;
 
     let resp = client
         .get(format!("{}/api/v1.0/export/org/assets.json", url.trim_end_matches('/')))

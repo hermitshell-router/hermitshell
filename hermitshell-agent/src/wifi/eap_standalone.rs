@@ -78,15 +78,11 @@ impl EapSession {
         let mut headers = HeaderMap::new();
         headers.insert(header::REFERER, HeaderValue::from_str(&format!("https://{}/", ip))?);
 
-        let mut builder = reqwest::Client::builder()
+        let client = crate::tls_client::builder_with_ca_native(ca_cert_pem)?
             .cookie_store(true)
             .timeout(std::time::Duration::from_secs(10))
-            .default_headers(headers);
-        if let Some(pem) = ca_cert_pem {
-            let cert = reqwest::Certificate::from_pem(pem.as_bytes())?;
-            builder = builder.add_root_certificate(cert);
-        }
-        let client = builder.build()?;
+            .default_headers(headers)
+            .build()?;
 
         let base_url = format!("https://{}", ip);
         let password_md5 = md5_upper(password);

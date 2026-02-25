@@ -11,6 +11,7 @@ mod qos;
 mod ra;
 mod socket;
 mod tls;
+mod tls_client;
 mod update;
 mod runzero;
 mod wifi;
