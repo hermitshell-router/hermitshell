@@ -93,8 +93,8 @@ table inet filter {{
         iifname != "{wan_iface}" tcp dport 22 accept
         iifname {{ "{lan_iface}", "tailscale0", "wg0" }} tcp dport {{ 8080, 8443 }} accept
         iifname "{lan_iface}" udp dport 67 accept
-        iifname "{lan_iface}" tcp dport 53 accept
-        iifname "{lan_iface}" udp dport 53 accept
+        iifname {{ "{lan_iface}", "wg0" }} tcp dport 53 accept
+        iifname {{ "{lan_iface}", "wg0" }} udp dport 53 accept
         iifname "{lan_iface}" udp dport {{ 546, 547 }} accept
         iifname {{ "{lan_iface}", "tailscale0", "wg0" }} icmp type echo-request accept
         icmpv6 type {{ nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert }} accept
