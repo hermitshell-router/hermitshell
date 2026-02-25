@@ -160,9 +160,12 @@ pub(super) fn handle_set_device_nickname(req: &Request, db: &Arc<Mutex<Db>>) -> 
     let Some(ref mac) = req.mac else {
         return Response::err("mac required");
     };
-    let nickname = req.nickname.as_deref().unwrap_or("");
+    let raw = req.nickname.as_deref().unwrap_or("");
+    let nickname: String = raw.chars()
+        .filter(|c| !c.is_control())
+        .collect();
     let db = db.lock().unwrap();
-    match db.set_device_nickname(mac, nickname) {
+    match db.set_device_nickname(mac, &nickname) {
         Ok(()) => Response::ok(),
         Err(e) => Response::err(&e.to_string()),
     }
