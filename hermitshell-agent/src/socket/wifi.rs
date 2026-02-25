@@ -256,6 +256,14 @@ async fn handle_wifi_set_ssid(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
         return Response::err("security must be none, wpa-psk, or wpa-enterprise");
     }
 
+    if security == "wpa-psk" {
+        match req.value {
+            Some(ref pw) if pw.len() >= 8 && pw.len() <= 63 && pw.is_ascii() => {}
+            Some(_) => return Response::err("WPA-PSK password must be 8-63 ASCII characters"),
+            None => return Response::err("password required for WPA-PSK security"),
+        }
+    }
+
     let config = hermitshell_common::WifiSsidConfig {
         ssid_name: ssid_name.clone(),
         password: req.value.clone(),
