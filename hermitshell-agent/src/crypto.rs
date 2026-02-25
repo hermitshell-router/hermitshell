@@ -7,13 +7,14 @@ use sha2::Sha256;
 
 const HKDF_INFO: &[u8] = b"hermitshell-wifi-password-encryption";
 const ENCRYPTED_PREFIX: &str = "enc:v1:";
+const HKDF_SALT: &[u8] = b"hermitshell-session-v1";
 
 /// Derive a 32-byte AES-256 key from the session_secret using HKDF-SHA256.
 fn derive_key(session_secret: &str) -> Result<[u8; 32]> {
     if session_secret.len() < 32 {
         anyhow::bail!("session_secret too short for key derivation");
     }
-    let hk = Hkdf::<Sha256>::new(None, session_secret.as_bytes());
+    let hk = Hkdf::<Sha256>::new(Some(HKDF_SALT), session_secret.as_bytes());
     let mut key = [0u8; 32];
     hk.expand(HKDF_INFO, &mut key)
         .map_err(|_| anyhow::anyhow!("HKDF expand failed"))?;
