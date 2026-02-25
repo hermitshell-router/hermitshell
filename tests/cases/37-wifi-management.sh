@@ -5,6 +5,11 @@ require_agent
 
 SOCK="UNIX-CONNECT:/run/hermitshell/agent.sock"
 
+# --- Idempotency: remove any leftover APs from prior runs ---
+for mac in $(vm_exec router "echo '{\"method\":\"wifi_list_aps\"}' | socat - $SOCK" | grep -oP '"mac":"[^"]+"' | grep -oP '[0-9a-f:]+'); do
+    vm_exec router "echo '{\"method\":\"wifi_remove_ap\",\"mac\":\"$mac\"}' | socat - $SOCK" >/dev/null 2>&1
+done
+
 # --- wifi_list_aps defaults empty ---
 result=$(vm_exec router "echo '{\"method\":\"wifi_list_aps\"}' | socat - $SOCK")
 assert_match "$result" '"ok":true' "wifi_list_aps succeeds"
