@@ -1049,6 +1049,231 @@ impl Db {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
+    /// Roll up connection_logs into bandwidth_hourly for a specific hour bucket.
+    /// hour_bucket is a Unix epoch truncated to hour (epoch / 3600 * 3600).
+    pub fn rollup_bandwidth_hourly(&self, hour_bucket: i64) -> Result<usize> {
+        let hour_end = hour_bucket + 3600;
+        let inserted = self.conn.execute(
+            "INSERT OR REPLACE INTO bandwidth_hourly (device_mac, hour_bucket, rx_bytes, tx_bytes)
+             SELECT d.mac, ?1,
+                    COALESCE(SUM(c.bytes_recv), 0),
+                    COALESCE(SUM(c.bytes_sent), 0)
+             FROM connection_logs c
+             JOIN devices d ON d.ipv4 = c.device_ip
+             WHERE c.started_at >= ?1 AND c.started_at < ?2
+             GROUP BY d.mac",
+            rusqlite::params![hour_bucket, hour_end],
+        )?;
+        Ok(inserted)
+    }
+
+    /// Roll up bandwidth_hourly into bandwidth_daily for a specific day bucket.
+    /// day_bucket is a Unix epoch truncated to day (epoch / 86400 * 86400).
+    pub fn rollup_bandwidth_daily(&self, day_bucket: i64) -> Result<usize> {
+        let day_end = day_bucket + 86400;
+        // First, aggregate hourly data into daily
+        let inserted = self.conn.execute(
+            "INSERT OR REPLACE INTO bandwidth_daily (device_mac, day_bucket, rx_bytes, tx_bytes)
+             SELECT device_mac, ?1,
+                    COALESCE(SUM(rx_bytes), 0),
+                    COALESCE(SUM(tx_bytes), 0)
+             FROM bandwidth_hourly
+             WHERE hour_bucket >= ?1 AND hour_bucket < ?2
+             GROUP BY device_mac",
+            rusqlite::params![day_bucket, day_end],
+        )?;
+        // Then, compute top destinations per device from connection_logs
+        let mut stmt = self.conn.prepare(
+            "SELECT device_mac FROM bandwidth_daily WHERE day_bucket = ?1"
+        )?;
+        let macs: Vec<String> = stmt.query_map([day_bucket], |row| row.get(0))?
+            .filter_map(|r| r.ok()).collect();
+        for mac in &macs {
+            let ip: Option<String> = self.conn.query_row(
+                "SELECT ipv4 FROM devices WHERE mac = ?1", [mac], |row| row.get(0)
+            ).ok();
+            if let Some(ip) = ip {
+                let mut dest_stmt = self.conn.prepare(
+                    "SELECT dest_ip, dest_port, SUM(bytes_sent + bytes_recv) as total
+                     FROM connection_logs
+                     WHERE device_ip = ?1 AND started_at >= ?2 AND started_at < ?3
+                     GROUP BY dest_ip, dest_port
+                     ORDER BY total DESC LIMIT 5"
+                )?;
+                let tops: Vec<serde_json::Value> = dest_stmt.query_map(
+                    rusqlite::params![ip, day_bucket, day_end], |row| {
+                        Ok(serde_json::json!({
+                            "dest_ip": row.get::<_, String>(0)?,
+                            "dest_port": row.get::<_, u16>(1)?,
+                            "total_bytes": row.get::<_, i64>(2)?,
+                        }))
+                    }
+                )?.filter_map(|r| r.ok()).collect();
+                let json = serde_json::to_string(&tops).unwrap_or_default();
+                self.conn.execute(
+                    "UPDATE bandwidth_daily SET top_destinations = ?1 WHERE device_mac = ?2 AND day_bucket = ?3",
+                    rusqlite::params![json, mac, day_bucket],
+                )?;
+            }
+        }
+        Ok(inserted)
+    }
+
+    /// Run rollup for all un-rolled hours up to the previous completed hour.
+    pub fn rollup_all_pending(&self) -> Result<(usize, usize)> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+        let current_hour = now / 3600 * 3600;
+        // Find the earliest un-rolled hour (from connection_logs)
+        let earliest: Option<i64> = self.conn.query_row(
+            "SELECT MIN(started_at) FROM connection_logs WHERE started_at > 0",
+            [], |row| row.get(0),
+        ).ok();
+        let Some(earliest) = earliest else { return Ok((0, 0)); };
+        let start_hour = earliest / 3600 * 3600;
+        let mut hourly_count = 0;
+        let mut daily_count = 0;
+        let mut hour = start_hour;
+        while hour < current_hour {
+            // Check if this hour already rolled up
+            let exists: bool = self.conn.query_row(
+                "SELECT COUNT(*) > 0 FROM bandwidth_hourly WHERE hour_bucket = ?1",
+                [hour], |row| row.get(0),
+            ).unwrap_or(false);
+            if !exists {
+                hourly_count += self.rollup_bandwidth_hourly(hour)?;
+            }
+            hour += 3600;
+        }
+        // Roll up daily for any completed days
+        let current_day = now / 86400 * 86400;
+        let start_day = start_hour / 86400 * 86400;
+        let mut day = start_day;
+        while day < current_day {
+            let exists: bool = self.conn.query_row(
+                "SELECT COUNT(*) > 0 FROM bandwidth_daily WHERE day_bucket = ?1",
+                [day], |row| row.get(0),
+            ).unwrap_or(false);
+            if !exists {
+                daily_count += self.rollup_bandwidth_daily(day)?;
+            }
+            day += 86400;
+        }
+        Ok((hourly_count, daily_count))
+    }
+
+    /// Clean up old rollup data: hourly > 30 days, daily > 1 year.
+    pub fn rotate_bandwidth_rollups(&self) -> Result<(usize, usize)> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+        let hourly_cutoff = now - 30 * 86400;
+        let daily_cutoff = now - 365 * 86400;
+        let hourly_deleted = self.conn.execute(
+            "DELETE FROM bandwidth_hourly WHERE hour_bucket < ?1", [hourly_cutoff]
+        )?;
+        let daily_deleted = self.conn.execute(
+            "DELETE FROM bandwidth_daily WHERE day_bucket < ?1", [daily_cutoff]
+        )?;
+        Ok((hourly_deleted, daily_deleted))
+    }
+
+    /// Get bandwidth history for a device (or all devices if mac is None).
+    /// period: "24h", "7d" → hourly buckets; "30d", "1y" → daily buckets.
+    pub fn get_bandwidth_history(&self, device_mac: Option<&str>, period: &str) -> Result<Vec<BandwidthPoint>> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+        match period {
+            "24h" | "7d" => {
+                let hours_back = if period == "24h" { 24 } else { 168 };
+                let cutoff = now - hours_back * 3600;
+                let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(mac) = device_mac {
+                    (
+                        "SELECT hour_bucket, SUM(rx_bytes), SUM(tx_bytes) FROM bandwidth_hourly WHERE device_mac = ?1 AND hour_bucket >= ?2 GROUP BY hour_bucket ORDER BY hour_bucket".to_string(),
+                        vec![Box::new(mac.to_string()), Box::new(cutoff)],
+                    )
+                } else {
+                    (
+                        "SELECT hour_bucket, SUM(rx_bytes), SUM(tx_bytes) FROM bandwidth_hourly WHERE hour_bucket >= ?1 GROUP BY hour_bucket ORDER BY hour_bucket".to_string(),
+                        vec![Box::new(cutoff)],
+                    )
+                };
+                let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+                let mut stmt = self.conn.prepare(&sql)?;
+                let rows = stmt.query_map(param_refs.as_slice(), |row| {
+                    Ok(BandwidthPoint {
+                        bucket: row.get(0)?,
+                        rx_bytes: row.get(1)?,
+                        tx_bytes: row.get(2)?,
+                    })
+                })?;
+                Ok(rows.filter_map(|r| r.ok()).collect())
+            }
+            "30d" | "1y" => {
+                let days_back = if period == "30d" { 30 } else { 365 };
+                let cutoff = now - days_back * 86400;
+                let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(mac) = device_mac {
+                    (
+                        "SELECT day_bucket, SUM(rx_bytes), SUM(tx_bytes) FROM bandwidth_daily WHERE device_mac = ?1 AND day_bucket >= ?2 GROUP BY day_bucket ORDER BY day_bucket".to_string(),
+                        vec![Box::new(mac.to_string()), Box::new(cutoff)],
+                    )
+                } else {
+                    (
+                        "SELECT day_bucket, SUM(rx_bytes), SUM(tx_bytes) FROM bandwidth_daily WHERE day_bucket >= ?1 GROUP BY day_bucket ORDER BY day_bucket".to_string(),
+                        vec![Box::new(cutoff)],
+                    )
+                };
+                let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+                let mut stmt = self.conn.prepare(&sql)?;
+                let rows = stmt.query_map(param_refs.as_slice(), |row| {
+                    Ok(BandwidthPoint {
+                        bucket: row.get(0)?,
+                        rx_bytes: row.get(1)?,
+                        tx_bytes: row.get(2)?,
+                    })
+                })?;
+                Ok(rows.filter_map(|r| r.ok()).collect())
+            }
+            _ => anyhow::bail!("invalid period: {}", period),
+        }
+    }
+
+    /// Get top destinations for a device in a time period.
+    pub fn get_top_destinations(&self, device_mac: &str, period: &str, limit: i64) -> Result<Vec<TopDestination>> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+        let ip: Option<String> = self.conn.query_row(
+            "SELECT ipv4 FROM devices WHERE mac = ?1", [device_mac], |row| row.get(0)
+        ).ok();
+        let Some(ip) = ip else { return Ok(vec![]); };
+        let hours_back = match period {
+            "24h" => 24,
+            "7d" => 168,
+            "30d" => 720,
+            "1y" => 8760,
+            _ => 24,
+        };
+        let cutoff = now - hours_back * 3600;
+        let mut stmt = self.conn.prepare(
+            "SELECT dest_ip, dest_port, SUM(bytes_sent + bytes_recv) as total
+             FROM connection_logs
+             WHERE device_ip = ?1 AND started_at >= ?2
+             GROUP BY dest_ip, dest_port
+             ORDER BY total DESC LIMIT ?3"
+        )?;
+        let rows = stmt.query_map(rusqlite::params![ip, cutoff, limit], |row| {
+            Ok(TopDestination {
+                dest_ip: row.get(0)?,
+                dest_port: row.get(1)?,
+                total_bytes: row.get(2)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
     pub fn rotate_alerts(&self, retention_secs: i64) -> Result<usize> {
         let cutoff = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
