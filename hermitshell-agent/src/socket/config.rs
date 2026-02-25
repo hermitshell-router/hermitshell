@@ -474,7 +474,7 @@ pub(super) fn handle_set_log_config(req: &Request, db: &Arc<Mutex<Db>>) -> Respo
         Err(e) => return Response::err(&format!("invalid JSON: {}", e)),
     };
     let db = db.lock().unwrap();
-    let allowed_keys = ["log_format", "syslog_target", "webhook_url", "webhook_secret", "log_retention_days"];
+    let allowed_keys = ["log_format", "syslog_target", "webhook_url", "log_retention_days"];
     if let Some(obj) = parsed.as_object() {
         for (key, val) in obj {
             if allowed_keys.contains(&key.as_str()) {
