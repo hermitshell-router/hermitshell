@@ -94,7 +94,13 @@ pub(super) fn handle_log_audit(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let Some(ref action) = req.value else {
         return Response::err("value required (action name)");
     };
+    if action.len() > 64 {
+        return Response::err("action too long (max 64 characters)");
+    }
     let detail = req.key.as_deref().unwrap_or("");
+    if detail.len() > 512 {
+        return Response::err("detail too long (max 512 characters)");
+    }
     let db = db.lock().unwrap();
     match db.log_audit(action, detail) {
         Ok(()) => Response::ok(),
