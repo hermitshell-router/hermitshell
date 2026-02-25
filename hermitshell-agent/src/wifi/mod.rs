@@ -38,10 +38,11 @@ pub async fn connect(
     ip: &str,
     username: &str,
     password: &str,
+    ca_cert_pem: Option<&str>,
 ) -> Result<Box<dyn WifiSession>> {
     match provider {
         "eap_standalone" => {
-            let session = eap_standalone::EapSession::login(ip, username, password).await?;
+            let session = eap_standalone::EapSession::login(ip, username, password, ca_cert_pem).await?;
             Ok(Box::new(session))
         }
         _ => anyhow::bail!("unknown wifi provider: {}", provider),
@@ -73,6 +74,11 @@ pub async fn run(db: Arc<Mutex<Db>>) {
                 continue;
             };
 
+            let ca_cert = {
+                let db = db.lock().unwrap();
+                db.get_wifi_ap_ca_cert(&ap.mac).ok().flatten()
+            };
+
             let password = {
                 let session_secret = {
                     let db_lock = db.lock().unwrap();
@@ -91,7 +97,7 @@ pub async fn run(db: Arc<Mutex<Db>>) {
                 }
             };
 
-            match connect(&ap.provider, &ip, &username, &password).await {
+            match connect(&ap.provider, &ip, &username, &password, ca_cert.as_deref()).await {
                 Ok(session) => {
                     // Update AP status
                     let now = std::time::SystemTime::now()

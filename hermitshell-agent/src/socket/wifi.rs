@@ -175,13 +175,15 @@ pub(super) async fn handle_wifi_async(req: &Request, db: &Arc<Mutex<Db>>) -> Res
 
 /// Helper: connect to an AP by MAC, looking up credentials from DB.
 async fn connect_to_ap(mac: &str, db: &Arc<Mutex<Db>>) -> Result<Box<dyn crate::wifi::WifiSession>, Response> {
-    let (ip, username, password_enc) = {
+    let (ip, username, password_enc, ca_cert_pem) = {
         let db = db.lock().unwrap();
-        match db.get_wifi_ap_credentials(mac) {
+        let creds = match db.get_wifi_ap_credentials(mac) {
             Ok(Some(creds)) => creds,
             Ok(None) => return Err(Response::err("AP not found")),
             Err(e) => return Err(Response::err(&format!("DB error: {}", e))),
-        }
+        };
+        let ca_cert = db.get_wifi_ap_ca_cert(mac).ok().flatten();
+        (creds.0, creds.1, creds.2, ca_cert)
     };
 
     // Decrypt password
@@ -207,7 +209,7 @@ async fn connect_to_ap(mac: &str, db: &Arc<Mutex<Db>>) -> Result<Box<dyn crate::
             .unwrap_or_else(|| "eap_standalone".to_string())
     };
 
-    match crate::wifi::connect(&provider, &ip, &username, &password).await {
+    match crate::wifi::connect(&provider, &ip, &username, &password, ca_cert_pem.as_deref()).await {
         Ok(session) => Ok(session),
         Err(e) => Err(Response::err(&format!("AP connection failed: {}", e))),
     }
