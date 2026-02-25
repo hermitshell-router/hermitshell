@@ -2,18 +2,6 @@
 
 This document tracks security compromises made during implementation, why they were made, and what the proper fix would be.
 
-## 3. Session cookie comparison is not constant-time
-
-**What:** The agent's `verify_session` handler compares the HMAC signature using `==` (string equality), which is vulnerable to timing attacks.
-
-**Why:** Simplicity. The `hmac` crate provides `verify_slice` for constant-time comparison, but the implementation hex-encodes and uses string comparison instead.
-
-**Risk:** An attacker on the local network could theoretically forge a session cookie by measuring response times. In practice, network jitter makes this extremely difficult over a Unix socket.
-
-**Proper fix:** Use `mac.verify_slice(&hex::decode(sig))` instead of comparing hex strings.
-
-**Note:** This logic moved from the web UI to the agent (`socket.rs` `verify_session`). The non-constant-time comparison was carried forward and also exists in the new `refresh_session` handler. The attack surface is now a Unix socket rather than an HTTPS endpoint. However, the socket is `0660` (see issue #49), so any process in the socket's group could attempt timing attacks.
-
 ## 4. Self-signed TLS certificate
 
 **What:** The agent generates a self-signed certificate on first startup and stores it in the config DB. The web UI retrieves it via `get_tls_config`. Browsers will show security warnings.
@@ -50,20 +38,6 @@ This document tracks security compromises made during implementation, why they w
 
 ---
 
-## Temporary Files and Permissions
-
-## 17. WireGuard private key written to predictable /tmp path
-
-**What:** `wireguard.rs` writes the WG private key to `/tmp/hermitshell-wg-key`, runs `wg set`, then deletes it. The path is hardcoded and predictable, creating a theoretical symlink race window between the `fs::write()` and the `wg set` read.
-
-**Why:** The `wg` command requires a file path for the private key. A fixed path was chosen for simplicity.
-
-**Risk:** A local attacker could replace the file with a symlink between write and read, causing `wg set` to read from an attacker-controlled location or causing the write to overwrite a symlink target. Mitigated by `PrivateTmp=yes` in systemd (the agent's `/tmp` is a private namespace) and the agent running as root. The race window is microseconds. The error-path key leak from the original implementation is fixed — cleanup runs unconditionally before the status check.
-
-**Proper fix:** Use `tempfile::NamedTempFile` to create a file with a unique, unpredictable name and restricted permissions (0600).
-
----
-
 ## Rate Limiting and Resource Exhaustion
 
 ## 19. No connection limiting on the agent Unix socket
@@ -89,16 +63,6 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** A user adds a port forward, gets redirected to the port forwarding page, and sees the forward in the list (because the DB write succeeded) but the nftables rules failed to apply. The forward appears active but doesn't work. Worse, the `handle_setup` handler at `main.rs:117` doesn't discard — if `set_config` fails for the password hash, the user thinks setup worked but no password was saved.
 
 **Proper fix:** Check return values from IPC calls. On error, redirect to an error page or append `?error=...` to the redirect URL.
-
-## 27. No validation on WireGuard peer name or public key format
-
-**What:** The `add_wg_peer` handler (`socket.rs`) accepts a `name` and `public_key` for WireGuard peers. The public key is passed directly to the `wg set` command. The name is stored in the DB without sanitization.
-
-**Why:** The `wg` command validates the public key format (base64, 44 chars). The name is only used for display.
-
-**Risk:** An invalid public key causes `wg set` to fail, which is handled. But the name could be very long or contain special characters. If used in log messages, it could cause log injection. Leptos escapes display output, so XSS via the web UI is unlikely.
-
-**Proper fix:** Validate the public key format (44-char base64 string) and sanitize the name (alphanumeric + hyphens, max 64 chars) before storage.
 
 ---
 
@@ -191,16 +155,6 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** An attacker with filesystem access to the SQLite database can read the token and use it to query the runZero console's asset inventory. The token is read-only (Export API), so no data can be modified. The token is blocked from `get_config`/`set_config` IPC reads/writes and only accessible via the dedicated `set_runzero_config` method.
 
 **Proper fix:** Encrypt secrets at rest using a key derived from a hardware identifier or TPM, if available. Alternatively, use short-lived OAuth tokens instead of long-lived Export API tokens.
-
-## 38. Speed test makes outbound HTTP requests to admin-configured URL
-
-**What:** The QoS speed test feature uses `reqwest` to make HTTP GET/POST requests from the router to a URL configured by the admin.
-
-**Why:** Needed to measure WAN link speed for CAKE qdisc bandwidth configuration.
-
-**Risk:** SSRF — if the admin configures a URL pointing to an internal service (e.g., `http://10.0.0.5:8080/admin`), the router will make a request to it on the admin's behalf. Mitigated by rejecting private/loopback IP ranges (10.x, 172.16-31.x, 192.168.x, 127.x, ::1, fd00::) when the host is an IP literal. However, DNS hostnames bypass the check entirely — a hostname resolving to a private IP (e.g., `http://attacker.example.com` → `127.0.0.1`) is accepted.
-
-**Proper fix:** Resolve the hostname to an IP before the `is_public_ip` check. The admin already has full router access, so SSRF provides no privilege escalation — the validation prevents accidental misconfiguration rather than a real attack vector.
 
 ## 40. Stateless sessions cannot be individually revoked
 
@@ -372,17 +326,7 @@ This document tracks security compromises made during implementation, why they w
 
 ---
 
-## WiFi AP Management
-
-## 64. WireGuard peers cannot use router DNS
-
-**What:** The nftables input chain accepts DNS (TCP/UDP port 53) only from the LAN interface. WireGuard peers can reach the web UI and ping the router via wg0, but cannot use the router's DNS resolver or ad-blocking service.
-
-**Why:** When wg0 was added to the ICMP and web UI rules (issue #6 fix), DNS was not included. The omission was not caught because no integration test exercises DNS resolution through a WireGuard tunnel.
-
-**Risk:** WireGuard VPN peers must use external DNS servers, bypassing the router's ad-blocking and DNS query logging. This defeats a key security feature for remote users who expect the same protection as LAN clients.
-
-**Proper fix:** Add wg0 to the DNS rules: `iifname { "{lan_iface}", "wg0" } tcp dport 53 accept` and `iifname { "{lan_iface}", "wg0" } udp dport 53 accept`.
+## Performance and Resource Management
 
 ## 67. rollup_all_pending holds DB mutex for unbounded time
 
@@ -403,23 +347,3 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** While the speed test runs, the blocked worker thread cannot serve other async tasks. Multiple concurrent speed test requests would block multiple threads. The speed test is admin-triggered, so concurrent requests are unlikely.
 
 **Proper fix:** Use `tokio::spawn` to run the speed test asynchronously, return a "test started" response immediately, and provide a separate IPC method to poll for results. Alternatively, reject concurrent speed test requests.
-
-## 72. HKDF key derivation for WiFi passwords uses no salt
-
-**What:** The `derive_key` function (`crypto.rs`) calls `Hkdf::<Sha256>::new(None, session_secret.as_bytes())` with `None` for the salt parameter. The HKDF output is deterministic for a given session_secret.
-
-**Why:** The session_secret is a 256-bit random value with sufficient entropy. Each encryption uses a unique random 12-byte nonce, so ciphertexts are not repeated.
-
-**Risk:** Theoretically suboptimal per RFC 5869 recommendations, but practically safe given the high-entropy IKM and per-encryption random nonces.
-
-**Proper fix:** Use a fixed application-specific salt (e.g., `b"hermitshell-wifi-encryption-salt-v1"`) for defense-in-depth per RFC 5869 Section 3.1.
-
-## 74. ingest_dns_logs and run_analysis have no rate limiting
-
-**What:** The `ingest_dns_logs` and `run_analysis` IPC methods are available to any socket client with no rate limiting. These trigger expensive operations: DNS log file parsing with DB inserts, and behavioral analysis across all connection/DNS data.
-
-**Why:** These operations are normally triggered by the agent's own background loops (every 10 seconds for DNS ingestion, every 5 minutes for analysis). The IPC methods exist for manual triggering.
-
-**Risk:** An IPC client could call these in a tight loop to cause sustained CPU and I/O load, degrading agent responsiveness. Socket access requires group membership (0660 permissions).
-
-**Proper fix:** Add a debounce (reject if last invocation was < 10 seconds ago), or make them internal-only by removing from the public method routing table.
