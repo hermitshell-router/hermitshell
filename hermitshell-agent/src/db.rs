@@ -1073,6 +1073,7 @@ impl Db {
                 enabled: row.get::<_, i64>(6)? != 0,
                 last_seen: row.get(7)?,
                 status: row.get(8)?,
+                has_ca_cert: false,
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
@@ -1094,6 +1095,7 @@ impl Db {
                 enabled: row.get::<_, i64>(6)? != 0,
                 last_seen: row.get(7)?,
                 status: row.get(8)?,
+                has_ca_cert: false,
             }))
         } else {
             Ok(None)

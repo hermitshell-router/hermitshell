@@ -147,6 +147,8 @@ pub struct WifiAp {
     #[serde(default)]
     pub last_seen: Option<i64>,
     pub status: String,
+    #[serde(default)]
+    pub has_ca_cert: bool,
 }
 
 /// A WiFi client observed on an access point.
