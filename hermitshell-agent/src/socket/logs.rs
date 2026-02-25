@@ -121,12 +121,31 @@ pub(super) fn handle_list_audit_logs(req: &Request, db: &Arc<Mutex<Db>>) -> Resp
     }
 }
 
+static LAST_INGEST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+static LAST_ANALYSIS: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
 pub(super) fn handle_ingest_dns_logs(_req: &Request, db: &Arc<Mutex<Db>>, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>) -> Response {
+    let mut last = LAST_INGEST.lock().unwrap();
+    if let Some(t) = *last {
+        if t.elapsed().as_secs() < 10 {
+            return Response::err("rate limited (10s debounce)");
+        }
+    }
+    *last = Some(std::time::Instant::now());
+    drop(last);
     crate::dns_log::ingest_once(db, log_tx);
     Response::ok()
 }
 
 pub(super) fn handle_run_analysis(_req: &Request, db: &Arc<Mutex<Db>>, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>) -> Response {
+    let mut last = LAST_ANALYSIS.lock().unwrap();
+    if let Some(t) = *last {
+        if t.elapsed().as_secs() < 10 {
+            return Response::err("rate limited (10s debounce)");
+        }
+    }
+    *last = Some(std::time::Instant::now());
+    drop(last);
     crate::analyzer::run_analysis_cycle(db, log_tx);
     Response::ok()
 }
