@@ -132,6 +132,28 @@ pub struct AuditEntry {
     pub created_at: i64,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BandwidthPoint {
+    pub bucket: i64,
+    pub rx_bytes: i64,
+    pub tx_bytes: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BandwidthRealtime {
+    pub mac: String,
+    pub ip: String,
+    pub rx_bps: i64,
+    pub tx_bps: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TopDestination {
+    pub dest_ip: String,
+    pub dest_port: u16,
+    pub total_bytes: i64,
+}
+
 /// An adopted WiFi access point managed by the agent.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WifiAp {
