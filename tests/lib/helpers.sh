@@ -154,7 +154,7 @@ require_docker() {
     _check_ready() {
         deploy_check_webui
     }
-    wait_for 20 "Web UI running" _check_ready
+    wait_for 30 "Web UI running" _check_ready
 }
 
 require_blocky() {

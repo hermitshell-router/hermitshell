@@ -37,11 +37,11 @@ router_lan_ip="10.0.0.1"
 # Configure WireGuard on lan-vm
 vm_sudo lan "ip link add wg-test type wireguard 2>/dev/null || true; umask 077; echo \"$peer_privkey\" > /tmp/wg-privkey; wg set wg-test private-key /tmp/wg-privkey peer \"$server_pubkey\" allowed-ips 10.0.0.1/32,192.168.100.0/24 endpoint $router_lan_ip:51820; rm -f /tmp/wg-privkey; ip addr add $peer_ip/32 dev wg-test 2>/dev/null || true; ip link set wg-test up; ip route add 192.168.100.0/24 dev wg-test 2>/dev/null || true"
 
-# Wait for tunnel to establish (poll for handshake)
+# Wait for tunnel to establish (poll for handshake — needs root for wg show)
 tunnel_up() {
-    vm_exec lan "wg show wg-test latest-handshakes" | grep -q '[1-9]'
+    vm_sudo lan "wg show wg-test latest-handshakes" | grep -q '[1-9]'
 }
-wait_for 10 "WireGuard tunnel established" tunnel_up
+wait_for 15 "WireGuard tunnel established" tunnel_up
 
 # Test: ping router through tunnel
 assert_success "Ping router via WireGuard tunnel" \

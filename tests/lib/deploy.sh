@@ -55,7 +55,7 @@ deploy_start() {
             ;;
         direct)
             vm_sudo router "rm -f /run/hermitshell/*.sock && cp /opt/hermitshell/hermitshell-agent.service /etc/systemd/system/ && systemctl daemon-reload && systemctl restart hermitshell-agent"
-            vm_sudo router "if [ -f /opt/hermitshell/hermitshell-container.tar ]; then docker load -i /opt/hermitshell/hermitshell-container.tar; docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --network host --read-only --cap-drop ALL --security-opt no-new-privileges -v /run/hermitshell:/run/hermitshell hermitshell:latest; fi"
+            vm_sudo router "if [ -f /opt/hermitshell/hermitshell-container.tar ]; then docker load -i /opt/hermitshell/hermitshell-container.tar; docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --restart unless-stopped --network host --read-only --cap-drop ALL --security-opt no-new-privileges -v /run/hermitshell:/run/hermitshell hermitshell:latest; fi"
             ;;
     esac
 }
@@ -143,22 +143,15 @@ deploy_restart_webui() {
             vm_sudo router "systemctl restart hermitshell-ui"
             ;;
         direct)
-            vm_sudo router "docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --network host --read-only --cap-drop ALL --security-opt no-new-privileges -v /run/hermitshell:/run/hermitshell hermitshell:latest"
+            vm_sudo router "docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --restart unless-stopped --network host --read-only --cap-drop ALL --security-opt no-new-privileges -v /run/hermitshell:/run/hermitshell hermitshell:latest"
             ;;
     esac
 }
 
 # Check if web UI is reachable
 deploy_check_webui() {
-    case "$HERMIT_MODE" in
-        docker|install)
-            # Use port 8443 directly — nftables 443->8443 redirect only applies to LAN-sourced traffic
-            vm_exec router "curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:8443/" 2>/dev/null | grep -q '200\|30[0-9]'
-            ;;
-        direct)
-            vm_exec router "docker inspect -f '{{.State.Running}}' hermitshell" 2>/dev/null | grep -q true
-            ;;
-    esac
+    # Use port 8443 directly — nftables 443->8443 redirect only applies to LAN-sourced traffic
+    vm_exec router "curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:8443/" 2>/dev/null | grep -q '200\|30[0-9]'
 }
 
 # Get agent log output
