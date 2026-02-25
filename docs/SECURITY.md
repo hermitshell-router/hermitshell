@@ -2,34 +2,6 @@
 
 This document tracks security compromises made during implementation, why they were made, and what the proper fix would be.
 
-## 1. get_config exposes all keys over the Unix socket
-
-**What:** The `get_config` IPC method returns any key from the config table, including `admin_password_hash`, `session_secret`, `wg_private_key`, and `tls_key_pem`.
-
-**Why:** The web UI container needs `admin_password_hash` (to verify login) and `session_secret` (to sign/verify session cookies) at runtime. An access block list was attempted but broke auth because the web UI reads these through the same IPC path.
-
-**Risk:** Any process that can connect to the agent Unix socket can read password hashes, session secrets, and private keys.
-
-**Mitigating factor:** The socket is `0660` (root + group only) — see issue #49. Only root and group members can connect. Mitigated by the sensitive keys being blocked (see Status below).
-
-**Proper fix:** Separate the IPC into privileged and unprivileged channels, or have the agent handle auth verification directly (e.g., a `verify_password` method that accepts a plaintext password and returns true/false, keeping the hash internal).
-
-**Status: Fixed.** `get_config` now blocks reads of `admin_password_hash`, `session_secret`, `wg_private_key`, `tls_key_pem`, `tls_cert_pem`. Dedicated IPC methods (`verify_password`, `create_session`, `verify_session`, `get_tls_config`) provide minimum-necessary access. The web UI no longer handles raw secrets.
-
-## 2. Session cookies have no expiration
-
-**What:** Session cookies are HMAC-signed `admin:TIMESTAMP` values. The timestamp is recorded but never checked — a cookie is valid forever as long as the HMAC verifies against the current `session_secret`.
-
-**Why:** Simplicity. Expiration checking was not implemented.
-
-**Risk:** Stolen session cookies remain valid until the `session_secret` is rotated (which only happens if the config DB is wiped).
-
-**Proper fix:** Check the timestamp in `verify_session` and reject cookies older than a configurable TTL (e.g., 24 hours). Add a logout-all mechanism that rotates `session_secret`.
-
-**Note:** Session creation and verification moved from the web UI to the agent (`socket.rs` `create_session`/`verify_session`). The expiration gap persists — the agent's `verify_session` verifies the HMAC but does not check the embedded timestamp.
-
-**Status: Fixed.** Token format changed to `admin:CREATED:LAST_ACTIVE.HMAC`. The agent enforces a 30-minute idle timeout and 8-hour absolute timeout per OWASP Session Management Cheat Sheet guidance. The auth middleware issues a refreshed token on every authenticated request, resetting the idle clock. Non-persistent session cookies (no `Max-Age`) per OWASP recommendation.
-
 ## 3. Session cookie comparison is not constant-time
 
 **What:** The agent's `verify_session` handler compares the HMAC signature using `==` (string equality), which is vulnerable to timing attacks.
@@ -54,54 +26,6 @@ This document tracks security compromises made during implementation, why they w
 
 **Note:** TLS cert generation moved from the web UI to the agent startup (`main.rs`). The self-signed nature is unchanged. The cert and private key are now stored in the config DB and served to the web UI via the `get_tls_config` IPC method — see issue #32.
 
-## 5. SSH open on all interfaces in nftables input chain
-
-**What:** The rule `tcp dport 22 accept` in the input chain accepts SSH from any interface, including WAN.
-
-**Why:** The agent manages the router via SSH in the test environment. Restricting to LAN-only broke test infrastructure because the Vagrant management interface isn't the LAN interface.
-
-**Risk:** SSH exposed to the WAN. If the router has weak SSH credentials or an unpatched SSH daemon, it's directly attackable from the internet.
-
-**Proper fix:** Restrict to LAN and management interfaces: `iifname { "eth2", "eth0" } tcp dport 22 accept`. In production, SSH should never be open on the WAN interface without explicit user opt-in.
-
-**Status: Fixed.** SSH now uses `iifname != "{wan_iface}"` — blocked on WAN, allowed on all other interfaces (LAN, tailscale0, management). This is more permissive than a strict whitelist (`iifname { lan, tailscale0 }`) but avoids breaking management access from non-LAN interfaces (IPMI, serial console, Vagrant management network). The trade-off: any future non-WAN interface automatically gets SSH access.
-
-## 6. ICMP open on all interfaces
-
-**What:** The rule `icmp type echo-request accept` allows ping from any interface, including WAN.
-
-**Why:** Originally WAN-only (`iifname "eth1"`), it was broadened to allow LAN clients to ping the router. The simpler all-interfaces rule was chosen over listing both interfaces.
-
-**Risk:** The router responds to pings from the WAN, revealing its presence to scanners. Low severity — most ISPs allow ICMP anyway — but unnecessary exposure.
-
-**Proper fix:** `iifname { "eth1", "eth2" } icmp type echo-request accept` to explicitly list WAN and LAN.
-
-**Status: Fixed.** ICMP echo-request (IPv4 and IPv6) scoped to `iifname { "{lan_iface}", "tailscale0", "wg0" }`. ICMPv6 neighbor discovery (nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert) remains global as required for IPv6 link-layer operation. Web UI ports (8080/8443) accept traffic from LAN, tailscale0, and wg0 for remote management via Tailscale and WireGuard VPN. DNS (port 53) remains LAN-only — WireGuard peers cannot use the router's DNS resolver or ad-blocking (see issue #64).
-
-## 7. No CSRF protection on form endpoints
-
-**What:** Form POST endpoints (`/api/login`, `/api/setup`, `/api/approve`, `/api/block`, etc.) rely only on `SameSite=Strict` cookies for CSRF protection. There are no CSRF tokens.
-
-**Why:** Simplicity. `SameSite=Strict` prevents cross-origin form submissions in modern browsers.
-
-**Risk:** Older browsers that don't enforce `SameSite` are vulnerable. A malicious page could trick the user into submitting forms (blocking devices, changing groups, adding port forwards).
-
-**Proper fix:** Add a per-session CSRF token to all forms and validate it server-side.
-
-**Status: Fixed.** Origin-based CSRF protection middleware validates `Sec-Fetch-Site` header (preferred) and `Origin` vs `Host` header (fallback) on all non-safe HTTP methods. Same-origin requests are allowed; cross-origin requests return 403. Requests with neither header (non-browser clients like curl) are allowed through. This provides equivalent protection to CSRF tokens for all browsers that send `Sec-Fetch-Site` (Chrome 76+, Firefox 90+, Safari 16.4+) or `Origin` headers.
-
-## 8. No rate limiting on login
-
-**What:** The `/api/login` endpoint has no rate limiting or account lockout. An attacker can brute-force passwords.
-
-**Why:** Not implemented. Argon2 hashing adds some natural slowdown.
-
-**Risk:** Sustained brute-force attacks against the login form, especially if exposed on LAN where multiple devices could coordinate.
-
-**Proper fix:** Track failed login attempts by IP and add exponential backoff or temporary lockout after N failures.
-
-**Status: FIXED.** Exponential backoff (1s, 2s, 4s... 60s cap) on both agent (global counter in `verify_password` and `setup_password`) and web UI (middleware returning 429). State is in-memory, resets on restart.
-
 ## 9. Docker container mounts full /run/hermitshell directory
 
 **What:** The web UI container mounts `-v /run/hermitshell:/run/hermitshell` (the entire directory) instead of just the socket file.
@@ -114,16 +38,6 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Acceptable as-is given the directory's contents. If sensitive files are added later, consider a dedicated socket subdirectory or use a named socket with inotify-based reconnection in the client.
 
-## 10. Session cookie lacks Secure flag
-
-**What:** The session cookie is set with `HttpOnly; SameSite=Strict; Path=/` but without the `Secure` flag.
-
-**Why:** The HTTP listener only serves redirects to HTTPS, so the cookie should never be sent over plain HTTP in practice. However, without the `Secure` flag, a MITM could potentially intercept it if the user is tricked into visiting an HTTP URL.
-
-**Proper fix:** Add `Secure` to the cookie: `session=...; HttpOnly; Secure; SameSite=Strict; Path=/`.
-
-**Status: Fixed.** `Secure` flag added to login, logout, and rolling-refresh `Set-Cookie` headers.
-
 ## 11. Single admin account with no username
 
 **What:** There is only one admin account. The session cookie payload is `admin:TIMESTAMP` with no configurable username.
@@ -133,74 +47,6 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** No audit trail for who performed actions. No way to revoke access for one user without rotating the shared secret.
 
 **Proper fix:** Add per-user accounts if multi-admin is ever needed. For single-admin, this is acceptable for the threat model.
-
----
-
-## Input Validation
-
-## 12. import_config bypasses all validation
-
-**What:** The `import_config` handler (`socket.rs:740-800`) imports devices, port forwards, and DHCP reservations from a JSON blob. Unlike the individual `add_port_forward`, `set_device_group`, and `dhcp_discover` handlers, import skips all validation: no IP validation on port forward targets, no group name whitelist, no hostname sanitization, no port range checks.
-
-**Why:** The import was written as a bulk insert to restore backups. Validation was assumed to have been applied when the data was originally created.
-
-**Risk:** A crafted config file can inject invalid IPs into port forwarding rules (potential nftables injection), invalid group names (breaking firewall rules), or unsanitized hostnames (XSS if the web UI doesn't escape them). Since `export_config` output is trusted, the main risk is a user importing a hand-edited or malicious JSON file.
-
-**Proper fix:** Apply the same validation used by individual handlers: `validate_ip` for port forward IPs, group name whitelist check, `sanitize_hostname()` for hostnames, and port range validation (`ext_end >= ext_start`, ports > 0).
-
-**Status: Fixed.** `import_config` now validates all imported data before modifying the database (validate-then-apply). Validation uses the same checks as individual handlers: `validate_mac()` for all MACs (devices, reservations, pinholes), group name whitelist (`quarantine|trusted|iot|guest|servers`), `sanitize_hostname()` for device hostnames, `validate_ip()` for port forward IPs, protocol whitelist (`tcp|udp|both` for port forwards, `tcp|udp` for pinholes), and port range validation. If any field fails validation, the entire import is rejected with a descriptive error and no data is changed.
-
-## 13. SQL injection pattern in VACUUM INTO
-
-**What:** `db.rs:vacuum_into()` uses `format!("VACUUM INTO '{}'", path)` to build the SQL query. The path is string-interpolated directly into SQL.
-
-**Why:** SQLite doesn't support parameterized queries for `VACUUM INTO`. The path is currently hardcoded to `/data/hermitshell/hermitshell-backup.db` in the calling code.
-
-**Risk:** If the function is ever exposed to user-controlled input, a path containing `'` could break out of the SQL string. Currently safe because the caller uses a hardcoded path.
-
-**Proper fix:** Add path validation in `vacuum_into()`: reject paths containing `'`, or whitelist only alphanumeric, `/`, `-`, `_`, `.` characters.
-
-**Status: Fixed.** Eliminated the attack surface entirely: `vacuum_into()` replaced with `vacuum_into_backup()` which takes no path parameter. The backup path is a compile-time constant (`Db::BACKUP_PATH`) embedded in the SQL string literal. No user input reaches the query.
-
-## 14. Port forwarding description field is unbounded
-
-**What:** The `description` field in `add_port_forward` has no length limit. Stored in SQLite and rendered in the web UI.
-
-**Why:** Not validated — it's a free-text label.
-
-**Risk:** A very large description could cause performance issues in the DB and UI. If Leptos doesn't escape output properly, it could be an XSS vector (though Leptos escapes by default).
-
-**Proper fix:** Truncate to a reasonable limit (e.g., 256 characters) in the `add_port_forward` handler.
-
-**Status: Fixed.** `add_port_forward` rejects descriptions longer than 256 characters.
-
----
-
-## Container and Service Hardening
-
-## 15. Docker container runs as root
-
-**What:** The Dockerfile has no `USER` directive. The web UI process runs as root (UID 0) inside the container.
-
-**Why:** Simplicity. The container needs to bind ports 80 and 443 (privileged ports) and access the agent socket.
-
-**Risk:** If the web UI is compromised, the attacker has root inside the container. With `--network host`, this means full network access on the host.
-
-**Proper fix:** Add a non-root user, use `setcap cap_net_bind_service` on the binary to allow privileged port binding, and ensure the socket is readable by the container user.
-
-**Status: Fixed.** The standalone web UI Dockerfile creates a `hermitshell` user (UID/GID 1000) and sets `USER hermitshell`. The web UI binds high ports (8080/8443) with nftables DNAT redirecting 80→8080 and 443→8443. The agent socket is `0660` (see issue #49) so the container user must be in the socket's group to access it. Docker run adds `--read-only --cap-drop ALL --security-opt no-new-privileges`.
-
-## 16. Systemd service missing hardening directives
-
-**What:** `hermitshell-agent.service` has `ProtectHome=yes`, `ProtectSystem=strict`, and `PrivateTmp=yes`, but is missing several hardening options.
-
-**Why:** Basic hardening was applied; exhaustive hardening was not prioritized.
-
-**Risk:** The agent runs as root with more privileges than necessary. A compromised agent could access devices, change kernel parameters, or pivot to other services.
-
-**Proper fix:** Add: `NoNewPrivileges=yes`, `PrivateDevices=yes`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK`, `RestrictNamespaces=yes`, `LockPersonality=yes`, `MemoryDenyWriteExecute=yes`. Note: `AF_NETLINK` is needed for nftables and `ip` commands; `AF_INET6` is needed for DHCPv6 and IPv6 routing.
-
-**Status: Fixed.** Added 13 hardening directives: `NoNewPrivileges`, `PrivateDevices`, `RestrictAddressFamilies` (AF_UNIX/INET/INET6/NETLINK), `RestrictNamespaces`, `LockPersonality`, `MemoryDenyWriteExecute`, `RestrictSUIDSGID`, `ProtectClock`, `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKernelLogs`, `ProtectControlGroups`, `RestrictRealtime`.
 
 ---
 
@@ -216,18 +62,6 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Use `tempfile::NamedTempFile` to create a file with a unique, unpredictable name and restricted permissions (0600).
 
-## 18. Backup file created with default permissions
-
-**What:** `VACUUM INTO` creates the backup file with the process umask (likely 0644). The backup contains the full database including device MACs, IPs, and network topology.
-
-**Why:** SQLite's `VACUUM INTO` doesn't support setting file permissions.
-
-**Risk:** Other processes on the system can read the backup. Low risk given the agent runs as root and `/data/hermitshell/` should be root-owned.
-
-**Proper fix:** `chmod 0600` the backup file after creation.
-
-**Status: Fixed.** Backup file is now `chmod 0600` after creation.
-
 ---
 
 ## Rate Limiting and Resource Exhaustion
@@ -242,83 +76,9 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Add a connection semaphore or counter. Reject new connections above a threshold (e.g., 100 concurrent).
 
-## 20. No password maximum length
-
-**What:** The setup form checks `password.len() < 8` but has no upper bound. Argon2 will happily hash a multi-megabyte password.
-
-**Why:** Oversight.
-
-**Risk:** An attacker can POST a very large password to the setup or login endpoint, causing high CPU usage from Argon2 hashing. This is a denial-of-service vector.
-
-**Proper fix:** Add `|| form.password.len() > 128` to the validation check.
-
-**Status: Fixed.** Both `verify_password` and `setup_password` IPC methods reject passwords over 128 bytes. The web UI `handle_setup` also checks `form.password.len() > 128`.
-
 ---
 
 ## Untrusted Network Input
-
-## 21. DHCP hostname from LAN clients is not length-bounded at the network layer
-
-**What:** The DHCP server (`hermitshell-dhcp/src/main.rs:209`) accepts the raw hostname from DHCP Option 12 without any length or character check, then sends it verbatim over IPC to the agent. The agent's `sanitize_hostname()` (`socket.rs:13`) strips invalid characters and truncates to 63 chars, but the full unsanitized string crosses the DHCP→agent IPC boundary first. DHCPv6 does not carry hostnames the same way (there is no Option 12 equivalent), but the DHCPv6 path extracts the client MAC from the DUID, which is used for device identification instead.
-
-**Why:** Validation was deferred to the agent side. The dhcproto library parses the option into a String without length enforcement.
-
-**Risk:** A malicious DHCP client can send an arbitrarily large hostname (up to the 1500-byte UDP packet limit). This wastes IPC bandwidth and causes unnecessary allocations. The actual DB storage is safe because `sanitize_hostname()` truncates, but log messages may include the raw value before sanitization. The DHCPv6 path is not affected by this specific issue since it does not process hostnames, but the DUID parsing has its own validation concerns (see issue #29).
-
-**Proper fix:** Truncate and validate in the DHCP handler before sending to the agent: reject hostnames > 255 bytes or containing non-printable characters.
-
-**Status: Fixed.** `sanitize_hostname()` added to the DHCP server — filters to `[a-zA-Z0-9._-]` and truncates to 63 chars before IPC. The agent retains its own `sanitize_hostname()` as defense-in-depth.
-
-## 22. DHCP discover_times and DHCPv6 solicit_times HashMaps grow without bound
-
-**What:** The DHCP server (`hermitshell-dhcp/src/main.rs:53`) uses `HashMap<String, Instant>` to rate-limit DHCPDISCOVER messages (10-second cooldown per MAC). The DHCPv6 server uses a similar `solicit_times` HashMap to rate-limit DHCPv6 SOLICIT messages. Entries are never evicted in either map — every unique MAC that sends a DISCOVER or SOLICIT is stored forever.
-
-**Why:** Simplicity. Rate limiting was added but eviction was not.
-
-**Risk:** An attacker on the LAN can send DHCPDISCOVER or DHCPv6 SOLICIT packets with spoofed MAC addresses (different source MAC each time). Each unique MAC adds a HashMap entry. Over hours/days, this exhausts the DHCP/DHCPv6 server's memory. The MAC validation (`is_valid_mac`) filters broadcast and multicast MACs, but there are ~140 trillion valid unicast MACs.
-
-**Proper fix:** Periodically evict entries older than 60 seconds, or cap the HashMap size and evict the oldest entry when full. A simple approach: every 1000 packets, remove entries where `elapsed() > 60s`. Apply the same eviction strategy to both `discover_times` and `solicit_times`.
-
-**Status: Fixed.** Both `discover_times` and `solicit_times` replaced with `LruCache` (cap 10,000 entries). When full, the least-recently-seen MAC is evicted automatically.
-
-## 23. DHCP/DHCPv6 servers accept packets from any source on the LAN interface
-
-**What:** The DHCP server binds to `0.0.0.0:67` and the DHCPv6 server binds to `[::]:547` on the LAN interface. Both process all valid packets without source validation — any device that can send a UDP packet to port 67 (DHCP) or 547 (DHCPv6) on the LAN interface gets an address allocation.
-
-**Why:** This is how DHCP/DHCPv6 works — clients don't have IPs yet when they send DISCOVER/SOLICIT, so you can't filter by source IP. The LAN interface binding provides the boundary.
-
-**Risk:** This is expected DHCP/DHCPv6 behavior, but it means any device physically connected to the LAN (or bridged to it) can claim addresses. A rogue device can exhaust the address pool by requesting allocations with many spoofed MACs. The agent allocates /32 point-to-point IPv4 addresses from 10.0.0.0/16 plus /128 ULA IPv6 addresses per device, giving 16,580,355 possible device allocations (up from ~16,000 with the old /30 subnet scheme). DHCPv6 has the same MAC spoofing risk — a client can use a different DUID per request to appear as a new device each time.
-
-**Proper fix:** Add a maximum device limit in the agent's `dhcp_discover` handler. When the device count exceeds a threshold (e.g., 1000), reject new allocations. Apply the same limit to the DHCPv6 `dhcpv6_solicit` handler. Consider alerting the admin.
-
-**Status: Mitigated.** The LRU cap on DHCP rate-limit maps (#22) bounds the rate of new device registrations from MAC-spoofing attacks. The architectural 16.5M device limit in `db.rs` remains as the hard cap.
-
-## 24. set_config allows overwriting critical keys without restriction
-
-**What:** The `set_config` IPC method (`socket.rs:590`) accepts any key/value pair and writes it to the config table. This includes `admin_password_hash` (overwrite the admin password), `session_secret` (invalidate all sessions or set a known secret), `wg_private_key` (replace the WireGuard key), and `tls_cert_pem`/`tls_key_pem` (replace the TLS certificate).
-
-**Why:** The web UI needs to write some config values (password hash during setup, session secret, TLS cert on first run). No write restriction was implemented.
-
-**Risk:** Any process with socket access can reset the admin password, set a known session secret (forging auth cookies), or replace the TLS certificate with an attacker-controlled one. This is the same access level as issue #1, but for writes — the combination means full takeover via the socket.
-
-**Mitigating factor:** Socket access is required — the socket is `0660` (see issue #49), so only root and group members can connect.
-
-**Proper fix:** Write-protect critical keys: `admin_password_hash` should only be writable via a dedicated `setup` or `change_password` IPC method. `wg_private_key` should be agent-internal. `session_secret` should be auto-generated and never externally writable.
-
-**Status: Fixed.** `set_config` now blocks writes to the same five keys. Password changes go through `setup_password` (requires current password). Session secret and TLS cert are agent-generated. Attempts to read or write blocked keys are logged as warnings.
-
-## 25. Port forwarding can shadow management services
-
-**What:** A user can create port forwards for ports 22 (SSH), 80/443 (web UI), 53 (DNS), or 67 (DHCP). The DNAT rules are applied to the WAN interface, but there's no check against forwarding ports that the router itself uses.
-
-**Why:** Not validated. The nftables rules operate on WAN-inbound traffic, so LAN management access is unaffected, but WAN-side management is impacted.
-
-**Risk:** Forwarding WAN port 22 to an internal host means the admin can no longer SSH to the router from the WAN (if SSH were WAN-accessible). Forwarding port 53 could redirect external DNS queries. Low severity because WAN management access is already limited by the input chain.
-
-**Proper fix:** Reject port forwards for ports in a reserved set: `{22, 53, 67, 68, 80, 443, 51820}`. Or warn the user in the web UI.
-
-**Status: Mitigated.** WAN hardening (#5, #6) blocks SSH and ICMP on WAN, reducing the set of shadowable services. Additionally, overlapping port forward ranges are now rejected — the agent checks all existing forwards before inserting a new one and rejects if the external port range and protocol overlap with any existing forward. The system-port shadowing risk is further reduced because no management services are WAN-accessible (only WireGuard, which is dynamically opened). A static reserved-port check was not added because WAN hardening made it redundant.
 
 ## 26. Web UI form handlers silently discard errors
 
@@ -412,20 +172,6 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Acceptable for the threat model. A challenge-response protocol (e.g., SRP) would avoid sending the plaintext, but adds significant complexity for no practical security gain on a local socket.
 
-## 34. Argon2 hashing holds the database mutex
-
-**What:** The `verify_password` and `setup_password` handlers acquire the database mutex lock and hold it through the Argon2 hash/verify operation. Argon2 is intentionally slow (~100ms-1s depending on parameters), blocking all other IPC methods that need DB access during that time.
-
-**Why:** The agent uses a single `Mutex<Db>` for all database access. The password handlers need to read from the DB (get the stored hash) and the Argon2 operation is performed while the lock is held.
-
-**Risk:** During password verification or setup, all other IPC requests (device listing, DHCP, config reads) are blocked. Under normal usage this is a brief delay on infrequent operations. Under brute-force attack, the attacker effectively DoS-es the entire agent IPC.
-
-**Mitigating factor:** Logins are infrequent. Issue #8 (no rate limiting) is the more direct concern — rate limiting would prevent sustained blocking.
-
-**Proper fix:** Read the hash from the DB, drop the lock, perform Argon2, then re-acquire for writes. This requires splitting the operation but keeps the mutex held for only microseconds.
-
-**Status: Fixed.** Both handlers now scope the DB lock to just `get_config`/`set_config` calls. Argon2 verify and hash run with the DB mutex released. A separate `PasswordLock` (`Mutex<()>`) serializes `setup_password` to prevent TOCTOU races on concurrent password changes without holding the DB lock.
-
 ## 35. No memory zeroization of secret material
 
 **What:** The `session_secret`, `admin_password_hash`, TLS private key, and plaintext passwords during verification are held in standard Rust `String` values. When dropped, the memory is freed but not zeroed — the secret data may linger in the process heap until overwritten by a future allocation.
@@ -446,18 +192,6 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Encrypt secrets at rest using a key derived from a hardware identifier or TPM, if available. Alternatively, use short-lived OAuth tokens instead of long-lived Export API tokens.
 
-## 37. TLS certificate verification disabled for runZero API
-
-**What:** The reqwest client in `runzero.rs` uses `danger_accept_invalid_certs(true)` when connecting to the runZero console.
-
-**Why:** Self-hosted runZero consoles commonly use self-signed TLS certificates. Requiring valid certs would prevent most self-hosted deployments from working without a custom CA configuration path.
-
-**Risk:** An attacker in a man-in-the-middle position on the network path between the router and the runZero console could intercept the API token and asset data. The token is read-only, limiting the impact.
-
-**Proper fix:** Add a `runzero_ca_cert` config option that allows the user to upload a custom CA certificate for the runZero console. Use this CA cert for TLS verification instead of disabling it entirely.
-
-**Status: Fixed.** The `runzero_ca_cert` config option allows uploading a custom CA certificate for the runZero console. When set, TLS verification uses system trust roots plus the custom CA. When not set, only system trust roots are used. `danger_accept_invalid_certs` has been removed.
-
 ## 38. Speed test makes outbound HTTP requests to admin-configured URL
 
 **What:** The QoS speed test feature uses `reqwest` to make HTTP GET/POST requests from the router to a URL configured by the admin.
@@ -467,18 +201,6 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** SSRF — if the admin configures a URL pointing to an internal service (e.g., `http://10.0.0.5:8080/admin`), the router will make a request to it on the admin's behalf. Mitigated by rejecting private/loopback IP ranges (10.x, 172.16-31.x, 192.168.x, 127.x, ::1, fd00::) when the host is an IP literal. However, DNS hostnames bypass the check entirely — a hostname resolving to a private IP (e.g., `http://attacker.example.com` → `127.0.0.1`) is accepted.
 
 **Proper fix:** Resolve the hostname to an IP before the `is_public_ip` check. The admin already has full router access, so SSRF provides no privilege escalation — the validation prevents accidental misconfiguration rather than a real attack vector.
-
-## 39. refresh_session only checks absolute timeout, not idle timeout
-
-**What:** The `refresh_session` IPC method verifies the HMAC and checks the absolute timeout (8 hours), but does not check the idle timeout (30 minutes). It will reissue a token for any session that hasn't exceeded its absolute lifetime, regardless of how long it has been idle.
-
-**Why:** The auth middleware always calls `verify_session` (which checks both idle and absolute timeouts) before calling `refresh_session`. An idle-expired token is rejected at the `verify_session` step and never reaches `refresh_session`.
-
-**Risk:** A direct IPC caller (not going through the web UI middleware) could refresh an idle-expired token by calling `refresh_session` directly, bypassing the idle timeout. The socket is `0660` (see issue #49), so only root and group members can do this.
-
-**Proper fix:** Add idle timeout checking to `refresh_session` so it is self-contained. This would make the IPC API consistent — both methods enforce both timeouts.
-
-**Status: Fixed.** `refresh_session` now checks both idle timeout (`now - last_active > SESSION_IDLE_TIMEOUT_SECS`) and absolute timeout (`now - created > SESSION_ABSOLUTE_TIMEOUT_SECS`) before issuing a refreshed token.
 
 ## 40. Stateless sessions cannot be individually revoked
 
@@ -500,56 +222,6 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Acceptable for the threat model — root access is already game over. If persistence is needed later, store failure counts in SQLite with a TTL column.
 
-## 42. Web UI rate limiting uses global counter, not per-IP
-
-**What:** The web UI rate limit middleware uses a single global `(failures, last_failure)` counter rather than tracking per source IP.
-
-**Why:** Simplicity. Per-IP tracking was not implemented. The container uses `--network host`, so real client IPs are visible on the socket — they are available but not extracted.
-
-**Risk:** A brute-force attack from one client locks out all clients, including the legitimate admin. On a single-admin LAN appliance this is low risk, but it means a malicious LAN device could DoS the admin UI by sending repeated wrong passwords.
-
-**Proper fix:** Use Axum's `ConnectInfo<SocketAddr>` extractor to get the client IP, then switch the middleware to a per-IP `HashMap<IpAddr, (u32, Option<Instant>)>` with LRU eviction.
-
-**Status: Fixed.** Rate limiting now uses `LruCache<IpAddr, (u32, Instant)>` capped at 1,000 entries. Client IP extracted via `ConnectInfo<SocketAddr>` injected from the HTTPS accept loop. One client's brute-force attempts no longer affect other clients.
-
-## 43. setup_password not rate-limited at web UI layer
-
-**What:** The web UI rate limit middleware only applies to `/api/login*` paths, not `/api/setup_password*`. The agent-side rate limiter still protects `setup_password`.
-
-**Why:** `setup_password` returns HTTP 500 for multiple non-brute-force reasons (password already set without current password, too short, too long). Counting these as failed login attempts caused false-positive lockouts during normal operation and broke integration tests.
-
-**Risk:** An attacker can brute-force the current password via `setup_password` without web UI rate limiting. The agent-side rate limiter still applies (shared counter with `verify_password`), so this is defense-in-depth reduction, not a bypass.
-
-**Proper fix:** Distinguish brute-force failures (wrong current password → HTTP 422) from validation errors (HTTP 500) in the middleware, and only count 422 responses as failures.
-
-**Status: Fixed.** The per-IP rate limit middleware now applies to both `/api/login*` and `/api/setup_password*` paths. All non-success responses count as failures.
-
-## 44. DHCP server IPC has no read timeout
-
-**What:** The `agent_request()` function (`hermitshell-dhcp/src/main.rs:168`) opens a blocking `UnixStream` to the agent and calls `read_line()` with no timeout. If the agent hangs or crashes mid-response, the DHCP server blocks indefinitely.
-
-**Why:** Simplicity. The agent is expected to always respond promptly.
-
-**Risk:** The DHCP server is single-threaded (synchronous event loop). A hung agent blocks the entire DHCP server — no new clients can get addresses until the process is restarted. The DHCPv6 server runs in a separate thread and is independently affected (it also uses `agent_request()`).
-
-**Proper fix:** Call `stream.set_read_timeout(Some(Duration::from_secs(5)))` before `read_line()` in `agent_request()`. On timeout, log the error and return `Err` so the DHCP handler can continue processing other packets.
-
-**Status: Fixed.** `agent_request()` now calls `stream.set_read_timeout(Some(Duration::from_secs(5)))` after connecting. On timeout, `read_line()` returns an I/O error which propagates to callers. DHCP handlers already handle errors by logging and skipping the reply, so the client retries via standard DHCP backoff.
-
-## 45. Agent IPC read_line has no size limit
-
-**What:** The agent's IPC handler (`hermitshell-agent/src/socket.rs:246`) reads lines with `reader.read_line(&mut line)` which grows the buffer until it finds a newline. There is no cap on line length.
-
-**Why:** Simplicity. IPC callers are expected to send well-formed, reasonably-sized JSON.
-
-**Risk:** Any process with socket access can send a multi-gigabyte line (no newline) to exhaust agent memory. The socket is `0660` (see issue #49), so only root and group members can trigger this.
-
-**Mitigating factor:** The DHCP server's requests are bounded by the 1500-byte UDP packet that triggered them, so this is only exploitable by a direct socket client.
-
-**Proper fix:** Use `read_line()` with a size-limited wrapper, or switch to `tokio::io::AsyncBufReadExt::read_line()` with a manual length check. Reject lines longer than 64 KB.
-
-**Status: Fixed.** Both `handle_client` and `handle_dhcp_client` now check `line.len() > 65_536` after `read_line()` and close the connection with a warning if exceeded. The check is post-allocation (tokio reads in 8KB chunks, so the String grows incrementally) but prevents processing and stops further reads. The 64KB limit is well above the largest legitimate request (`import_config`).
-
 ## 46. DHCP server opens a new IPC connection per request
 
 **What:** The `agent_request()` function (`hermitshell-dhcp/src/main.rs:168`) opens a new `UnixStream` for every IPC call. Each DHCP DISCOVER triggers one connection, and each DHCP REQUEST triggers two (one for discover, one for provision).
@@ -559,18 +231,6 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** Under heavy DHCP traffic (many devices joining simultaneously), the DHCP server opens many short-lived connections. Each connection spawns a tokio task in the agent (`socket.rs:233`). This compounds with issue #19 (no connection limiting) — a DHCP flood creates both rate-limit map entries (now bounded by LRU) and agent connections (unbounded).
 
 **Mitigating factor:** The 10-second rate limit per MAC means legitimate traffic creates at most one connection per device per 10 seconds. The risk is primarily from spoofed-MAC floods, which are already mitigated by the LRU cap discarding old entries.
-
-## 47. Container lacks no-new-privileges protection
-
-**What:** The Docker container runs without `--security-opt no-new-privileges`. This means a process inside the container could theoretically escalate privileges via setuid/setgid binaries if any were present.
-
-**Why:** `no-new-privileges` sets the kernel's `PR_SET_NO_NEW_PRIVS` flag, which prevents privilege escalation during `execve` — but it also prevents the kernel from honoring file capabilities set via `setcap`. The container binary uses `setcap cap_net_bind_service=+ep` to bind ports 80/443 as a non-root user. With `no-new-privileges` enabled, this capability is silently ignored and the binary cannot bind privileged ports.
-
-**Risk:** If an attacker compromises the web UI process and can write a setuid binary to the container filesystem, they could escalate to root inside the container. In practice, this is mitigated by `--read-only` (filesystem is immutable) and `--cap-drop ALL --cap-add NET_BIND_SERVICE` (only one capability available). There are no setuid binaries in the Alpine base image after `adduser`/`addgroup`.
-
-**Proper fix:** Switch to high ports (8080/8443) with nftables DNAT rules on the host redirecting 80/443. This would eliminate the need for `cap_net_bind_service` entirely, allowing `no-new-privileges` to be re-enabled. Alternatively, use Docker's ambient capabilities (`--cap-add` with `--security-opt no-new-privileges`) which requires a Docker runtime that supports ambient capability injection (not yet standard).
-
-**Status: Fixed.** Web UI switched to high ports (8080/8443). nftables DNAT redirects 80→8080 and 443→8443 on the LAN interface. `setcap` and `libcap` removed from Dockerfile. `--security-opt no-new-privileges` re-enabled, `--cap-add NET_BIND_SERVICE` removed (no longer needed).
 
 ## 48. Per-IP rate limit cache can be evicted by distributed attack
 
@@ -585,20 +245,6 @@ This document tracks security compromises made during implementation, why they w
 ---
 
 ## Multi-Mode Deployment
-
-## 49. Agent socket is world-readable/writable (0666)
-
-**What:** The agent sets both Unix sockets (`agent.sock` and `dhcp.sock`) to mode `0666`. Previously they were `0660 root:root` with a `chown` to GID 1000.
-
-**Why:** Three deployment modes need socket access from different users: (1) direct mode — the standalone web UI container runs as `hermitshell` (UID/GID 1000), which the old `chown` handled; (2) install mode — `install.sh` creates a `hermitshell` system user with a dynamic UID/GID (not necessarily 1000), so the `chown(GID 1000)` would target the wrong group; (3) docker mode — the all-in-one container runs all processes as root, so no `chown` is needed. Making the socket `0666` is the simplest way to support all three modes without per-mode socket ownership logic.
-
-**Risk:** Any local process can connect to the agent socket and issue IPC commands — listing devices, changing firewall rules, toggling QoS, reading the TLS private key via `get_tls_config`, and brute-forcing the admin password via `verify_password`. Previously, only root and GID 1000 could connect. This broadens the attack surface for issues #1, #3, #19, #32, #33, #39, and #45.
-
-**Mitigating factor:** The router is a single-purpose appliance. In the install mode, only `root` and `hermitshell` user processes should be running. On a dedicated router, there are no untrusted local users. The agent's sensitive key protections (#1 Status: Fixed) and rate limiting (#8 Status: Fixed) still apply regardless of socket permissions.
-
-**Proper fix:** Detect the web UI user at startup and `chown` the socket to match. In install mode, read the `hermitshell` user's GID via `getgrnam("hermitshell")`. In direct mode, use GID 1000 (matching the container user). In docker mode, skip the `chown` entirely (all processes are root). Alternatively, create a `hermitshell` group during install and ensure all web UI processes run with that group, then `chown root:hermitshell 0660`.
-
-**Status: Mitigated.** Socket permissions tightened from `0666` to `0660` (root + group only). The web UI container must run in the same group as the agent to access the socket. Integration tests `chmod 666` the socket after agent restarts so the unprivileged test user can connect.
 
 ## 50. Docker all-in-one container runs with --privileged
 
@@ -642,18 +288,6 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Add TLS syslog (RFC 5425) as an option. Validate that the syslog target is on a local network segment, or warn when targeting WAN addresses.
 
-## 54. WiFi AP credentials stored recoverable by root
-
-**What:** AP login passwords are stored in the SQLite config table. They are readable by the agent process to authenticate to APs.
-
-**Why:** The agent must authenticate to APs to push config and pull client data. Passwords cannot be one-way hashed.
-
-**Risk:** Root on the router box can read AP credentials. Same trust model as WireGuard private key and TLS key.
-
-**Proper fix:** Hardware security module or separate credential store with process-level isolation. Out of scope for a commodity router.
-
-**Status: Mitigated.** Passwords are now encrypted at rest with AES-256-GCM, keyed from session_secret via HKDF-SHA256. Existing plaintext passwords are migrated on startup. Root can still derive the key from the session_secret in the config DB, so this is defense-in-depth, not a complete fix.
-
 ## 55. TLS verification disabled for WiFi AP HTTPS connections
 
 **What:** The EAP standalone provider uses `danger_accept_invalid_certs(true)` when connecting to access points via HTTPS.
@@ -685,18 +319,6 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** Each poll cycle transmits the AP credential hash. Increased exposure window compared to a persistent session. If the polling interval were reduced, reuse of sessions would be feasible.
 
 **Proper fix:** Consider caching the `EapSession` and re-authenticating only when a request returns `timeout:true`. This reduces credential exposure to once per session rather than once per poll.
-
-## 58. Update checker phones home to GitHub
-
-**What:** The agent spawns a background loop that polls `https://api.github.com/repos/jnordwick/hermitshell/releases/latest` every 24 hours using reqwest with a 10-second timeout. The request includes a `User-Agent: hermitshell-agent` header.
-
-**Why:** Users need to know when a new release is available. There is no push notification channel for a self-hosted router appliance, so the agent must poll.
-
-**Risk:** Each check reveals the router's WAN IP and the fact that it runs HermitShell to GitHub (and any network observer). The `User-Agent` header confirms the software identity. GitHub's API may log the IP for rate-limiting purposes.
-
-**Proper fix:** Make the update check opt-in (disabled by default). Add a config key `update_check_enabled` that the setup wizard or settings page can toggle. Use a generic `User-Agent` or omit it entirely. Consider proxying through a project-specific update endpoint that aggregates check counts without logging individual IPs.
-
-**Status: Fixed.** Update checker is now opt-in. Gated on `update_check_enabled` config key, which defaults to `false` (no outbound network calls unless explicitly enabled). The loop checks this flag at startup and each iteration, exiting when disabled. The `check_update` IPC response includes an `enabled` field so the UI can display the current state.
 
 ## 59. Update checker trusts GitHub API response without signature verification
 
@@ -762,30 +384,6 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Add wg0 to the DNS rules: `iifname { "{lan_iface}", "wg0" } tcp dport 53 accept` and `iifname { "{lan_iface}", "wg0" } udp dport 53 accept`.
 
-## 65. WiFi SSID password not validated for length
-
-**What:** The `handle_wifi_set_ssid` handler (`socket/wifi.rs`) validates the SSID name (1-32 chars) and band, but does not validate the WiFi password length before sending it to the AP. WPA-PSK requires 8-63 ASCII characters per IEEE 802.11.
-
-**Why:** Validation was applied to the SSID name but overlooked for the password field, assuming the AP would reject invalid values.
-
-**Risk:** A password shorter than 8 characters or longer than 63 could be sent to the AP. The AP may accept it and enter an inconsistent state, or reject it with an error the agent doesn't distinguish from other failures. An empty password with `wpa-psk` security mode would leave the network open.
-
-**Proper fix:** Validate in `handle_wifi_set_ssid`: reject if security is `wpa-psk` and password length is outside 8-63 characters or contains non-ASCII characters.
-
-**Status: Fixed.** `wifi_set_ssid` validates WPA-PSK passwords are 8-63 ASCII characters. Missing password is rejected for WPA-PSK mode. No validation for `none` security mode.
-
-## 66. import_config does not validate WiFi AP records
-
-**What:** The `handle_import_config` handler (`socket/config.rs`) imports WiFi APs from a backup without validating the `ip`, `name`, or `provider` fields. The handler inserts records directly via `db.insert_wifi_ap()`. In contrast, the individual `handle_wifi_adopt_ap` handler validates IP format (`ip.parse::<IpAddr>()`), name charset and length (1-64 chars, alphanumeric/hyphen/underscore/dot/space), and provider against a whitelist.
-
-**Why:** WiFi AP import was added after `import_config` validation was implemented for devices, port forwards, and DHCP reservations. The AP import section uses best-effort per-entry insertion without the same validation pass.
-
-**Risk:** A crafted or corrupted backup file could insert invalid AP IPs (e.g., `not-an-ip`), causing the WiFi polling loop to fail on connection attempts. Invalid names could contain characters that break audit log parsing. An unknown provider string would cause the polling loop to skip the AP silently.
-
-**Proper fix:** Apply the same validation as `handle_wifi_adopt_ap`: validate IP with `ip.parse::<IpAddr>()`, validate name charset and length, and check provider against the known providers list. Skip invalid entries with a warning rather than inserting them.
-
-**Status: Fixed.** `import_config` validates each WiFi AP before insertion: IP must parse as `IpAddr`, name must be 1-64 alphanumeric characters (plus `- _ . space`), provider must be in the known providers list. Invalid entries are skipped with a warning log.
-
 ## 67. rollup_all_pending holds DB mutex for unbounded time
 
 **What:** The `rollup_all_pending()` method iterates over every unrolled hour since the earliest connection log entry, executing an INSERT+SELECT per hour while holding the DB mutex. On first run after a long uptime (e.g., 1 year = 8,760 hours), this can take seconds to minutes.
@@ -795,28 +393,6 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** While the mutex is held, all other IPC operations are blocked — DHCP provisioning, device management, DNS log ingestion, and all web UI requests. A client calling `run_bandwidth_rollup` could effectively DoS the router's management plane.
 
 **Proper fix:** Cap iterations per call (e.g., max 168 hours per invocation) so the rollup catches up incrementally across multiple hourly triggers, or release and re-acquire the mutex between iterations.
-
-## 68. set_log_config writes webhook_secret via domain-specific handler
-
-**What:** The `handle_set_log_config` handler (`socket/config.rs`) defines a local `allowed_keys` array that includes `"webhook_secret"`. This handler writes matching keys directly via `db.set_config()` without calling `is_blocked_config_key()`. The generic `handle_set_config` handler blocks writes to `webhook_secret`.
-
-**Why:** `set_log_config` is the dedicated write path for `webhook_secret`, just as `set_runzero_config` is the dedicated write path for `runzero_token`. Domain-specific handlers intentionally bypass `BLOCKED_CONFIG_KEYS` because they *are* the controlled access path. The web UI settings form submits the webhook secret through `set_log_config`.
-
-**Risk:** Any IPC client with socket access can set the webhook secret via `set_log_config`. This is by design — the socket is `0660` (see #49) and `set_log_config` is the intended configuration interface. The `BLOCKED_CONFIG_KEYS` mechanism prevents accidental exposure through the generic `get_config`/`set_config` catch-all, not through domain-specific handlers.
-
-**Status: Not a vulnerability.** This follows the same pattern as `set_runzero_config` writing `runzero_token` and `set_runzero_config` writing `runzero_ca_cert`. The `get_config` read path correctly blocks `webhook_secret`.
-
-## 69. Arbitrary audit log injection via log_audit
-
-**What:** The `handle_log_audit` handler (`socket/logs.rs`) accepts arbitrary `action` and `detail` strings and writes them to the audit log table. There is no validation on action name (no allowlist, no length limit, no character filtering) and no length limit on the detail string.
-
-**Why:** The handler was designed to allow external callers (e.g., the web UI) to record audit events. Input validation was not applied.
-
-**Risk:** A process with socket access could flood the audit log with fake entries, inject entries that mimic legitimate admin actions (undermining forensic analysis), or insert very large strings to grow the database. The audit log is informational and not used for access control.
-
-**Proper fix:** Add length limits on the `action` field (max 64 chars) and `detail` field (max 512 chars). Consider restricting `action` to a whitelist of known action names.
-
-**Status: Fixed.** `log_audit` rejects action strings longer than 64 characters and detail strings longer than 512 characters.
 
 ## 70. Speed test blocks tokio runtime thread for up to 30 seconds
 
@@ -828,18 +404,6 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Use `tokio::spawn` to run the speed test asynchronously, return a "test started" response immediately, and provide a separate IPC method to poll for results. Alternatively, reject concurrent speed test requests.
 
-## 71. set_config has no value length limit
-
-**What:** The `handle_set_config` handler (`socket/config.rs`) writes any key/value pair to the config table (after the blocked-key check) with no length validation on the value.
-
-**Why:** No explicit length validation was added. The 64KB IPC message limit provides an implicit per-request cap.
-
-**Risk:** Repeated writes of near-64KB values to many different keys could grow the SQLite database. Requires socket access (0660 permissions).
-
-**Proper fix:** Add a value length limit (e.g., 4KB) in `handle_set_config`. Config values that legitimately need more space (PEM certificates, JSON blobs) already have dedicated handlers that bypass `set_config`.
-
-**Status: Fixed.** `set_config` rejects values longer than 4,096 bytes. Config values that need more space (PEM certificates, JSON blobs) use dedicated handlers that bypass `set_config`.
-
 ## 72. HKDF key derivation for WiFi passwords uses no salt
 
 **What:** The `derive_key` function (`crypto.rs`) calls `Hkdf::<Sha256>::new(None, session_secret.as_bytes())` with `None` for the salt parameter. The HKDF output is deterministic for a given session_secret.
@@ -849,18 +413,6 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** Theoretically suboptimal per RFC 5869 recommendations, but practically safe given the high-entropy IKM and per-encryption random nonces.
 
 **Proper fix:** Use a fixed application-specific salt (e.g., `b"hermitshell-wifi-encryption-salt-v1"`) for defense-in-depth per RFC 5869 Section 3.1.
-
-## 73. Device nickname lacks character sanitization
-
-**What:** The `handle_set_device_nickname` handler (`socket/devices.rs`) passes the nickname to `db.set_device_nickname()` with only a length check (max 64 chars). No character validation is performed. The nickname is rendered in the web UI and included in audit log messages.
-
-**Why:** Character validation was not applied. Leptos escapes HTML output by default, limiting XSS risk.
-
-**Risk:** Control characters (newlines, tabs, null bytes) or Unicode RTL override characters in nicknames could cause log injection or display rendering issues. Leptos HTML escaping prevents XSS in the web UI.
-
-**Proper fix:** Strip control characters (ASCII 0x00-0x1F, 0x7F) and restrict to printable Unicode, similar to `sanitize_hostname()` but allowing spaces.
-
-**Status: Fixed.** `set_device_nickname` strips all control characters (ASCII 0x00-0x1F, 0x7F, and Unicode control chars) before storage. Spaces and printable Unicode are preserved. The 64-character length limit is retained.
 
 ## 74. ingest_dns_logs and run_analysis have no rate limiting
 
