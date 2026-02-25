@@ -276,6 +276,10 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
     while reader.read_line(&mut line).await? > 0 {
+        if line.len() > 65_536 {
+            warn!("request exceeds 64KB limit, closing connection");
+            return Ok(());
+        }
         let response = match serde_json::from_str::<Request>(&line) {
             Ok(req) => {
                 if let Some(ref mac) = req.mac {
@@ -422,6 +426,10 @@ async fn handle_dhcp_client(stream: UnixStream, db: Arc<Mutex<Db>>, lan_iface: S
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
     while reader.read_line(&mut line).await? > 0 {
+        if line.len() > 65_536 {
+            warn!("request exceeds 64KB limit, closing connection");
+            return Ok(());
+        }
         let response = match serde_json::from_str::<Request>(&line) {
             Ok(req) => handle_dhcp_request(req, &db, &lan_iface),
             Err(e) => Response::err(&format!("Invalid JSON: {}", e)),
