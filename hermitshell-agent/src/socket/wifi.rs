@@ -1,5 +1,18 @@
 use super::*;
 
+/// Validate a PEM-encoded CA certificate string. Returns error message on failure.
+fn validate_ca_cert_pem(pem: &str) -> Result<(), String> {
+    let mut reader = std::io::BufReader::new(pem.as_bytes());
+    let certs: Vec<_> = rustls_pemfile::certs(&mut reader).collect();
+    if certs.is_empty() {
+        return Err("no certificate found in PEM data".to_string());
+    }
+    if let Some(Err(e)) = certs.iter().find(|c| c.is_err()) {
+        return Err(format!("invalid PEM certificate: {}", e));
+    }
+    Ok(())
+}
+
 pub(super) fn handle_wifi_list_aps(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let db = db.lock().unwrap();
     match db.list_wifi_aps() {
