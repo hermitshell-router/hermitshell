@@ -24,6 +24,9 @@ pub(super) fn handle_set_config(req: &Request, db: &Arc<Mutex<Db>>) -> Response 
         return Response::err("access denied");
     }
     let Some(ref value) = req.value else { return Response::err("value required"); };
+    if value.len() > 4096 {
+        return Response::err("value too long (max 4096 bytes)");
+    }
     let db = db.lock().unwrap();
     match db.set_config(key, value) {
         Ok(()) => Response::ok(),
