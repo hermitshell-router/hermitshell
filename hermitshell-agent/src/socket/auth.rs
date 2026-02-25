@@ -155,8 +155,15 @@ pub(super) fn handle_verify_session(req: &Request, db: &Arc<Mutex<Db>>) -> Respo
         let sig = &value[dot_pos + 1..];
         let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key size");
         mac.update(payload.as_bytes());
-        let expected = hex::encode(mac.finalize().into_bytes());
-        if sig != expected {
+        let sig_bytes = match hex::decode(sig) {
+            Ok(b) => b,
+            Err(_) => return {
+                let mut resp = Response::ok();
+                resp.config_value = Some("false".to_string());
+                resp
+            },
+        };
+        if mac.verify_slice(&sig_bytes).is_err() {
             false
         } else {
             let parts: Vec<&str> = payload.splitn(3, ':').collect();
@@ -202,8 +209,11 @@ pub(super) fn handle_refresh_session(req: &Request, db: &Arc<Mutex<Db>>) -> Resp
     let sig = &value[dot_pos + 1..];
     let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key size");
     mac.update(payload.as_bytes());
-    let expected = hex::encode(mac.finalize().into_bytes());
-    if sig != expected {
+    let sig_bytes = match hex::decode(sig) {
+        Ok(b) => b,
+        Err(_) => return Response::err("invalid signature"),
+    };
+    if mac.verify_slice(&sig_bytes).is_err() {
         return Response::err("invalid signature");
     }
     let parts: Vec<&str> = payload.splitn(3, ':').collect();
