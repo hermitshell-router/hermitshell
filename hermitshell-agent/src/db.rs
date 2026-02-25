@@ -2,7 +2,8 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 pub use hermitshell_common::{
-    Alert, AuditEntry, ConnectionLog, Device, DhcpReservation, DnsLogEntry, PortForward, WgPeer,
+    Alert, AuditEntry, BandwidthPoint, BandwidthRealtime, ConnectionLog, Device,
+    DhcpReservation, DnsLogEntry, PortForward, TopDestination, WgPeer,
     WifiAp, WifiClient, WifiRadioConfig, WifiSsidConfig,
 };
 
@@ -282,6 +283,33 @@ impl Db {
             conn.execute(
                 "INSERT INTO config (key, value) VALUES ('schema_version', '4')
                  ON CONFLICT(key) DO UPDATE SET value = '4'",
+                [],
+            )?;
+        }
+
+        if version < 5 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS bandwidth_hourly (
+                    device_mac TEXT NOT NULL,
+                    hour_bucket INTEGER NOT NULL,
+                    rx_bytes INTEGER NOT NULL DEFAULT 0,
+                    tx_bytes INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (device_mac, hour_bucket)
+                );
+                CREATE TABLE IF NOT EXISTS bandwidth_daily (
+                    device_mac TEXT NOT NULL,
+                    day_bucket INTEGER NOT NULL,
+                    rx_bytes INTEGER NOT NULL DEFAULT 0,
+                    tx_bytes INTEGER NOT NULL DEFAULT 0,
+                    top_destinations TEXT,
+                    PRIMARY KEY (device_mac, day_bucket)
+                );
+                CREATE INDEX IF NOT EXISTS idx_bw_hourly_bucket ON bandwidth_hourly(hour_bucket);
+                CREATE INDEX IF NOT EXISTS idx_bw_daily_bucket ON bandwidth_daily(day_bucket);"
+            )?;
+            conn.execute(
+                "INSERT INTO config (key, value) VALUES ('schema_version', '5')
+                 ON CONFLICT(key) DO UPDATE SET value = '5'",
                 [],
             )?;
         }
