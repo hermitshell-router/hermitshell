@@ -90,7 +90,11 @@ assert_match "$result" '"ok":true' "re-adopt AP for UI tests"
 TEST_CA_PEM=$(vm_exec router 'openssl req -x509 -newkey rsa:2048 -keyout /dev/null -out /dev/stdout -days 1 -nodes -subj "/CN=testca" 2>/dev/null')
 
 # --- wifi_set_ap_ca_cert ---
-CA_REQ=$(python3 -c "import json; print(json.dumps({'method': 'wifi_set_ap_ca_cert', 'mac': 'aa:bb:cc:dd:ee:01', 'value': '''$TEST_CA_PEM'''}))")
+CA_REQ=$(python3 -c "
+import json
+pem = '''$TEST_CA_PEM'''
+print(json.dumps({'method': 'wifi_set_ap_ca_cert', 'mac': 'aa:bb:cc:dd:ee:01', 'value': pem}))
+")
 result=$(echo "$CA_REQ" | vm_exec router 'socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$result" '"ok":true' "wifi_set_ap_ca_cert succeeds"
 

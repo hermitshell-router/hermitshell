@@ -65,8 +65,12 @@ fi
 TEST_CA_PEM=$(vm_exec router 'openssl req -x509 -newkey rsa:2048 -keyout /dev/null -out /dev/stdout -days 1 -nodes -subj "/CN=testca" 2>/dev/null')
 
 # --- set runzero CA cert ---
-CA_JSON=$(python3 -c "import json; print(json.dumps({'runzero_ca_cert': '''$TEST_CA_PEM'''}))")
-REQ_JSON=$(python3 -c "import json; print(json.dumps({'method': 'set_runzero_config', 'value': '''$CA_JSON'''}))")
+REQ_JSON=$(python3 -c "
+import json, sys
+pem = '''$TEST_CA_PEM'''
+inner = json.dumps({'runzero_ca_cert': pem})
+print(json.dumps({'method': 'set_runzero_config', 'value': inner}))
+")
 result=$(echo "$REQ_JSON" | vm_exec router 'socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$result" '"ok":true' "set_runzero_config with CA cert succeeds"
 
@@ -79,14 +83,20 @@ result=$(vm_exec router "echo '{\"method\":\"get_config\",\"key\":\"runzero_ca_c
 assert_match "$result" '"ok":false' "get_config blocks runzero_ca_cert"
 
 # --- invalid PEM rejected ---
-INVALID_JSON=$(python3 -c "import json; print(json.dumps({'runzero_ca_cert': 'not-a-cert'}))")
-INVALID_REQ=$(python3 -c "import json; print(json.dumps({'method': 'set_runzero_config', 'value': '''$INVALID_JSON'''}))")
+INVALID_REQ=$(python3 -c "
+import json
+inner = json.dumps({'runzero_ca_cert': 'not-a-cert'})
+print(json.dumps({'method': 'set_runzero_config', 'value': inner}))
+")
 result=$(echo "$INVALID_REQ" | vm_exec router 'socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$result" '"ok":false' "set_runzero_config rejects invalid PEM"
 
 # --- clear CA cert ---
-CLEAR_JSON=$(python3 -c "import json; print(json.dumps({'runzero_ca_cert': ''}))")
-CLEAR_REQ=$(python3 -c "import json; print(json.dumps({'method': 'set_runzero_config', 'value': '''$CLEAR_JSON'''}))")
+CLEAR_REQ=$(python3 -c "
+import json
+inner = json.dumps({'runzero_ca_cert': ''})
+print(json.dumps({'method': 'set_runzero_config', 'value': inner}))
+")
 result=$(echo "$CLEAR_REQ" | vm_exec router 'socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$result" '"ok":true' "set_runzero_config clears CA cert"
 
