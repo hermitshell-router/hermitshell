@@ -660,7 +660,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Add a `wifi_ap_ca_cert` config option allowing the user to upload a custom CA certificate per AP. Same approach as the runZero TLS fix (#37).
 
-**Status: Fixed.** Each WiFi AP record supports an optional `ca_cert_pem` field for a custom CA certificate. When set, TLS verification uses system trust roots plus the custom CA. When not set, only system trust roots are used. `danger_accept_invalid_certs` has been removed.
+**Status: Partially fixed.** Each WiFi AP record supports an optional `ca_cert_pem` field for a custom CA certificate. The WiFi AP client uses native-tls (OpenSSL) to support legacy TLS found on IoT devices (1024-bit RSA, non-ECDHE ciphers). `danger_accept_invalid_certs` remains enabled because consumer APs like the EAP720 have certificates too weak for OpenSSL's default security level. The CA cert is stored for audit/documentation and will be enforced for TLS verification once AP firmware supports modern crypto (2048-bit+ RSA/ECC, forward-secrecy ciphers). The runZero client (#37) uses rustls with proper CA cert validation since self-hosted servers typically have modern TLS.
 
 ## 56. AP password sent as MD5 hash, not plaintext TLS-protected
 
