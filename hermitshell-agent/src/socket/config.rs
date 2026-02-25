@@ -688,11 +688,14 @@ pub(super) fn handle_check_update(_req: &Request, db: &Arc<Mutex<Db>>) -> Respon
     let current = env!("CARGO_PKG_VERSION").to_string();
     let latest = db.get_config("update_latest_version").ok().flatten();
     let last_check = db.get_config("update_last_check").ok().flatten();
+    let enabled = db.get_config("update_check_enabled").ok().flatten()
+        .map(|v| v == "true").unwrap_or(false);
     let mut resp = Response::ok();
     resp.update_info = Some(serde_json::json!({
         "current_version": current,
         "latest_version": latest,
         "last_check": last_check,
+        "enabled": enabled,
     }));
     resp
 }

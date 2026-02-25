@@ -28,11 +28,14 @@ fn build_os_string(asset: &RunZeroAsset) -> Option<String> {
     }
 }
 
-pub async fn sync_once(db: &Arc<Mutex<Db>>, url: &str, token: &str) -> Result<usize> {
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .timeout(Duration::from_secs(30))
-        .build()?;
+pub async fn sync_once(db: &Arc<Mutex<Db>>, url: &str, token: &str, ca_cert_pem: Option<&str>) -> Result<usize> {
+    let mut builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30));
+    if let Some(pem) = ca_cert_pem {
+        let cert = reqwest::Certificate::from_pem(pem.as_bytes())?;
+        builder = builder.add_root_certificate(cert);
+    }
+    let client = builder.build()?;
 
     let resp = client
         .get(format!("{}/api/v1.0/export/org/assets.json", url.trim_end_matches('/')))
@@ -73,7 +76,7 @@ pub async fn run(db: Arc<Mutex<Db>>) {
     loop {
         check_interval.tick().await;
 
-        let (enabled, url, token, sync_secs) = {
+        let (enabled, url, token, sync_secs, ca_cert) = {
             let db = db.lock().unwrap();
             let enabled = db.get_config_bool("runzero_enabled", false);
             let url = db.get_config("runzero_url").ok().flatten().unwrap_or_default();
@@ -82,7 +85,9 @@ pub async fn run(db: Arc<Mutex<Db>>) {
                 .ok().flatten()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(3600);
-            (enabled, url, token, sync_secs)
+            let ca_cert = db.get_config("runzero_ca_cert").ok().flatten()
+                .filter(|c| !c.is_empty());
+            (enabled, url, token, sync_secs, ca_cert)
         };
 
         if !enabled || url.is_empty() || token.is_empty() {
@@ -90,7 +95,7 @@ pub async fn run(db: Arc<Mutex<Db>>) {
         }
 
         info!("runZero sync starting");
-        match sync_once(&db, &url, &token).await {
+        match sync_once(&db, &url, &token, ca_cert.as_deref()).await {
             Ok(matched) => info!(matched, "runZero sync complete"),
             Err(e) => warn!(error = %e, "runZero sync failed"),
         }
