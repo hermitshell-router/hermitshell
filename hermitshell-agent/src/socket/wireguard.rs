@@ -109,6 +109,9 @@ pub(super) fn handle_add_wg_peer(req: &Request, db: &Arc<Mutex<Db>>) -> Response
     let Some(ref name) = req.name else {
         return Response::err("name required");
     };
+    if name.is_empty() || sanitize_hostname(name) != *name {
+        return Response::err("invalid peer name (alphanumeric, hyphens, dots, underscores; max 63 chars)");
+    }
     let Some(ref public_key) = req.public_key else {
         return Response::err("public_key required");
     };
