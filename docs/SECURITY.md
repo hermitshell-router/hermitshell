@@ -204,15 +204,15 @@ This document tracks security compromises made during implementation, why they w
 
 ## Temporary Files and Permissions
 
-## 17. WireGuard private key left in /tmp on error
+## 17. WireGuard private key written to predictable /tmp path
 
-**What:** `wireguard.rs` writes the WG private key to `/tmp/hermitshell-wg-key`, runs `wg set`, then deletes it. If `wg set` fails (the `?` operator returns early), the key file is never deleted.
+**What:** `wireguard.rs` writes the WG private key to `/tmp/hermitshell-wg-key`, runs `wg set`, then deletes it. The path is hardcoded and predictable, creating a theoretical symlink race window between the `fs::write()` and the `wg set` read.
 
-**Why:** No cleanup-on-error pattern was implemented.
+**Why:** The `wg` command requires a file path for the private key. A fixed path was chosen for simplicity.
 
-**Risk:** The WireGuard private key sits in `/tmp` unencrypted until the next successful call or reboot. With `PrivateTmp=yes` in systemd, it's in a private namespace, but still readable by the agent process.
+**Risk:** A local attacker could replace the file with a symlink between write and read, causing `wg set` to read from an attacker-controlled location or causing the write to overwrite a symlink target. Mitigated by `PrivateTmp=yes` in systemd (the agent's `/tmp` is a private namespace) and the agent running as root. The race window is microseconds. The error-path key leak from the original implementation is fixed — cleanup runs unconditionally before the status check.
 
-**Proper fix:** Restructure to always clean up: capture the result, delete the file, then propagate the error. Or use a `Drop` guard pattern.
+**Proper fix:** Use `tempfile::NamedTempFile` to create a file with a unique, unpredictable name and restricted permissions (0600).
 
 ## 18. Backup file created with default permissions
 
@@ -462,9 +462,9 @@ This document tracks security compromises made during implementation, why they w
 
 **Why:** Needed to measure WAN link speed for CAKE qdisc bandwidth configuration.
 
-**Risk:** SSRF — if the admin configures a URL pointing to an internal service (e.g., `http://10.0.0.5:8080/admin`), the router will make a request to it on the admin's behalf. Mitigated by rejecting private/loopback IP ranges (10.x, 172.16-31.x, 192.168.x, 127.x, ::1, fd00::) in the URL.
+**Risk:** SSRF — if the admin configures a URL pointing to an internal service (e.g., `http://10.0.0.5:8080/admin`), the router will make a request to it on the admin's behalf. Mitigated by rejecting private/loopback IP ranges (10.x, 172.16-31.x, 192.168.x, 127.x, ::1, fd00::) when the host is an IP literal. However, DNS hostnames bypass the check entirely — a hostname resolving to a private IP (e.g., `http://attacker.example.com` → `127.0.0.1`) is accepted.
 
-**Proper fix:** The IP validation is sufficient for the threat model. The admin already has full router access, so SSRF provides no privilege escalation. The validation prevents accidental misconfiguration rather than a real attack vector.
+**Proper fix:** Resolve the hostname to an IP before the `is_public_ip` check. The admin already has full router access, so SSRF provides no privilege escalation — the validation prevents accidental misconfiguration rather than a real attack vector.
 
 ## 39. refresh_session only checks absolute timeout, not idle timeout
 
@@ -475,6 +475,8 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** A direct IPC caller (not going through the web UI middleware) could refresh an idle-expired token by calling `refresh_session` directly, bypassing the idle timeout. The socket is `0660` (see issue #49), so only root and group members can do this.
 
 **Proper fix:** Add idle timeout checking to `refresh_session` so it is self-contained. This would make the IPC API consistent — both methods enforce both timeouts.
+
+**Status: Fixed.** `refresh_session` now checks both idle timeout (`now - last_active > SESSION_IDLE_TIMEOUT_SECS`) and absolute timeout (`now - created > SESSION_ABSOLUTE_TIMEOUT_SECS`) before issuing a refreshed token.
 
 ## 40. Stateless sessions cannot be individually revoked
 
@@ -660,7 +662,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Add a `wifi_ap_ca_cert` config option allowing the user to upload a custom CA certificate per AP. Same approach as the runZero TLS fix (#37).
 
-**Status: Partially fixed.** Each WiFi AP record supports an optional `ca_cert_pem` field for a custom CA certificate. The WiFi AP client uses native-tls (OpenSSL) to support legacy TLS found on IoT devices (1024-bit RSA, non-ECDHE ciphers). `danger_accept_invalid_certs` remains enabled because consumer APs like the EAP720 have certificates too weak for OpenSSL's default security level. The CA cert is stored for audit/documentation and will be enforced for TLS verification once AP firmware supports modern crypto (2048-bit+ RSA/ECC, forward-secrecy ciphers). The runZero client (#37) uses rustls with proper CA cert validation since self-hosted servers typically have modern TLS.
+**Status: Partially fixed.** Each WiFi AP record supports an optional `ca_cert_pem` field for a custom CA certificate. The WiFi AP client uses native-tls (OpenSSL) to support legacy TLS found on IoT devices (1024-bit RSA, non-ECDHE ciphers). `danger_accept_invalid_certs` remains enabled unconditionally — even when a CA cert is uploaded, TLS verification is not enforced. The CA cert is currently stored for audit/fingerprinting purposes only and provides **no verification benefit**. A MITM attacker presenting any certificate will be accepted regardless of the CA cert setting. The runZero client (#37) uses rustls with proper CA cert validation since self-hosted servers typically have modern TLS.
 
 ## 56. AP password sent as MD5 hash, not plaintext TLS-protected
 
@@ -730,9 +732,9 @@ This document tracks security compromises made during implementation, why they w
 
 **Why:** Users need the ability to fully restore a router from backup without re-entering every credential. Requiring encryption adds friction that may prevent users from making backups at all.
 
-**Risk:** If the backup file is compromised, an attacker gains all router credentials. The admin password hash (Argon2id) still requires cracking, but WireGuard keys, TLS keys, and API tokens are immediately usable.
+**Risk:** If the backup file is compromised, an attacker gains all router credentials. The admin password hash (Argon2id) still requires cracking, but WireGuard keys, TLS keys, and API tokens are immediately usable. Additionally, the `export_config` IPC method returns all secrets as cleartext JSON over the Unix socket when `include_secrets` is true and no passphrase is given — any process with socket access can obtain every credential in a single request.
 
-**Proper fix:** Always use `--encrypt` with a strong passphrase. The encrypted backup uses Argon2id key derivation (m=64MB, t=3) + AES-256-GCM, making brute-force impractical with a decent passphrase. Store backup files with restricted permissions (0600) and on encrypted storage.
+**Proper fix:** Always use `--encrypt` with a strong passphrase. The encrypted backup uses Argon2id key derivation (m=64MB, t=3) + AES-256-GCM, making brute-force impractical with a decent passphrase. Store backup files with restricted permissions (0600) and on encrypted storage. Consider requiring a passphrase for any export that includes secrets.
 
 ## 63. Backup passphrase in URL query parameter
 
@@ -787,3 +789,73 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** While the mutex is held, all other IPC operations are blocked — DHCP provisioning, device management, DNS log ingestion, and all web UI requests. A client calling `run_bandwidth_rollup` could effectively DoS the router's management plane.
 
 **Proper fix:** Cap iterations per call (e.g., max 168 hours per invocation) so the rollup catches up incrementally across multiple hourly triggers, or release and re-acquire the mutex between iterations.
+
+## 68. set_log_config bypasses BLOCKED_CONFIG_KEYS for webhook_secret
+
+**What:** The `handle_set_log_config` handler (`socket/config.rs`) defines a local `allowed_keys` array that includes `"webhook_secret"`. This handler writes matching keys directly via `db.set_config()` without calling `is_blocked_config_key()`. The generic `handle_set_config` handler correctly blocks writes to `webhook_secret`, but `set_log_config` is a separate code path that sidesteps this check.
+
+**Why:** The log config handler was written with its own allowlist for convenience, not realizing `webhook_secret` was later added to the global blocked keys list.
+
+**Risk:** Any IPC client can overwrite `webhook_secret` via `set_log_config`, enabling them to set a known HMAC secret and forge authenticated webhook payloads. This bypasses the protection documented in #24.
+
+**Proper fix:** Remove `"webhook_secret"` from the `allowed_keys` array in `handle_set_log_config`, or add an `is_blocked_config_key()` check within the write loop.
+
+## 69. Arbitrary audit log injection via log_audit
+
+**What:** The `handle_log_audit` handler (`socket/logs.rs`) accepts arbitrary `action` and `detail` strings and writes them to the audit log table. There is no validation on action name (no allowlist, no length limit, no character filtering) and no length limit on the detail string.
+
+**Why:** The handler was designed to allow external callers (e.g., the web UI) to record audit events. Input validation was not applied.
+
+**Risk:** A process with socket access could flood the audit log with fake entries, inject entries that mimic legitimate admin actions (undermining forensic analysis), or insert very large strings to grow the database. The audit log is informational and not used for access control.
+
+**Proper fix:** Add length limits on the `action` field (max 64 chars) and `detail` field (max 512 chars). Consider restricting `action` to a whitelist of known action names.
+
+## 70. Speed test blocks tokio runtime thread for up to 30 seconds
+
+**What:** The `handle_run_speed_test` handler calls `tokio::task::block_in_place()` to run the HTTP download synchronously. The speed test has a 30-second timeout (`qos.rs`). During this time, one tokio worker thread is blocked.
+
+**Why:** The speed test needs synchronous integration with the IPC response pattern. `block_in_place` was the simplest approach.
+
+**Risk:** While the speed test runs, the blocked worker thread cannot serve other async tasks. Multiple concurrent speed test requests would block multiple threads. The speed test is admin-triggered, so concurrent requests are unlikely.
+
+**Proper fix:** Use `tokio::spawn` to run the speed test asynchronously, return a "test started" response immediately, and provide a separate IPC method to poll for results. Alternatively, reject concurrent speed test requests.
+
+## 71. set_config has no value length limit
+
+**What:** The `handle_set_config` handler (`socket/config.rs`) writes any key/value pair to the config table (after the blocked-key check) with no length validation on the value.
+
+**Why:** No explicit length validation was added. The 64KB IPC message limit provides an implicit per-request cap.
+
+**Risk:** Repeated writes of near-64KB values to many different keys could grow the SQLite database. Requires socket access (0660 permissions).
+
+**Proper fix:** Add a value length limit (e.g., 4KB) in `handle_set_config`. Config values that legitimately need more space (PEM certificates, JSON blobs) already have dedicated handlers that bypass `set_config`.
+
+## 72. HKDF key derivation for WiFi passwords uses no salt
+
+**What:** The `derive_key` function (`crypto.rs`) calls `Hkdf::<Sha256>::new(None, session_secret.as_bytes())` with `None` for the salt parameter. The HKDF output is deterministic for a given session_secret.
+
+**Why:** The session_secret is a 256-bit random value with sufficient entropy. Each encryption uses a unique random 12-byte nonce, so ciphertexts are not repeated.
+
+**Risk:** Theoretically suboptimal per RFC 5869 recommendations, but practically safe given the high-entropy IKM and per-encryption random nonces.
+
+**Proper fix:** Use a fixed application-specific salt (e.g., `b"hermitshell-wifi-encryption-salt-v1"`) for defense-in-depth per RFC 5869 Section 3.1.
+
+## 73. Device nickname lacks character sanitization
+
+**What:** The `handle_set_device_nickname` handler (`socket/devices.rs`) passes the nickname to `db.set_device_nickname()` with only a length check (max 64 chars). No character validation is performed. The nickname is rendered in the web UI and included in audit log messages.
+
+**Why:** Character validation was not applied. Leptos escapes HTML output by default, limiting XSS risk.
+
+**Risk:** Control characters (newlines, tabs, null bytes) or Unicode RTL override characters in nicknames could cause log injection or display rendering issues. Leptos HTML escaping prevents XSS in the web UI.
+
+**Proper fix:** Strip control characters (ASCII 0x00-0x1F, 0x7F) and restrict to printable Unicode, similar to `sanitize_hostname()` but allowing spaces.
+
+## 74. ingest_dns_logs and run_analysis have no rate limiting
+
+**What:** The `ingest_dns_logs` and `run_analysis` IPC methods are available to any socket client with no rate limiting. These trigger expensive operations: DNS log file parsing with DB inserts, and behavioral analysis across all connection/DNS data.
+
+**Why:** These operations are normally triggered by the agent's own background loops (every 10 seconds for DNS ingestion, every 5 minutes for analysis). The IPC methods exist for manual triggering.
+
+**Risk:** An IPC client could call these in a tight loop to cause sustained CPU and I/O load, degrading agent responsiveness. Socket access requires group membership (0660 permissions).
+
+**Proper fix:** Add a debounce (reject if last invocation was < 10 seconds ago), or make them internal-only by removing from the public method routing table.
