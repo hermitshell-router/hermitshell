@@ -78,7 +78,8 @@ pub(super) fn handle_export_config(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
     let config_keys = [
         "ad_blocking_enabled", "wg_listen_port", "dmz_host_ip", "log_format",
         "syslog_target", "webhook_url", "log_retention_days", "runzero_url",
-        "runzero_sync_interval", "runzero_enabled", "qos_enabled", "qos_upload_mbps",
+        "runzero_sync_interval", "runzero_enabled", "runzero_ca_cert",
+        "qos_enabled", "qos_upload_mbps",
         "qos_download_mbps", "qos_test_url",
         // v2 additions
         "wg_enabled", "tls_mode", "analyzer_enabled",
@@ -156,10 +157,14 @@ pub(super) fn handle_export_config(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
             "device_group": p.device_group, "enabled": p.enabled
         })).collect::<Vec<_>>(),
         "ipv6_pinholes": pinholes,
-        "wifi_aps": wifi_aps.iter().map(|ap| serde_json::json!({
-            "mac": ap.mac, "ip": ap.ip, "name": ap.name, "provider": ap.provider,
-            "model": ap.model, "firmware": ap.firmware, "enabled": ap.enabled
-        })).collect::<Vec<_>>(),
+        "wifi_aps": wifi_aps.iter().map(|ap| {
+            let ca_cert_pem = db.get_wifi_ap_ca_cert(&ap.mac).ok().flatten();
+            serde_json::json!({
+                "mac": ap.mac, "ip": ap.ip, "name": ap.name, "provider": ap.provider,
+                "model": ap.model, "firmware": ap.firmware, "enabled": ap.enabled,
+                "ca_cert_pem": ca_cert_pem,
+            })
+        }).collect::<Vec<_>>(),
         "config": config_map,
         "secrets": secrets_value,
         "secrets_encrypted": secrets_encrypted,
@@ -355,6 +360,12 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, wan_iface
             if !enabled {
                 let _ = db.set_wifi_ap_enabled(mac, false);
             }
+
+            // Import CA cert if present
+            let ca_cert = ap.get("ca_cert_pem").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+            if let Some(pem) = ca_cert {
+                let _ = db.set_wifi_ap_ca_cert(mac, Some(pem));
+            }
         }
     }
 
@@ -364,7 +375,8 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, wan_iface
             match key.as_str() {
                 "ad_blocking_enabled" | "wg_listen_port" | "dmz_host_ip" | "log_format"
                 | "syslog_target" | "webhook_url" | "log_retention_days" | "runzero_url"
-                | "runzero_sync_interval" | "runzero_enabled" | "qos_enabled" | "qos_upload_mbps"
+                | "runzero_sync_interval" | "runzero_enabled" | "runzero_ca_cert"
+                | "qos_enabled" | "qos_upload_mbps"
                 | "qos_download_mbps" | "qos_test_url"
                 | "wg_enabled" | "tls_mode" | "analyzer_enabled"
                 | "alert_rule_dns_beaconing" | "alert_rule_dns_volume_spike"
@@ -539,18 +551,20 @@ pub(super) fn handle_set_runzero_config(req: &Request, db: &Arc<Mutex<Db>>) -> R
 }
 
 pub(super) fn handle_sync_runzero(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
-    let (url, token) = {
+    let (url, token, ca_cert) = {
         let db = db.lock().unwrap();
         let url = db.get_config("runzero_url").ok().flatten().unwrap_or_default();
         let token = db.get_config("runzero_token").ok().flatten().unwrap_or_default();
-        (url, token)
+        let ca_cert = db.get_config("runzero_ca_cert").ok().flatten()
+            .filter(|c| !c.is_empty());
+        (url, token, ca_cert)
     };
     if url.is_empty() || token.is_empty() {
         return Response::err("runzero_url and runzero_token must be configured");
     }
     let db_clone = db.clone();
     tokio::task::spawn(async move {
-        match crate::runzero::sync_once(&db_clone, &url, &token).await {
+        match crate::runzero::sync_once(&db_clone, &url, &token, ca_cert.as_deref()).await {
             Ok(n) => info!(matched = n, "manual runZero sync complete"),
             Err(e) => warn!(error = %e, "manual runZero sync failed"),
         }
