@@ -21,6 +21,9 @@ pub(super) fn handle_add_port_forward(req: &Request, db: &Arc<Mutex<Db>>, wan_if
     let Some(ref internal_ip) = req.internal_ip else { return Response::err("internal_ip required"); };
     let Some(int_port) = req.internal_port else { return Response::err("internal_port required"); };
     let desc = req.description.as_deref().unwrap_or("");
+    if desc.len() > 256 {
+        return Response::err("description too long (max 256 characters)");
+    }
     match protocol.as_str() {
         "tcp" | "udp" | "both" => {}
         _ => return Response::err("protocol must be tcp, udp, or both"),
