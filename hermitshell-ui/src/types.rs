@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 pub use hermitshell_common::{
-    AuditEntry, Device, DhcpReservation, PortForward,
+    AuditEntry, BandwidthPoint, BandwidthRealtime, Device, DhcpReservation,
+    PortForward, TopDestination,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

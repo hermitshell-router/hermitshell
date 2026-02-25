@@ -41,6 +41,9 @@ pub struct Response {
     pub wifi_radios: Option<Vec<hermitshell_common::WifiRadioConfig>>,
     pub interfaces: Option<Vec<hermitshell_common::NetworkInterface>>,
     pub update_info: Option<serde_json::Value>,
+    pub bandwidth_history: Option<Vec<hermitshell_common::BandwidthPoint>>,
+    pub bandwidth_realtime: Option<Vec<hermitshell_common::BandwidthRealtime>>,
+    pub top_destinations: Option<Vec<hermitshell_common::TopDestination>>,
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
@@ -499,6 +502,35 @@ pub fn set_interfaces(wan: &str, lan: &str) -> Result<(), String> {
 pub fn check_update() -> Result<serde_json::Value, String> {
     let resp = ok_or_err(send(json!({"method": "check_update"}))?)?;
     resp.update_info.ok_or_else(|| "no update_info in response".to_string())
+}
+
+pub fn get_bandwidth_history(device_mac: Option<&str>, period: &str) -> Result<Vec<hermitshell_common::BandwidthPoint>, String> {
+    let mut req = json!({"method": "get_bandwidth_history", "period": period});
+    if let Some(mac) = device_mac {
+        req["device_mac"] = serde_json::Value::String(mac.to_string());
+    }
+    let resp = ok_or_err(send(req)?)?;
+    Ok(resp.bandwidth_history.unwrap_or_default())
+}
+
+pub fn get_bandwidth_realtime() -> Result<Vec<hermitshell_common::BandwidthRealtime>, String> {
+    let resp = ok_or_err(send(json!({"method": "get_bandwidth_realtime"}))?)?;
+    Ok(resp.bandwidth_realtime.unwrap_or_default())
+}
+
+pub fn get_top_destinations(device_mac: &str, period: &str, limit: i64) -> Result<Vec<hermitshell_common::TopDestination>, String> {
+    let resp = ok_or_err(send(json!({
+        "method": "get_top_destinations",
+        "device_mac": device_mac,
+        "period": period,
+        "limit": limit,
+    }))?)?;
+    Ok(resp.top_destinations.unwrap_or_default())
+}
+
+pub fn run_bandwidth_rollup() -> Result<String, String> {
+    let resp = ok_or_err(send(json!({"method": "run_bandwidth_rollup"}))?)?;
+    Ok(resp.config_value.unwrap_or_default())
 }
 
 #[cfg(test)]
