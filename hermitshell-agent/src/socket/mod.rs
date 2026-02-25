@@ -51,6 +51,9 @@ const SESSION_ABSOLUTE_TIMEOUT_SECS: u64 = 28800; // 8 hours
 type LoginRateLimit = Arc<Mutex<(u32, Option<std::time::Instant>)>>;
 type PasswordLock = Arc<Mutex<()>>;
 
+/// In-memory real-time bandwidth map: IP -> (prev_rx, prev_tx, curr_rx, curr_tx, poll_time)
+pub type BandwidthRealtimeMap = Arc<Mutex<std::collections::HashMap<String, (i64, i64, i64, i64, std::time::Instant)>>>;
+
 /// Check if login is currently rate-limited. Returns error message if blocked.
 fn check_login_rate_limit(rate_limit: &LoginRateLimit) -> Option<String> {
     let state = rate_limit.lock().unwrap();
@@ -129,6 +132,8 @@ struct Request {
     include_secrets: Option<bool>,
     passphrase: Option<String>,
     ca_cert: Option<String>,
+    period: Option<String>,
+    device_mac: Option<String>,
 }
 
 /// JSON response envelope. `ok` indicates success; `error` carries failure details.
@@ -201,6 +206,12 @@ struct Response {
     interfaces: Option<Vec<hermitshell_common::NetworkInterface>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     update_info: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bandwidth_history: Option<Vec<crate::db::BandwidthPoint>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bandwidth_realtime: Option<Vec<crate::db::BandwidthRealtime>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_destinations: Option<Vec<crate::db::TopDestination>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -238,7 +249,7 @@ impl Response {
 }
 
 /// Start the main Unix socket API server that handles all agent commands.
-pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>) -> Result<()> {
+pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, bandwidth_rt: BandwidthRealtimeMap) -> Result<()> {
     // Remove stale socket from previous run (ignore: may not exist)
     let _ = std::fs::remove_file(socket_path);
     if let Some(parent) = std::path::Path::new(socket_path).parent() {
@@ -263,15 +274,16 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
         let ltx = log_tx.clone();
         let lrl = login_rate_limit.clone();
         let pwl = password_lock.clone();
+        let brt = bandwidth_rt.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_client(stream, db, start, blocky, wan, lan, ltx, lrl, pwl).await {
+            if let Err(e) = handle_client(stream, db, start, blocky, wan, lan, ltx, lrl, pwl, brt).await {
                 warn!(error = %e, "client error");
             }
         });
     }
 }
 
-async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: LoginRateLimit, password_lock: PasswordLock) -> Result<()> {
+async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: LoginRateLimit, password_lock: PasswordLock, bandwidth_rt: BandwidthRealtimeMap) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
@@ -291,7 +303,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                             | "wifi_get_radios" | "wifi_set_radio" => {
                                 wifi::handle_wifi_async(&req, &db).await
                             }
-                            _ => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock),
+                            _ => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt),
                         }
                     }
                 } else {
@@ -300,7 +312,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                         | "wifi_get_radios" | "wifi_set_radio" => {
                             wifi::handle_wifi_async(&req, &db).await
                         }
-                        _ => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock),
+                        _ => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt),
                     }
                 }
             }
@@ -314,7 +326,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
     Ok(())
 }
 
-fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: &Arc<Mutex<BlockyManager>>, wan_iface: &str, lan_iface: &str, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: &LoginRateLimit, password_lock: &PasswordLock) -> Response {
+fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: &Arc<Mutex<BlockyManager>>, wan_iface: &str, lan_iface: &str, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: &LoginRateLimit, password_lock: &PasswordLock, bandwidth_rt: &BandwidthRealtimeMap) -> Response {
     if let Some(ref mac) = req.mac {
         if let Err(e) = nftables::validate_mac(mac) {
             return Response::err(&e.to_string());
@@ -391,6 +403,10 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "check_update" => config::handle_check_update(&req, db),
         "list_interfaces" => setup::handle_list_interfaces(&req, db),
         "set_interfaces" => setup::handle_set_interfaces(&req, db),
+        "get_bandwidth_history" => logs::handle_get_bandwidth_history(&req, db),
+        "get_bandwidth_realtime" => logs::handle_get_bandwidth_realtime(&req, db, bandwidth_rt),
+        "get_top_destinations" => logs::handle_get_top_destinations(&req, db),
+        "run_bandwidth_rollup" => logs::handle_run_bandwidth_rollup(&req, db),
         _ => Response::err("unknown method"),
     }
 }

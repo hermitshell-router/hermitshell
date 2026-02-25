@@ -710,8 +710,11 @@ async fn main() -> Result<()> {
     let wan_for_socket = wan_iface.to_string();
     let lan_for_socket = lan_iface.to_string();
     let log_tx_socket = log_tx.clone();
+    let bandwidth_realtime: crate::socket::BandwidthRealtimeMap =
+        Arc::new(Mutex::new(std::collections::HashMap::new()));
+    let bandwidth_rt_for_socket = bandwidth_realtime.clone();
     tokio::spawn(async move {
-        if let Err(e) = socket::run_server(SOCKET_PATH, db_clone, start_time, blocky_clone, wan_for_socket, lan_for_socket, log_tx_socket).await {
+        if let Err(e) = socket::run_server(SOCKET_PATH, db_clone, start_time, blocky_clone, wan_for_socket, lan_for_socket, log_tx_socket, bandwidth_rt_for_socket).await {
             error!(error = %e, "socket server error");
         }
     });
@@ -801,6 +804,16 @@ async fn main() -> Result<()> {
                         if let Err(e) = db_guard.update_counters(ip, rx, tx) {
                             error!(ip = %ip, error = %e, "failed to update counters");
                         }
+                        // Update real-time throughput map
+                        let mut rt = bandwidth_realtime.lock().unwrap();
+                        let now_inst = std::time::Instant::now();
+                        if let Some(entry) = rt.get(ip.as_str()).cloned() {
+                            // Shift current to prev, set new current
+                            rt.insert(ip.clone(), (entry.2, entry.3, rx, tx, now_inst));
+                        } else {
+                            rt.insert(ip.clone(), (rx, tx, rx, tx, now_inst));
+                        }
+                        drop(rt);
                     }
                     Err(e) => debug!(ip = %ip, error = %e, "failed to get counters"),
                 }
@@ -834,6 +847,23 @@ async fn main() -> Result<()> {
             }
             if let Err(e) = db_guard.rotate_alerts(retention_days * 86400) {
                 error!(error = %e, "alert rotation failed");
+            }
+            // Bandwidth rollups
+            match db_guard.rollup_all_pending() {
+                Ok((h, d)) => {
+                    if h > 0 || d > 0 {
+                        info!(hourly = h, daily = d, "bandwidth rollup complete");
+                    }
+                }
+                Err(e) => error!(error = %e, "bandwidth rollup failed"),
+            }
+            match db_guard.rotate_bandwidth_rollups() {
+                Ok((h, d)) => {
+                    if h > 0 || d > 0 {
+                        info!(hourly_deleted = h, daily_deleted = d, "bandwidth rollup rotation");
+                    }
+                }
+                Err(e) => error!(error = %e, "bandwidth rollup rotation failed"),
             }
         }
     }

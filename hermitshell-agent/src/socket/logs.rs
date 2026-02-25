@@ -124,3 +124,75 @@ pub(super) fn handle_run_analysis(_req: &Request, db: &Arc<Mutex<Db>>, log_tx: &
     crate::analyzer::run_analysis_cycle(db, log_tx);
     Response::ok()
 }
+
+pub(super) fn handle_get_bandwidth_history(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let period = req.period.as_deref().unwrap_or("24h");
+    let device_mac = req.device_mac.as_deref().or(req.mac.as_deref());
+    let db = db.lock().unwrap();
+    match db.get_bandwidth_history(device_mac, period) {
+        Ok(points) => {
+            let mut resp = Response::ok();
+            resp.bandwidth_history = Some(points);
+            resp
+        }
+        Err(e) => Response::err(&e.to_string()),
+    }
+}
+
+pub(super) fn handle_get_bandwidth_realtime(_req: &Request, db: &Arc<Mutex<Db>>, bandwidth_rt: &super::BandwidthRealtimeMap) -> Response {
+    let db = db.lock().unwrap();
+    let devices = db.list_assigned_devices().unwrap_or_default();
+    let rt = bandwidth_rt.lock().unwrap();
+    let mut results = Vec::new();
+    for dev in &devices {
+        if let Some(ref ip) = dev.ipv4 {
+            if let Some((prev_rx, prev_tx, curr_rx, curr_tx, poll_time)) = rt.get(ip.as_str()) {
+                let elapsed = poll_time.elapsed().as_secs_f64();
+                if elapsed < 30.0 {
+                    let delta_rx = curr_rx - prev_rx;
+                    let delta_tx = curr_tx - prev_tx;
+                    let interval = 10.0_f64; // POLL_INTERVAL_SECS
+                    results.push(crate::db::BandwidthRealtime {
+                        mac: dev.mac.clone(),
+                        ip: ip.clone(),
+                        rx_bps: if delta_rx > 0 { (delta_rx as f64 / interval) as i64 } else { 0 },
+                        tx_bps: if delta_tx > 0 { (delta_tx as f64 / interval) as i64 } else { 0 },
+                    });
+                }
+            }
+        }
+    }
+    let mut resp = Response::ok();
+    resp.bandwidth_realtime = Some(results);
+    resp
+}
+
+pub(super) fn handle_get_top_destinations(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let device_mac = match req.device_mac.as_deref().or(req.mac.as_deref()) {
+        Some(mac) => mac,
+        None => return Response::err("device_mac required"),
+    };
+    let period = req.period.as_deref().unwrap_or("24h");
+    let limit = req.limit.unwrap_or(10).min(50);
+    let db = db.lock().unwrap();
+    match db.get_top_destinations(device_mac, period, limit) {
+        Ok(tops) => {
+            let mut resp = Response::ok();
+            resp.top_destinations = Some(tops);
+            resp
+        }
+        Err(e) => Response::err(&e.to_string()),
+    }
+}
+
+pub(super) fn handle_run_bandwidth_rollup(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let db = db.lock().unwrap();
+    match db.rollup_all_pending() {
+        Ok((h, d)) => {
+            let mut resp = Response::ok();
+            resp.config_value = Some(format!("hourly:{},daily:{}", h, d));
+            resp
+        }
+        Err(e) => Response::err(&e.to_string()),
+    }
+}
