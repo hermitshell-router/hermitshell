@@ -270,6 +270,7 @@ impl Db {
         }
 
         if version < 3 {
+            let _ = conn.execute_batch("ALTER TABLE wifi_aps ADD COLUMN ca_cert_pem TEXT");
             conn.execute(
                 "INSERT INTO config (key, value) VALUES ('schema_version', '3')
                  ON CONFLICT(key) DO UPDATE SET value = '3'",
@@ -1060,9 +1061,10 @@ impl Db {
 
     pub fn list_wifi_aps(&self) -> Result<Vec<hermitshell_common::WifiAp>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ip, name, provider, model, firmware, enabled, last_seen, status FROM wifi_aps"
+            "SELECT mac, ip, name, provider, model, firmware, enabled, last_seen, status, ca_cert_pem FROM wifi_aps"
         )?;
         let rows = stmt.query_map([], |row| {
+            let ca_cert_pem: Option<String> = row.get(9)?;
             Ok(hermitshell_common::WifiAp {
                 mac: row.get(0)?,
                 ip: row.get(1)?,
@@ -1073,7 +1075,7 @@ impl Db {
                 enabled: row.get::<_, i64>(6)? != 0,
                 last_seen: row.get(7)?,
                 status: row.get(8)?,
-                has_ca_cert: false,
+                has_ca_cert: ca_cert_pem.is_some(),
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
@@ -1081,10 +1083,11 @@ impl Db {
 
     pub fn get_wifi_ap(&self, mac: &str) -> Result<Option<hermitshell_common::WifiAp>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ip, name, provider, model, firmware, enabled, last_seen, status FROM wifi_aps WHERE mac = ?1"
+            "SELECT mac, ip, name, provider, model, firmware, enabled, last_seen, status, ca_cert_pem FROM wifi_aps WHERE mac = ?1"
         )?;
         let mut rows = stmt.query([mac])?;
         if let Some(row) = rows.next()? {
+            let ca_cert_pem: Option<String> = row.get(9)?;
             Ok(Some(hermitshell_common::WifiAp {
                 mac: row.get(0)?,
                 ip: row.get(1)?,
@@ -1095,7 +1098,7 @@ impl Db {
                 enabled: row.get::<_, i64>(6)? != 0,
                 last_seen: row.get(7)?,
                 status: row.get(8)?,
-                has_ca_cert: false,
+                has_ca_cert: ca_cert_pem.is_some(),
             }))
         } else {
             Ok(None)
@@ -1150,6 +1153,26 @@ impl Db {
         } else {
             Ok(None)
         }
+    }
+
+    pub fn get_wifi_ap_ca_cert(&self, mac: &str) -> Result<Option<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT ca_cert_pem FROM wifi_aps WHERE mac = ?1"
+        )?;
+        let mut rows = stmt.query([mac])?;
+        if let Some(row) = rows.next()? {
+            Ok(row.get(0)?)
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn set_wifi_ap_ca_cert(&self, mac: &str, ca_cert_pem: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE wifi_aps SET ca_cert_pem = ?1 WHERE mac = ?2",
+            rusqlite::params![ca_cert_pem, mac],
+        )?;
+        Ok(())
     }
 
     pub fn update_device_wifi(&self, mac: &str, ssid: Option<&str>, band: Option<&str>, rssi: Option<i32>, ap_mac: Option<&str>) -> Result<()> {
