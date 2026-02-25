@@ -127,7 +127,15 @@ pub(super) fn handle_run_analysis(_req: &Request, db: &Arc<Mutex<Db>>, log_tx: &
 
 pub(super) fn handle_get_bandwidth_history(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let period = req.period.as_deref().unwrap_or("24h");
+    if !matches!(period, "24h" | "7d" | "30d" | "1y") {
+        return Response::err("invalid period: must be 24h, 7d, 30d, or 1y");
+    }
     let device_mac = req.device_mac.as_deref().or(req.mac.as_deref());
+    if let Some(mac) = device_mac {
+        if let Err(e) = crate::nftables::validate_mac(mac) {
+            return Response::err(&e.to_string());
+        }
+    }
     let db = db.lock().unwrap();
     match db.get_bandwidth_history(device_mac, period) {
         Ok(points) => {
@@ -172,7 +180,13 @@ pub(super) fn handle_get_top_destinations(req: &Request, db: &Arc<Mutex<Db>>) ->
         Some(mac) => mac,
         None => return Response::err("device_mac required"),
     };
+    if let Err(e) = crate::nftables::validate_mac(device_mac) {
+        return Response::err(&e.to_string());
+    }
     let period = req.period.as_deref().unwrap_or("24h");
+    if !matches!(period, "24h" | "7d" | "30d" | "1y") {
+        return Response::err("invalid period: must be 24h, 7d, 30d, or 1y");
+    }
     let limit = req.limit.unwrap_or(10).min(50);
     let db = db.lock().unwrap();
     match db.get_top_destinations(device_mac, period, limit) {

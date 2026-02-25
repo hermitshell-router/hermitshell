@@ -76,7 +76,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** `iifname { "eth1", "eth2" } icmp type echo-request accept` to explicitly list WAN and LAN.
 
-**Status: Fixed.** ICMP echo-request (IPv4 and IPv6) scoped to `iifname { "{lan_iface}", "tailscale0" }`. ICMPv6 neighbor discovery (nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert) remains global as required for IPv6 link-layer operation. Web UI ports (8080/8443) also added tailscale0 for remote management via Tailscale.
+**Status: Fixed.** ICMP echo-request (IPv4 and IPv6) scoped to `iifname { "{lan_iface}", "tailscale0", "wg0" }`. ICMPv6 neighbor discovery (nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert) remains global as required for IPv6 link-layer operation. Web UI ports (8080/8443) accept traffic from LAN, tailscale0, and wg0 for remote management via Tailscale and WireGuard VPN. DNS (port 53) remains LAN-only — WireGuard peers cannot use the router's DNS resolver or ad-blocking (see issue #64).
 
 ## 7. No CSRF protection on form endpoints
 
@@ -743,3 +743,47 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** The passphrase appears in the URL. HTTPS encrypts the URL in transit, so it is not visible on the wire. However, the URL may be logged in browser history, proxy logs (if TLS-terminating), or the `Referer` header on subsequent navigation. The agent does not log query parameters.
 
 **Proper fix:** Use a POST-based download flow with JavaScript: submit the form via `fetch()`, receive the response as a blob, and trigger a download via `URL.createObjectURL()`. This keeps the passphrase in the POST body, out of URL logs. The tradeoff is requiring JavaScript for the download (currently works without JS).
+
+---
+
+## WiFi AP Management
+
+## 64. WireGuard peers cannot use router DNS
+
+**What:** The nftables input chain accepts DNS (TCP/UDP port 53) only from the LAN interface. WireGuard peers can reach the web UI and ping the router via wg0, but cannot use the router's DNS resolver or ad-blocking service.
+
+**Why:** When wg0 was added to the ICMP and web UI rules (issue #6 fix), DNS was not included. The omission was not caught because no integration test exercises DNS resolution through a WireGuard tunnel.
+
+**Risk:** WireGuard VPN peers must use external DNS servers, bypassing the router's ad-blocking and DNS query logging. This defeats a key security feature for remote users who expect the same protection as LAN clients.
+
+**Proper fix:** Add wg0 to the DNS rules: `iifname { "{lan_iface}", "wg0" } tcp dport 53 accept` and `iifname { "{lan_iface}", "wg0" } udp dport 53 accept`.
+
+## 65. WiFi SSID password not validated for length
+
+**What:** The `handle_wifi_set_ssid` handler (`socket/wifi.rs`) validates the SSID name (1-32 chars) and band, but does not validate the WiFi password length before sending it to the AP. WPA-PSK requires 8-63 ASCII characters per IEEE 802.11.
+
+**Why:** Validation was applied to the SSID name but overlooked for the password field, assuming the AP would reject invalid values.
+
+**Risk:** A password shorter than 8 characters or longer than 63 could be sent to the AP. The AP may accept it and enter an inconsistent state, or reject it with an error the agent doesn't distinguish from other failures. An empty password with `wpa-psk` security mode would leave the network open.
+
+**Proper fix:** Validate in `handle_wifi_set_ssid`: reject if security is `wpa-psk` and password length is outside 8-63 characters or contains non-ASCII characters.
+
+## 66. import_config does not validate WiFi AP records
+
+**What:** The `handle_import_config` handler (`socket/config.rs`) imports WiFi APs from a backup without validating the `ip`, `name`, or `provider` fields. The handler inserts records directly via `db.insert_wifi_ap()`. In contrast, the individual `handle_wifi_adopt_ap` handler validates IP format (`ip.parse::<IpAddr>()`), name charset and length (1-64 chars, alphanumeric/hyphen/underscore/dot/space), and provider against a whitelist.
+
+**Why:** WiFi AP import was added after `import_config` validation was implemented for devices, port forwards, and DHCP reservations. The AP import section uses best-effort per-entry insertion without the same validation pass.
+
+**Risk:** A crafted or corrupted backup file could insert invalid AP IPs (e.g., `not-an-ip`), causing the WiFi polling loop to fail on connection attempts. Invalid names could contain characters that break audit log parsing. An unknown provider string would cause the polling loop to skip the AP silently.
+
+**Proper fix:** Apply the same validation as `handle_wifi_adopt_ap`: validate IP with `ip.parse::<IpAddr>()`, validate name charset and length, and check provider against the known providers list. Skip invalid entries with a warning rather than inserting them.
+
+## 67. rollup_all_pending holds DB mutex for unbounded time
+
+**What:** The `rollup_all_pending()` method iterates over every unrolled hour since the earliest connection log entry, executing an INSERT+SELECT per hour while holding the DB mutex. On first run after a long uptime (e.g., 1 year = 8,760 hours), this can take seconds to minutes.
+
+**Why:** The rollup needs consistent reads across the iteration and the current architecture uses a single `Mutex<Db>` for all access.
+
+**Risk:** While the mutex is held, all other IPC operations are blocked — DHCP provisioning, device management, DNS log ingestion, and all web UI requests. A client calling `run_bandwidth_rollup` could effectively DoS the router's management plane.
+
+**Proper fix:** Cap iterations per call (e.g., max 168 hours per invocation) so the rollup catches up incrementally across multiple hourly triggers, or release and re-acquire the mutex between iterations.
