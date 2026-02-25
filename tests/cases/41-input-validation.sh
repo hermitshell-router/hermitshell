@@ -110,3 +110,9 @@ vm_exec router "echo '{\"method\":\"wifi_remove_ap\",\"mac\":\"AA:BB:CC:DD:EE:02
 # We test that the handler accepts the input (stripping happens silently)
 result=$(vm_exec router "printf '{\"method\":\"set_device_nickname\",\"mac\":\"00:00:00:00:00:01\",\"nickname\":\"clean name\"}' | socat - $SOCK")
 assert_match "$result" '"ok":true' "set_device_nickname accepts clean name"
+
+# --- #27: WireGuard peer name validation ---
+# Invalid name with special characters should be rejected
+result=$(vm_exec router "echo '{\"method\":\"add_wg_peer\",\"name\":\"bad<name>\",\"public_key\":\"dGVzdGtleXRlc3RrZXl0ZXN0a2V5dGVzdGtleXRlcw==\"}' | socat - $SOCK")
+assert_match "$result" '"ok":false' "add_wg_peer rejects name with special chars"
+assert_contains "$result" "invalid peer name" "peer name error mentions invalid"
