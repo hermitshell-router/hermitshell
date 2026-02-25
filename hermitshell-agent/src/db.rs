@@ -270,10 +270,18 @@ impl Db {
         }
 
         if version < 3 {
-            let _ = conn.execute_batch("ALTER TABLE wifi_aps ADD COLUMN ca_cert_pem TEXT");
             conn.execute(
                 "INSERT INTO config (key, value) VALUES ('schema_version', '3')
                  ON CONFLICT(key) DO UPDATE SET value = '3'",
+                [],
+            )?;
+        }
+
+        if version < 4 {
+            let _ = conn.execute_batch("ALTER TABLE wifi_aps ADD COLUMN ca_cert_pem TEXT");
+            conn.execute(
+                "INSERT INTO config (key, value) VALUES ('schema_version', '4')
+                 ON CONFLICT(key) DO UPDATE SET value = '4'",
                 [],
             )?;
         }
