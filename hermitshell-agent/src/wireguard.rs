@@ -57,12 +57,13 @@ pub fn create_interface(private_key: &str, listen_port: u16) -> Result<()> {
         .status();
 
     // Set private key via temp file (wg requires file path)
-    let key_path = "/tmp/hermitshell-wg-key";
-    std::fs::write(key_path, private_key)?;
+    use std::io::Write as _;
+    let mut key_file = tempfile::NamedTempFile::new()?;
+    key_file.write_all(private_key.as_bytes())?;
     let status = Command::new("/usr/bin/wg")
-        .args(["set", "wg0", "private-key", key_path, "listen-port", &listen_port.to_string()])
+        .args(["set", "wg0", "private-key", key_file.path().to_str().unwrap(), "listen-port", &listen_port.to_string()])
         .status()?;
-    std::fs::remove_file(key_path).ok();
+    // key_file is auto-deleted on drop
     if !status.success() {
         anyhow::bail!("wg set failed");
     }
