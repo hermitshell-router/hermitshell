@@ -14,46 +14,25 @@
 | 8 | IPv6 dual-stack (RA, DHCPv6-PD, ULA) | 2026-02-19 |
 | 9 | Behavioral analysis (anomaly detection, alerts) | 2026-02-20 |
 | 10 | QoS bufferbloat prevention (CAKE, DSCP) | 2026-02-20 |
+| 11 | runZero asset sync | 2026-02-20 |
+| 12 | TLS certificate management (self-signed, custom, Tailscale, ACME DNS-01) | 2026-02-23 |
+| 13 | WiFi AP management (TP-Link EAP standalone) | 2026-02-23 |
+| 14 | Production readiness (setup wizard, update checker, encrypted WiFi creds) | 2026-02-24 |
+| 15 | Backup/restore (v2 export, optional encrypted secrets) | 2026-02-24 |
+| 16 | Multi-AP management UI (inline SSID/radio config, per-AP clients) | 2026-02-25 |
 
 ## Future Work
 
 ### Security Hardening
 
-Items tracked in `docs/SECURITY.md` with issue numbers.
-
-- [ ] Rate limiting on login (#8)
-- [ ] Session cookie expiration / TTL (#2)
-- [ ] Secure flag on session cookie (#10)
-- [ ] `import_config` validation (#12)
-- [ ] VACUUM path validation (#13)
-- [ ] Port forwarding description length limit (#14)
-- [ ] Container non-root user + setcap (#15)
-- [ ] Systemd hardening directives (#16)
-- [ ] WireGuard key file cleanup on error (#17)
-- [ ] Agent socket connection limiting (#19)
-- [ ] DHCP hostname length validation at network layer (#21)
-- [ ] DHCP discover_times / solicit_times eviction (#22)
-- [ ] Max device limit (#23)
-- [ ] Port forwarding reserved port check (#25)
-- [ ] WireGuard peer name/key validation (#27)
-- [ ] L2 RA Guard (#28)
+- [ ] WiFi AP TLS verification when CA cert provided (#55)
+- [ ] EAP session caching to reduce credential exposure (#57)
+- [ ] L2 RA Guard via ebtables (#28)
 - [ ] DUID-EN/UUID MAC fallback (#29)
-- [ ] DHCPv6-PD lease file validation (#31)
-- [ ] Argon2 mutex split (#34)
-- [ ] Memory zeroization of secrets (#35)
-
-### Web UI Improvements
-
-- [x] Error flash messages on form submissions (#26)
-- [x] Audit trail for admin actions
-- [x] Device nicknames / tagging
-- [x] Confirmation dialogs for destructive actions (block, delete)
 
 ### Operational Features
 
 - [ ] Scheduled automatic backups
-- [ ] Let's Encrypt / custom CA certificate management (#4)
-- [ ] CSRF tokens on forms (#7)
 - [ ] Multi-admin accounts (#11)
 - [ ] Metrics / Prometheus endpoint
 
@@ -61,5 +40,4 @@ Items tracked in `docs/SECURITY.md` with issue numbers.
 
 - [ ] Per-device firewall rules (beyond group-based)
 - [ ] IPv6 pinhole rate limiting / geo-IP filtering (#30)
-- [ ] runZero custom CA cert for self-hosted consoles (#37)
 - [ ] UPnP/NAT-PMP for automatic port forwarding
