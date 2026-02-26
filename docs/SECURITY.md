@@ -202,17 +202,9 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Add TLS syslog (RFC 5425) as an option. Validate that the syslog target is on a local network segment, or warn when targeting WAN addresses.
 
-## 55. TLS verification disabled for WiFi AP HTTPS connections
+## ~~55. TLS verification disabled for WiFi AP HTTPS connections~~
 
-**What:** The EAP standalone provider uses `danger_accept_invalid_certs(true)` when connecting to access points via HTTPS.
-
-**Why:** Consumer and prosumer APs use self-signed TLS certificates in standalone mode. There is no CA trust chain to verify against.
-
-**Risk:** An attacker in a man-in-the-middle position between the router and an AP could intercept AP credentials and client data during polling. The AP is typically on the same LAN segment as the router, so the MITM window is small.
-
-**Proper fix:** Add a `wifi_ap_ca_cert` config option allowing the user to upload a custom CA certificate per AP. Same approach as the runZero TLS fix (#37).
-
-**Status: Partially fixed.** Each WiFi AP record supports an optional `ca_cert_pem` field for a custom CA certificate. The WiFi AP client uses native-tls (OpenSSL) to support legacy TLS found on IoT devices (1024-bit RSA, non-ECDHE ciphers). `danger_accept_invalid_certs` remains enabled unconditionally — even when a CA cert is uploaded, TLS verification is not enforced. The CA cert is currently stored for audit/fingerprinting purposes only and provides **no verification benefit**. A MITM attacker presenting any certificate will be accepted regardless of the CA cert setting. The runZero client (#37) uses rustls with proper CA cert validation since self-hosted servers typically have modern TLS.
+**Status: Fixed.** TLS verification is now enforced for all WiFi AP connections. When a CA cert is present (user-uploaded or TOFU-pinned), the agent tries rustls first (modern TLS), then falls back to native-tls with verification enabled (legacy TLS). When no CA cert exists, TOFU (trust-on-first-use) grabs the AP's leaf cert on first connection via a bare TLS handshake, saves it as `ca_cert_pem`, and all subsequent connections verify against it. The first TOFU connection is blind (fundamental TOFU trade-off), but all subsequent connections reject cert changes. Users can override the pinned cert by uploading a CA cert or clear it to re-trigger TOFU.
 
 ## 56. AP password sent as MD5 hash, not plaintext TLS-protected
 
