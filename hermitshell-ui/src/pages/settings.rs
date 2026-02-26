@@ -67,6 +67,20 @@ pub fn Settings() -> impl IntoView {
                             </div>
 
                             <div class="settings-section">
+                                <h3>"Device Classification"</h3>
+                                <p class="hint">"When enabled, new devices with runZero type data skip quarantine and are placed in their suggested group automatically."</p>
+                                <div class="settings-row">
+                                    <span class="settings-label">"Auto-classify"</span>
+                                    <span class="settings-value">
+                                        {match client::get_config("auto_classify_devices") {
+                                            Ok(Some(v)) if v == "true" => "Enabled",
+                                            _ => "Disabled",
+                                        }}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div class="settings-section">
                                 <h3>"Backup & Restore"</h3>
                                 <div class="actions-bar" style="flex-direction:column;gap:1rem;align-items:flex-start">
                                     <div>
