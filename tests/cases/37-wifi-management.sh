@@ -149,6 +149,32 @@ assert_match "$result" '"ok":false' "wifi_set_radio rejects invalid band"
 result=$(vm_exec router "echo '{\"method\":\"list_audit_logs\",\"limit\":20}' | socat - $SOCK")
 assert_match "$result" 'wifi_adopt_ap' "SSID test: adopt audit still logged"
 
+# --- TOFU: verify ca_cert_pem starts empty for new AP ---
+result=$(vm_exec router 'python3 -c "import sqlite3; r = sqlite3.connect(\"/data/hermitshell/db/hermitshell.db\").execute(\"SELECT ca_cert_pem FROM wifi_aps WHERE mac=\\\"aa:bb:cc:dd:ee:01\\\"\").fetchone(); print(r[0] if r and r[0] else \"NONE\")"')
+assert_match "$result" 'NONE' "new AP has no ca_cert_pem (TOFU not yet triggered)"
+
+# --- TOFU: simulate TOFU by setting ca_cert_pem via API ---
+# Generate a self-signed cert to simulate what grab_leaf_cert would return
+TEST_TOFU_PEM=$(vm_exec router 'openssl req -x509 -newkey rsa:2048 -keyout /dev/null -out /dev/stdout -days 1 -nodes -subj "/CN=ap-tofu" 2>/dev/null')
+TOFU_REQ=$(python3 -c "
+import json
+pem = '''$TEST_TOFU_PEM'''
+print(json.dumps({'method': 'wifi_set_ap_ca_cert', 'mac': 'aa:bb:cc:dd:ee:01', 'value': pem}))
+")
+result=$(echo "$TOFU_REQ" | vm_exec router 'socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_match "$result" '"ok":true' "TOFU: set pinned cert succeeds"
+
+# --- verify has_ca_cert is now true ---
+result=$(vm_exec router "echo '{\"method\":\"wifi_list_aps\"}' | socat - $SOCK")
+assert_match "$result" '"has_ca_cert":true' "TOFU: has_ca_cert true after pin"
+
+# --- clearing cert resets for re-TOFU ---
+result=$(vm_exec router "echo '{\"method\":\"wifi_set_ap_ca_cert\",\"mac\":\"aa:bb:cc:dd:ee:01\",\"value\":\"\"}' | socat - $SOCK")
+assert_match "$result" '"ok":true' "TOFU: clear pinned cert succeeds"
+
+result=$(vm_exec router "echo '{\"method\":\"wifi_list_aps\"}' | socat - $SOCK")
+assert_match "$result" '"has_ca_cert":false' "TOFU: has_ca_cert false after clear"
+
 # --- Clean up: remove AP ---
 result=$(vm_exec router 'echo "{\"method\":\"wifi_remove_ap\",\"mac\":\"aa:bb:cc:dd:ee:01\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$result" '"ok":true' "cleanup: remove AP"
