@@ -20,6 +20,7 @@
 | 14 | Production readiness (setup wizard, update checker, encrypted WiFi creds) | 2026-02-24 |
 | 15 | Backup/restore (v2 export, optional encrypted secrets) | 2026-02-24 |
 | 16 | Multi-AP management UI (inline SSID/radio config, per-AP clients) | 2026-02-25 |
+| 17 | mDNS proxy (group-based service discovery across isolated subnets) | 2026-02-26 |
 
 ## Future Work
 
