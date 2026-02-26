@@ -24,6 +24,8 @@ struct ServiceRecord {
     port: u16,
     txt_records: Vec<(String, String)>,
     host_ipv4: Ipv4Addr,
+    /// The SRV target hostname from the original announcement (e.g., "chromecast-xxx.local").
+    target_hostname: String,
     ttl_secs: u32,
     expires_at: Instant,
 }
@@ -50,6 +52,7 @@ impl ServiceRegistry {
         port: u16,
         txt: Vec<(String, String)>,
         host_ipv4: Ipv4Addr,
+        target_hostname: &str,
         ttl_secs: u32,
     ) {
         let expires_at = Instant::now() + std::time::Duration::from_secs(ttl_secs as u64);
@@ -60,6 +63,7 @@ impl ServiceRegistry {
             port,
             txt_records: txt,
             host_ipv4,
+            target_hostname: target_hostname.to_string(),
             ttl_secs,
             expires_at,
         };
@@ -317,6 +321,7 @@ fn handle_announcement(
                 port,
                 txt,
                 host_ip,
+                &target,
                 ttl,
             );
         }
@@ -367,6 +372,7 @@ fn handle_announcement(
             *port,
             txt,
             host_ip,
+            target,
             ttl,
         );
     }
@@ -426,25 +432,14 @@ fn handle_query(
 
         let entries: Vec<OwnedEntry> = records
             .iter()
-            .map(|rec| {
-                let hostname = format!(
-                    "{}.local",
-                    rec.service_name
-                        .split('.')
-                        .next()
-                        .unwrap_or("unknown")
-                        .replace(' ', "-")
-                        .to_lowercase()
-                );
-                OwnedEntry {
-                    service_type: rec.service_type.clone(),
-                    service_name: rec.service_name.clone(),
-                    hostname,
-                    port: rec.port,
-                    ttl: rec.ttl_secs,
-                    txt_pairs: rec.txt_records.clone(),
-                    host_ipv4: rec.host_ipv4,
-                }
+            .map(|rec| OwnedEntry {
+                service_type: rec.service_type.clone(),
+                service_name: rec.service_name.clone(),
+                hostname: rec.target_hostname.clone(),
+                port: rec.port,
+                ttl: rec.ttl_secs,
+                txt_pairs: rec.txt_records.clone(),
+                host_ipv4: rec.host_ipv4,
             })
             .collect();
 
