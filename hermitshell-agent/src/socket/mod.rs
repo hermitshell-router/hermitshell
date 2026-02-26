@@ -16,6 +16,7 @@ use sha2::Sha256;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
 
 use crate::blocky::BlockyManager;
@@ -264,8 +265,21 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
     info!(path = socket_path, "socket server listening");
     let login_rate_limit: LoginRateLimit = Arc::new(Mutex::new((0, None)));
     let password_lock: PasswordLock = Arc::new(Mutex::new(()));
+    let conn_limit = Arc::new(Semaphore::new(100));
     loop {
         let (stream, _) = listener.accept().await?;
+        let permit = match conn_limit.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                warn!("connection limit reached, rejecting client");
+                let mut s = stream;
+                let _ = tokio::io::AsyncWriteExt::write_all(
+                    &mut s,
+                    b"{\"ok\":false,\"error\":\"too many connections\"}\n",
+                ).await;
+                continue;
+            }
+        };
         let db = db.clone();
         let start = start_time;
         let blocky = blocky.clone();
@@ -276,6 +290,7 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
         let pwl = password_lock.clone();
         let brt = bandwidth_rt.clone();
         tokio::spawn(async move {
+            let _permit = permit; // held until task completes
             if let Err(e) = handle_client(stream, db, start, blocky, wan, lan, ltx, lrl, pwl, brt).await {
                 warn!(error = %e, "client error");
             }
@@ -425,11 +440,20 @@ pub async fn run_dhcp_socket(socket_path: &str, db: Arc<Mutex<Db>>, lan_iface: S
         std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660))?;
     }
     info!(path = socket_path, "DHCP IPC socket listening");
+    let conn_limit = Arc::new(Semaphore::new(100));
     loop {
         let (stream, _) = listener.accept().await?;
+        let permit = match conn_limit.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                warn!("DHCP IPC connection limit reached");
+                continue;
+            }
+        };
         let db = db.clone();
         let lan_iface = lan_iface.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             if let Err(e) = handle_dhcp_client(stream, db, lan_iface).await {
                 warn!(error = %e, "DHCP IPC client error");
             }
