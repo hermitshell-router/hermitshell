@@ -317,3 +317,47 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** An attacker can craft a device that fingerprints as a "laptop" or "phone" (matching the OS stack, open ports, and HTTP headers that runZero expects) and get automatically placed in the trusted group. This bypasses the quarantine review that would otherwise catch unauthorized devices.
 
 **Proper fix:** Acceptable as opt-in. For stronger security, auto-classify could suggest a group in the UI without applying it (current behavior when the toggle is off). If auto-apply is desired, consider a confirmation period (e.g., device stays quarantined for 5 minutes, then auto-promotes if the classification is stable).
+
+---
+
+## WiFi AP TLS
+
+## 76. TOFU first connection is unauthenticated
+
+**What:** When no CA cert is pinned for a WiFi AP, the first connection performs a bare TLS handshake with `danger_accept_invalid_certs(true)` to grab the AP's leaf certificate. This initial handshake accepts any certificate without verification.
+
+**Why:** The AP uses a self-signed certificate with no pre-shared CA. There is no out-of-band channel to obtain the cert before connecting. TOFU is the standard solution for this bootstrap problem (same model as SSH `known_hosts`).
+
+**Risk:** An attacker on the local network at adoption time could MITM the first connection and present their own certificate, which would be pinned as trusted. All subsequent connections would then verify against the attacker's cert, not the real AP's cert. The attacker would need sustained MITM to exploit this (they must proxy every future connection).
+
+**Proper fix:** Acceptable for the threat model — AP adoption happens on a physically controlled local network. For higher assurance, the admin can upload a CA cert manually before the first connection, bypassing TOFU entirely. An out-of-band verification step (e.g., displaying the cert fingerprint in the AP's web UI for manual confirmation) would close this gap but adds friction.
+
+## 77. Hostname verification bypassed for WiFi AP connections
+
+**What:** Both the rustls `CaOnlyVerifier` and the native-tls builder use `danger_accept_invalid_hostnames(true)`, skipping hostname/SAN verification when connecting to APs.
+
+**Why:** APs are accessed by IP address, not hostname. Self-signed AP certificates never include the correct IP in the Subject Alternative Name field. Hostname verification would reject every AP connection.
+
+**Risk:** If an attacker can redirect traffic for the AP's IP address (e.g., ARP spoofing) and possesses a certificate signed by the same CA (or the same self-signed cert), they can MITM the connection without triggering a hostname mismatch error. In practice, TOFU leaf-cert pinning mitigates this — the attacker would need the exact pinned certificate's private key, not just any cert from the same CA.
+
+**Proper fix:** Acceptable given TOFU pinning. Leaf-cert pinning is strictly more restrictive than hostname verification (only the exact cert is accepted, not any cert with the right hostname). If APs ever support configurable SANs, hostname verification could be re-enabled.
+
+## 78. AP cert rotation breaks TOFU pin
+
+**What:** If a WiFi AP regenerates its TLS certificate (firmware update, factory reset, manual cert change), subsequent connections fail because the new cert does not match the pinned `ca_cert_pem`.
+
+**Why:** This is the intended security behavior — rejecting unexpected cert changes is the whole point of pinning. Silent acceptance of new certs would defeat TOFU.
+
+**Risk:** Operational disruption, not a security risk. The admin must clear the pinned cert (`wifi_set_ap_ca_cert` with empty value) to re-trigger TOFU. If the admin does not realize the cert changed, AP management will fail silently until the pin is cleared. The agent logs the verification failure, but there is no push notification to the admin.
+
+**Proper fix:** Add an alert when AP connection fails due to cert verification (distinct from network unreachable). The web UI could surface this as "AP certificate changed — re-pin?" with a one-click action. This preserves security (admin must explicitly accept the new cert) while improving discoverability.
+
+## 79. Two TLS handshakes for legacy AP cipher negotiation
+
+**What:** `build_verified_client()` first attempts a rustls connection (modern ciphers only), and on failure falls back to native-tls (OpenSSL, supports legacy ciphers). APs with legacy TLS (1024-bit RSA, TLS_RSA_WITH_* suites) trigger two full TLS handshakes per connection.
+
+**Why:** Rustls intentionally excludes weak cipher suites for security. IoT devices like the EAP720 may only support legacy ciphers. The probe-and-fallback approach uses the strongest available TLS without requiring the admin to know their AP's cipher support.
+
+**Risk:** The failed rustls handshake exposes a partial TLS connection to the network (ClientHello + server response). An observer learns that a connection attempt was made. The credential (MD5 password hash) is only sent after the successful handshake, so it is not exposed by the failed attempt. The doubled connection time (~200ms extra) is negligible for a 60-second polling cycle.
+
+**Proper fix:** Cache the TLS backend choice per AP after the first successful connection (e.g., a `tls_backend` column: "rustls" or "native"). Skip the probe on subsequent connections. This eliminates the extra handshake after the first poll cycle.
