@@ -1119,6 +1119,9 @@ impl Db {
         Ok(inserted)
     }
 
+    const MAX_ROLLUP_HOURS: usize = 168; // Process at most 1 week of hours per call
+    const MAX_ROLLUP_DAYS: usize = 7; // Process at most 7 days per call
+
     /// Run rollup for all un-rolled hours up to the previous completed hour.
     pub fn rollup_all_pending(&self) -> Result<(usize, usize)> {
         let now = std::time::SystemTime::now()
@@ -1135,7 +1138,8 @@ impl Db {
         let mut hourly_count = 0;
         let mut daily_count = 0;
         let mut hour = start_hour;
-        while hour < current_hour {
+        let mut hours_processed = 0;
+        while hour < current_hour && hours_processed < Self::MAX_ROLLUP_HOURS {
             // Check if this hour already rolled up
             let exists: bool = self.conn.query_row(
                 "SELECT COUNT(*) > 0 FROM bandwidth_hourly WHERE hour_bucket = ?1",
@@ -1145,12 +1149,14 @@ impl Db {
                 hourly_count += self.rollup_bandwidth_hourly(hour)?;
             }
             hour += 3600;
+            hours_processed += 1;
         }
         // Roll up daily for any completed days
         let current_day = now / 86400 * 86400;
         let start_day = start_hour / 86400 * 86400;
         let mut day = start_day;
-        while day < current_day {
+        let mut days_processed = 0;
+        while day < current_day && days_processed < Self::MAX_ROLLUP_DAYS {
             let exists: bool = self.conn.query_row(
                 "SELECT COUNT(*) > 0 FROM bandwidth_daily WHERE day_bucket = ?1",
                 [day], |row| row.get(0),
@@ -1159,6 +1165,7 @@ impl Db {
                 daily_count += self.rollup_bandwidth_daily(day)?;
             }
             day += 86400;
+            days_processed += 1;
         }
         Ok((hourly_count, daily_count))
     }
