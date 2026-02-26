@@ -156,6 +156,35 @@ pub fn DeviceDetail() -> impl IntoView {
                                 }
                             }
 
+                            // mDNS Services
+                            {
+                                match client::list_mdns_services(&d.mac) {
+                                    Ok(services) if !services.is_empty() => {
+                                        view! {
+                                            <h2 class="section-header">"Discovered Services"</h2>
+                                            <table class="data-table">
+                                                <thead><tr>
+                                                    <th>"Service"</th><th>"Name"</th><th>"Port"</th>
+                                                </tr></thead>
+                                                <tbody>
+                                                    {services.iter().map(|s| {
+                                                        view! {
+                                                            <tr>
+                                                                <td>{s.service_type.clone()}</td>
+                                                                <td>{s.service_name.clone()}</td>
+                                                                <td>{s.port}</td>
+                                                            </tr>
+                                                        }
+                                                    }).collect_view()}
+                                                </tbody>
+                                            </table>
+                                        }.into_any()
+                                    }
+                                    Ok(_) => view! { <span></span> }.into_any(),
+                                    Err(e) => view! { <p class="error">{format!("Error loading services: {e}")}</p> }.into_any(),
+                                }
+                            }
+
                             {if d.runzero_last_sync.is_some() {
                                 view! {
                                     <h2 class="section-header">"Device Identity (runZero)"</h2>
@@ -178,6 +207,39 @@ pub fn DeviceDetail() -> impl IntoView {
                                         </div>
                                     </div>
                                 }.into_any()
+                            } else {
+                                view! { <span></span> }.into_any()
+                            }}
+
+                            // Group suggestion based on runZero classification
+                            {if d.device_group == "quarantine" {
+                                if let Some(ref rz_type) = d.runzero_device_type {
+                                    let suggested = match rz_type.as_str() {
+                                        "phone" | "laptop" | "tablet" | "desktop" | "workstation" => Some("trusted"),
+                                        "printer" | "media player" | "speaker" | "camera" | "iot"
+                                        | "smart tv" | "streaming" | "display" | "nas" | "server" => Some("iot"),
+                                        _ => None,
+                                    };
+                                    if let Some(group) = suggested {
+                                        let mac_suggest = d.mac.clone();
+                                        let suggest_action = ServerAction::<SetGroup>::new();
+                                        view! {
+                                            <div class="settings-section" style="background:var(--bg-highlight);padding:1rem;border-radius:0.5rem;margin:1rem 0">
+                                                <p>"This device looks like a " <strong>{rz_type.clone()}</strong> ". Move to " <strong>{group}</strong> "?"</p>
+                                                <ActionForm action=suggest_action>
+                                                    <input type="hidden" name="mac" value={mac_suggest} />
+                                                    <input type="hidden" name="group" value={group} />
+                                                    <input type="hidden" name="redirect" value={format!("/devices/{}", d.mac)} />
+                                                    <button type="submit" class="btn btn-primary btn-sm">"Move to " {group}</button>
+                                                </ActionForm>
+                                            </div>
+                                        }.into_any()
+                                    } else {
+                                        view! { <span></span> }.into_any()
+                                    }
+                                } else {
+                                    view! { <span></span> }.into_any()
+                                }
                             } else {
                                 view! { <span></span> }.into_any()
                             }}

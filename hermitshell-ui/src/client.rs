@@ -44,6 +44,7 @@ pub struct Response {
     pub bandwidth_history: Option<Vec<hermitshell_common::BandwidthPoint>>,
     pub bandwidth_realtime: Option<Vec<hermitshell_common::BandwidthRealtime>>,
     pub top_destinations: Option<Vec<hermitshell_common::TopDestination>>,
+    pub mdns_services: Option<Vec<hermitshell_common::MdnsService>>,
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
@@ -99,6 +100,11 @@ pub fn unblock_device(mac: &str) -> Result<(), String> {
 pub fn get_device(mac: &str) -> Result<Device, String> {
     let resp = ok_or_err(send(json!({"method": "get_device", "mac": mac}))?)?;
     resp.device.ok_or_else(|| "No device in response".to_string())
+}
+
+pub fn list_mdns_services(mac: &str) -> Result<Vec<hermitshell_common::MdnsService>, String> {
+    let resp = ok_or_err(send(json!({"method": "list_mdns_services", "mac": mac}))?)?;
+    Ok(resp.mdns_services.unwrap_or_default())
 }
 
 pub fn set_device_nickname(mac: &str, nickname: &str) -> Result<(), String> {
