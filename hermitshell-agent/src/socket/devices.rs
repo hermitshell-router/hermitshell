@@ -1,5 +1,15 @@
 use super::*;
 
+/// Suggest a device group based on runZero device type.
+pub fn suggest_group(runzero_device_type: Option<&str>) -> Option<&'static str> {
+    match runzero_device_type? {
+        "phone" | "laptop" | "tablet" | "desktop" | "workstation" => Some("trusted"),
+        "printer" | "media player" | "speaker" | "camera" | "iot"
+        | "smart tv" | "streaming" | "display" | "nas" | "server" => Some("iot"),
+        _ => None,
+    }
+}
+
 pub(super) fn handle_list_devices(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let db = db.lock().unwrap();
     match db.list_devices() {

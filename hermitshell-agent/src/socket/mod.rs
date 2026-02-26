@@ -540,6 +540,23 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
                     if let Err(e) = db.insert_new_device(&mac, sid, &ipv4, &ipv6) {
                         return Response::err(&e.to_string());
                     }
+                    // Auto-classify if enabled and device has runZero data
+                    let auto_classify = db.get_config("auto_classify_devices")
+                        .ok().flatten().map(|v| v == "true").unwrap_or(false);
+                    if auto_classify {
+                        if let Ok(Some(device)) = db.get_device(&mac) {
+                            if device.device_group == "quarantine" {
+                                if let Some(suggested) = devices::suggest_group(device.runzero_device_type.as_deref()) {
+                                    let _ = db.set_device_group(&mac, suggested);
+                                    if let Some(info) = subnet::compute_subnet(sid) {
+                                        let dev_ip = info.device_ipv4.to_string();
+                                        let _ = nftables::remove_device_forward_rule(&dev_ip);
+                                        let _ = nftables::add_device_forward_rule(&dev_ip, suggested);
+                                    }
+                                }
+                            }
+                        }
+                    }
                     let mut resp = Response::ok();
                     resp.subnet_id = Some(sid);
                     resp.device_ipv4 = Some(ipv4);
