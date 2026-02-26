@@ -95,6 +95,7 @@ table inet filter {{
         iifname "{lan_iface}" udp dport 67 accept
         iifname {{ "{lan_iface}", "wg0" }} tcp dport 53 accept
         iifname {{ "{lan_iface}", "wg0" }} udp dport 53 accept
+        iifname "{lan_iface}" udp dport 5353 accept
         iifname "{lan_iface}" udp dport {{ 546, 547 }} accept
         iifname {{ "{lan_iface}", "tailscale0", "wg0" }} icmp type echo-request accept
         icmpv6 type {{ nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert }} accept
