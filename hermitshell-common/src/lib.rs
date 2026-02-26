@@ -221,3 +221,13 @@ pub struct NetworkInterface {
     pub state: String,
     pub has_carrier: bool,
 }
+
+/// An mDNS service advertised by a device on the LAN.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MdnsService {
+    pub service_type: String,
+    pub service_name: String,
+    pub port: u16,
+    #[serde(default)]
+    pub txt_records: Vec<(String, String)>,
+}
