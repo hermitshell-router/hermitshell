@@ -29,6 +29,64 @@ const SERVER_DUID: &[u8] = &[
     0x48, 0x65, 0x72, 0x6d, 0x69, 0x74, // "Hermit" as pseudo-MAC
 ];
 
+struct AgentConn {
+    stream: Option<(UnixStream, BufReader<UnixStream>)>,
+}
+
+impl AgentConn {
+    fn new() -> Self {
+        Self { stream: None }
+    }
+
+    fn connect(&mut self) -> Result<()> {
+        let stream = UnixStream::connect(AGENT_SOCKET)
+            .context("failed to connect to agent DHCP socket")?;
+        stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+        let reader = BufReader::new(stream.try_clone()?);
+        self.stream = Some((stream, reader));
+        Ok(())
+    }
+
+    fn request(&mut self, req: &serde_json::Value) -> Result<serde_json::Value> {
+        for attempt in 0..2 {
+            if self.stream.is_none() {
+                self.connect()?;
+            }
+            let (stream, reader) = self.stream.as_mut().unwrap();
+            let mut json = serde_json::to_string(req)?;
+            json.push('\n');
+            match stream.write_all(json.as_bytes()) {
+                Ok(()) => {}
+                Err(e) => {
+                    if attempt == 0 {
+                        warn!(error = %e, "IPC write failed, reconnecting");
+                        self.stream = None;
+                        continue;
+                    }
+                    return Err(e.into());
+                }
+            }
+            let mut response = String::new();
+            match reader.read_line(&mut response) {
+                Ok(0) if attempt == 0 => {
+                    warn!("IPC read EOF, reconnecting");
+                    self.stream = None;
+                    continue;
+                }
+                Ok(0) => anyhow::bail!("agent closed connection"),
+                Ok(_) => return serde_json::from_str(&response).context("failed to parse agent response"),
+                Err(e) if attempt == 0 => {
+                    warn!(error = %e, "IPC read failed, reconnecting");
+                    self.stream = None;
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        anyhow::bail!("agent request failed after retry")
+    }
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -51,6 +109,8 @@ fn main() -> Result<()> {
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
+
+    let mut agent = AgentConn::new();
 
     let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     sock.set_reuse_address(true)?;
@@ -126,7 +186,7 @@ fn main() -> Result<()> {
                 }
                 discover_times.put(mac.clone(), Instant::now());
                 info!(mac = %mac, "DHCPDISCOVER");
-                match handle_discover(&msg, &mac) {
+                match handle_discover(&mut agent, &msg, &mac) {
                     Ok(resp) => resp,
                     Err(e) => {
                         error!(mac = %mac, error = %e, "error handling DISCOVER");
@@ -136,7 +196,7 @@ fn main() -> Result<()> {
             }
             MessageType::Request => {
                 info!(mac = %mac, "DHCPREQUEST");
-                match handle_request(&msg, &mac) {
+                match handle_request(&mut agent, &msg, &mac) {
                     Ok(Some(resp)) => resp,
                     Ok(None) => continue,
                     Err(e) => {
@@ -164,22 +224,6 @@ fn main() -> Result<()> {
             error!(error = %e, "DHCP send error");
         }
     }
-}
-
-fn agent_request(req: &serde_json::Value) -> Result<serde_json::Value> {
-    let mut stream = UnixStream::connect(AGENT_SOCKET)
-        .context("failed to connect to agent DHCP socket")?;
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
-
-    let mut json = serde_json::to_string(req)?;
-    json.push('\n');
-    stream.write_all(json.as_bytes())?;
-
-    let mut reader = BufReader::new(stream);
-    let mut response = String::new();
-    reader.read_line(&mut response)?;
-
-    serde_json::from_str(&response).context("failed to parse agent response")
 }
 
 fn format_mac(chaddr: &[u8]) -> String {
@@ -232,7 +276,7 @@ fn build_response(request: &Message, msg_type: MessageType, yiaddr: Ipv4Addr) ->
 }
 
 /// Handle DHCPDISCOVER: IPC to agent for subnet allocation, respond with DHCPOFFER.
-fn handle_discover(request: &Message, mac: &str) -> Result<Message> {
+fn handle_discover(agent: &mut AgentConn, request: &Message, mac: &str) -> Result<Message> {
     let hostname = match request.opts().get(dhcproto::v4::OptionCode::Hostname) {
         Some(DhcpOption::Hostname(h)) => {
             let clean = sanitize_hostname(h);
@@ -247,7 +291,7 @@ fn handle_discover(request: &Message, mac: &str) -> Result<Message> {
     if let Some(ref h) = hostname {
         req["hostname"] = serde_json::Value::String(h.clone());
     }
-    let resp = agent_request(&req)?;
+    let resp = agent.request(&req)?;
 
     if resp.get("ok") != Some(&serde_json::Value::Bool(true)) {
         let err = resp.get("error").and_then(|e| e.as_str()).unwrap_or("unknown error");
@@ -286,7 +330,7 @@ fn handle_discover(request: &Message, mac: &str) -> Result<Message> {
 }
 
 /// Handle DHCPREQUEST (v4): verify requested IP, respond with DHCPACK, fire-and-forget provision.
-fn handle_request(request: &Message, mac: &str) -> Result<Option<Message>> {
+fn handle_request(agent: &mut AgentConn, request: &Message, mac: &str) -> Result<Option<Message>> {
     // Look up device via IPC (same as discover — returns existing assignment)
     let hostname = match request.opts().get(dhcproto::v4::OptionCode::Hostname) {
         Some(DhcpOption::Hostname(h)) => {
@@ -302,7 +346,7 @@ fn handle_request(request: &Message, mac: &str) -> Result<Option<Message>> {
     if let Some(ref h) = hostname {
         req["hostname"] = serde_json::Value::String(h.clone());
     }
-    let resp = agent_request(&req)?;
+    let resp = agent.request(&req)?;
 
     if resp.get("ok") != Some(&serde_json::Value::Bool(true)) {
         let err = resp.get("error").and_then(|e| e.as_str()).unwrap_or("unknown error");
@@ -362,7 +406,7 @@ fn handle_request(request: &Message, mac: &str) -> Result<Option<Message>> {
     );
 
     // Fire-and-forget: provision nftables rules via agent
-    if let Err(e) = agent_request(&serde_json::json!({
+    if let Err(e) = agent.request(&serde_json::json!({
         "method": "dhcp_provision",
         "mac": mac,
         "subnet_id": sid,
@@ -428,6 +472,7 @@ fn run_dhcpv6_server(lan_iface: &str) -> Result<()> {
 
     info!(iface = %lan_iface, "hermitshell-dhcpv6 listening on [::]:547");
 
+    let mut agent = AgentConn::new();
     let mut buf = [0u8; 1500];
     let mut solicit_times: LruCache<String, Instant> = LruCache::new(NonZeroUsize::new(10_000).expect("nonzero constant"));
 
@@ -488,7 +533,7 @@ fn run_dhcpv6_server(lan_iface: &str) -> Result<()> {
                 }
                 solicit_times.put(mac.clone(), Instant::now());
                 info!(mac = %mac, "DHCPv6 SOLICIT");
-                match handle_solicit6(&msg, &mac, &client_id, client_iaid) {
+                match handle_solicit6(&mut agent, &msg, &mac, &client_id, client_iaid) {
                     Ok(resp) => resp,
                     Err(e) => {
                         error!(mac = %mac, error = %e, "error handling SOLICIT");
@@ -498,7 +543,7 @@ fn run_dhcpv6_server(lan_iface: &str) -> Result<()> {
             }
             MessageType6::Request => {
                 info!(mac = %mac, "DHCPv6 REQUEST");
-                match handle_request6(&msg, &mac, &client_id, client_iaid) {
+                match handle_request6(&mut agent, &msg, &mac, &client_id, client_iaid) {
                     Ok(resp) => resp,
                     Err(e) => {
                         error!(mac = %mac, error = %e, "error handling DHCPv6 REQUEST");
@@ -508,7 +553,7 @@ fn run_dhcpv6_server(lan_iface: &str) -> Result<()> {
             }
             MessageType6::Renew | MessageType6::Rebind => {
                 info!(mac = %mac, msg_type = ?msg.msg_type(), "DHCPv6 RENEW/REBIND");
-                match handle_request6(&msg, &mac, &client_id, client_iaid) {
+                match handle_request6(&mut agent, &msg, &mac, &client_id, client_iaid) {
                     Ok(resp) => resp,
                     Err(e) => {
                         error!(mac = %mac, error = %e, "error handling DHCPv6 RENEW/REBIND");
@@ -601,6 +646,7 @@ fn build_v6_response(
 
 /// Handle DHCPv6 SOLICIT: IPC to agent, respond with ADVERTISE.
 fn handle_solicit6(
+    agent: &mut AgentConn,
     request: &Message6,
     mac: &str,
     client_id: &[u8],
@@ -610,7 +656,7 @@ fn handle_solicit6(
         "method": "dhcp6_discover",
         "mac": mac,
     });
-    let resp = agent_request(&req)?;
+    let resp = agent.request(&req)?;
 
     if resp.get("ok") != Some(&serde_json::Value::Bool(true)) {
         let err = resp
@@ -645,6 +691,7 @@ fn handle_solicit6(
 
 /// Handle DHCPv6 REQUEST/RENEW/REBIND: IPC to agent, provision, respond with REPLY.
 fn handle_request6(
+    agent: &mut AgentConn,
     request: &Message6,
     mac: &str,
     client_id: &[u8],
@@ -655,7 +702,7 @@ fn handle_request6(
         "method": "dhcp6_discover",
         "mac": mac,
     });
-    let resp = agent_request(&req)?;
+    let resp = agent.request(&req)?;
 
     if resp.get("ok") != Some(&serde_json::Value::Bool(true)) {
         let err = resp
@@ -679,7 +726,7 @@ fn handle_request6(
     info!(mac = %mac, ipv6 = %device_ipv6, "DHCPv6 REPLY, provisioning");
 
     // Fire-and-forget: provision nftables rules via agent
-    if let Err(e) = agent_request(&serde_json::json!({
+    if let Err(e) = agent.request(&serde_json::json!({
         "method": "dhcp6_provision",
         "mac": mac,
         "subnet_id": sid,
