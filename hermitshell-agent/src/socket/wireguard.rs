@@ -1,10 +1,12 @@
 use super::*;
+use zeroize::Zeroizing;
 
 pub(super) fn handle_get_wireguard(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let db = db.lock().unwrap();
     let enabled = db.get_config_bool("wg_enabled", false);
     let public_key = if enabled {
         db.get_config("wg_private_key").ok().flatten().and_then(|privkey| {
+            let privkey = Zeroizing::new(privkey);
             crate::wireguard::pubkey_from_private(&privkey).ok()
         })
     } else {
@@ -43,7 +45,7 @@ pub(super) fn handle_set_wireguard_enabled(req: &Request, db: &Arc<Mutex<Db>>) -
     let db = db.lock().unwrap();
     if enabled {
         let private_key = match db.get_config("wg_private_key").ok().flatten() {
-            Some(key) => key,
+            Some(key) => Zeroizing::new(key),
             None => {
                 let (privkey, _pubkey) = match crate::wireguard::generate_keypair() {
                     Ok(kp) => kp,
@@ -52,7 +54,7 @@ pub(super) fn handle_set_wireguard_enabled(req: &Request, db: &Arc<Mutex<Db>>) -
                 if let Err(e) = db.set_config("wg_private_key", &privkey) {
                     return Response::err(&format!("failed to store key: {}", e));
                 }
-                privkey
+                Zeroizing::new(privkey)
             }
         };
         let listen_port: u16 = db.get_config("wg_listen_port")

@@ -1,4 +1,5 @@
 use super::*;
+use zeroize::Zeroizing;
 
 pub(super) fn handle_has_password(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let db = db.lock().unwrap();
@@ -26,7 +27,7 @@ pub(super) fn handle_verify_password(req: &Request, db: &Arc<Mutex<Db>>, login_r
     let _pw_guard = password_lock.lock().unwrap();
     let hash_str = {
         let db = db.lock().unwrap();
-        db.get_config("admin_password_hash").ok().flatten()
+        db.get_config("admin_password_hash").ok().flatten().map(Zeroizing::new)
     };
     let hash_str = match hash_str {
         Some(h) => h,
@@ -114,13 +115,13 @@ pub(super) fn handle_setup_password(req: &Request, db: &Arc<Mutex<Db>>, login_ra
 pub(super) fn handle_create_session(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let db = db.lock().unwrap();
     let secret = match db.get_config("session_secret").ok().flatten() {
-        Some(s) => s,
+        Some(s) => Zeroizing::new(s),
         None => {
             let s = hex::encode(rand::Rng::r#gen::<[u8; 32]>(&mut rand::thread_rng()));
             if let Err(e) = db.set_config("session_secret", &s) {
                 return Response::err(&format!("failed to store secret: {}", e));
             }
-            s
+            Zeroizing::new(s)
         }
     };
     let timestamp = std::time::SystemTime::now()
@@ -143,7 +144,7 @@ pub(super) fn handle_verify_session(req: &Request, db: &Arc<Mutex<Db>>) -> Respo
     };
     let db = db.lock().unwrap();
     let secret = match db.get_config("session_secret").ok().flatten() {
-        Some(s) => s,
+        Some(s) => Zeroizing::new(s),
         None => {
             let mut resp = Response::ok();
             resp.config_value = Some("false".to_string());
@@ -198,7 +199,7 @@ pub(super) fn handle_refresh_session(req: &Request, db: &Arc<Mutex<Db>>) -> Resp
     };
     let db = db.lock().unwrap();
     let secret = match db.get_config("session_secret").ok().flatten() {
-        Some(s) => s,
+        Some(s) => Zeroizing::new(s),
         None => return Response::err("no session secret"),
     };
     let dot_pos = match value.rfind('.') {
@@ -440,12 +441,12 @@ fn parse_cert_info(pem: &str) -> Option<CertInfo> {
 pub(super) fn handle_get_tls_config(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let db = db.lock().unwrap();
     let cert = db.get_config("tls_cert_pem").ok().flatten();
-    let key = db.get_config("tls_key_pem").ok().flatten();
+    let key = db.get_config("tls_key_pem").ok().flatten().map(Zeroizing::new);
     match (cert, key) {
         (Some(c), Some(k)) => {
             let mut resp = Response::ok();
             resp.tls_cert_pem = Some(c);
-            resp.tls_key_pem = Some(k);
+            resp.tls_key_pem = Some(String::from(&*k));
             resp
         }
         _ => Response::err("TLS not yet configured"),
