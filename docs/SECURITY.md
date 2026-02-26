@@ -302,15 +302,9 @@ This document tracks security compromises made during implementation, why they w
 
 ## mDNS Proxy
 
-## 73. mDNS service registry has no size limits
+## ~~73. mDNS service registry has no size limits~~
 
-**What:** The in-memory `ServiceRegistry` accepts unlimited service records per device with no cap on record count, total registry size, or TTL ceiling. A device can announce services with TTLs up to 2^32 seconds (~136 years).
-
-**Why:** Simplicity. Real mDNS devices announce a small number of services with reasonable TTLs (typically 75 minutes). Adding limits would require choosing arbitrary thresholds.
-
-**Risk:** A malicious or misbehaving device on the LAN can exhaust agent memory by flooding unique mDNS announcements. The 60-second expiry sweep only clears records past their TTL, so high-TTL records persist indefinitely. This is a local-network-only DoS — the attacker must already be on the LAN.
-
-**Proper fix:** Cap TTL to a reasonable maximum (e.g., 4500 seconds, matching the mDNS standard recommendation). Limit per-device records (e.g., 50 services). Limit total registry size (e.g., 10,000 records). Drop announcements that would exceed limits and log a warning.
+**Status: Fixed.** TTL clamped to 4500 seconds (per RFC 6762). Per-device limit of 50 records. Total registry limit of 10,000 records. Excess announcements are dropped with a warning log.
 
 ## 74. mDNS announcement attribution trusts IP-to-MAC mapping
 

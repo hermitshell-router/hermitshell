@@ -14,6 +14,12 @@ const MDNS_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
 const MDNS_PORT: u16 = 5353;
 const LAN_ADDR: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 1);
 const EXPIRY_SWEEP_SECS: u64 = 60;
+/// Maximum TTL for mDNS records (75 minutes, per RFC 6762 recommendation).
+const MAX_TTL_SECS: u32 = 4500;
+/// Maximum number of service records per device.
+const MAX_RECORDS_PER_DEVICE: usize = 50;
+/// Maximum total service records across all devices.
+const MAX_TOTAL_RECORDS: usize = 10_000;
 
 /// Internal service record tracking an mDNS service announcement.
 #[derive(Debug, Clone)]
@@ -44,6 +50,9 @@ impl ServiceRegistry {
 
     /// Insert or update a service record. The (service_type, service_name) pair
     /// is treated as the unique key within a device's record list.
+    ///
+    /// TTL is clamped to `MAX_TTL_SECS`. New records (not updates) are rejected
+    /// if per-device or total registry limits are exceeded.
     pub fn upsert(
         &mut self,
         mac: &str,
@@ -55,7 +64,8 @@ impl ServiceRegistry {
         target_hostname: &str,
         ttl_secs: u32,
     ) {
-        let expires_at = Instant::now() + std::time::Duration::from_secs(ttl_secs as u64);
+        let clamped_ttl = ttl_secs.min(MAX_TTL_SECS);
+        let expires_at = Instant::now() + std::time::Duration::from_secs(clamped_ttl as u64);
         let record = ServiceRecord {
             device_mac: mac.to_string(),
             service_type: service_type.to_string(),
@@ -64,9 +74,37 @@ impl ServiceRegistry {
             txt_records: txt,
             host_ipv4,
             target_hostname: target_hostname.to_string(),
-            ttl_secs,
+            ttl_secs: clamped_ttl,
             expires_at,
         };
+
+        // Check whether this is an update of an existing record.
+        let is_update = self
+            .records
+            .get(mac)
+            .map_or(false, |entries| {
+                entries.iter().any(|r| r.service_type == service_type && r.service_name == service_name)
+            });
+
+        if !is_update {
+            // New record — enforce limits before inserting.
+            let device_count = self.records.get(mac).map_or(0, |v| v.len());
+            if device_count >= MAX_RECORDS_PER_DEVICE {
+                warn!(
+                    mac,
+                    service_type, "mDNS: per-device record limit reached, dropping announcement"
+                );
+                return;
+            }
+            let total: usize = self.records.values().map(|v| v.len()).sum();
+            if total >= MAX_TOTAL_RECORDS {
+                warn!(
+                    mac,
+                    service_type, "mDNS: total registry limit reached, dropping announcement"
+                );
+                return;
+            }
+        }
 
         let entries = self.records.entry(mac.to_string()).or_default();
         if let Some(existing) = entries
@@ -599,5 +637,85 @@ pub async fn run(db: Arc<Mutex<Db>>, lan_iface: String, registry: SharedRegistry
         } else {
             handle_query(src, &packet, &db, &registry, &socket);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy_upsert(reg: &mut ServiceRegistry, mac: &str, stype: &str, sname: &str, ttl: u32) {
+        reg.upsert(
+            mac,
+            stype,
+            sname,
+            80,
+            vec![],
+            Ipv4Addr::new(10, 0, 0, 2),
+            "host.local",
+            ttl,
+        );
+    }
+
+    #[test]
+    fn ttl_clamped_to_max() {
+        let mut reg = ServiceRegistry::new();
+        dummy_upsert(&mut reg, "AA:BB:CC:DD:EE:01", "_http._tcp.local", "web", 999_999);
+        let entries = &reg.records["AA:BB:CC:DD:EE:01"];
+        assert_eq!(entries[0].ttl_secs, MAX_TTL_SECS);
+    }
+
+    #[test]
+    fn ttl_below_max_unchanged() {
+        let mut reg = ServiceRegistry::new();
+        dummy_upsert(&mut reg, "AA:BB:CC:DD:EE:01", "_http._tcp.local", "web", 120);
+        let entries = &reg.records["AA:BB:CC:DD:EE:01"];
+        assert_eq!(entries[0].ttl_secs, 120);
+    }
+
+    #[test]
+    fn per_device_limit_enforced() {
+        let mut reg = ServiceRegistry::new();
+        let mac = "AA:BB:CC:DD:EE:01";
+        for i in 0..MAX_RECORDS_PER_DEVICE {
+            dummy_upsert(&mut reg, mac, &format!("_svc{}._tcp.local", i), "name", 120);
+        }
+        assert_eq!(reg.records[mac].len(), MAX_RECORDS_PER_DEVICE);
+
+        // One more should be dropped
+        dummy_upsert(&mut reg, mac, "_extra._tcp.local", "name", 120);
+        assert_eq!(reg.records[mac].len(), MAX_RECORDS_PER_DEVICE);
+    }
+
+    #[test]
+    fn update_existing_bypasses_limit() {
+        let mut reg = ServiceRegistry::new();
+        let mac = "AA:BB:CC:DD:EE:01";
+        for i in 0..MAX_RECORDS_PER_DEVICE {
+            dummy_upsert(&mut reg, mac, &format!("_svc{}._tcp.local", i), "name", 120);
+        }
+
+        // Updating an existing record should succeed even at the limit
+        dummy_upsert(&mut reg, mac, "_svc0._tcp.local", "name", 300);
+        assert_eq!(reg.records[mac][0].ttl_secs, 300);
+    }
+
+    #[test]
+    fn total_registry_limit_enforced() {
+        let mut reg = ServiceRegistry::new();
+        // Fill with records spread across many devices
+        for d in 0..(MAX_TOTAL_RECORDS / MAX_RECORDS_PER_DEVICE) {
+            let mac = format!("AA:BB:CC:{:02X}:{:02X}:01", d / 256, d % 256);
+            for s in 0..MAX_RECORDS_PER_DEVICE {
+                dummy_upsert(&mut reg, &mac, &format!("_s{}._tcp.local", s), "n", 120);
+            }
+        }
+        let total: usize = reg.records.values().map(|v| v.len()).sum();
+        assert_eq!(total, MAX_TOTAL_RECORDS);
+
+        // One more from a new device should be dropped
+        dummy_upsert(&mut reg, "FF:FF:FF:FF:FF:FF", "_new._tcp.local", "n", 120);
+        let total: usize = reg.records.values().map(|v| v.len()).sum();
+        assert_eq!(total, MAX_TOTAL_RECORDS);
     }
 }
