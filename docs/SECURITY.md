@@ -40,29 +40,9 @@ This document tracks security compromises made during implementation, why they w
 
 ## Rate Limiting and Resource Exhaustion
 
-## 19. No connection limiting on the agent Unix socket
-
-**What:** The agent socket server spawns a new tokio task per connection with no limit. There is no rate limiting or connection cap.
-
-**Why:** Not implemented. The socket is access-controlled by filesystem permissions.
-
-**Risk:** A process with socket access can open thousands of connections, exhausting memory. The socket is `0660` (see issue #49), so only root and group members can do this.
-
-**Proper fix:** Add a connection semaphore or counter. Reject new connections above a threshold (e.g., 100 concurrent).
-
 ---
 
 ## Untrusted Network Input
-
-## 26. Web UI form handlers silently discard errors
-
-**What:** All web UI form handlers (`main.rs:180-198`) use `let _ = client::...()` to discard IPC errors. The user is always redirected regardless of whether the action succeeded.
-
-**Why:** The web UI was built as a thin wrapper. Error display would require flash messages or query parameters.
-
-**Risk:** A user adds a port forward, gets redirected to the port forwarding page, and sees the forward in the list (because the DB write succeeded) but the nftables rules failed to apply. The forward appears active but doesn't work. Worse, the `handle_setup` handler at `main.rs:117` doesn't discard — if `set_config` fails for the password hash, the user thinks setup worked but no password was saved.
-
-**Proper fix:** Check return values from IPC calls. On error, redirect to an error page or append `?error=...` to the redirect URL.
 
 ---
 
@@ -136,16 +116,6 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Acceptable for the threat model. A challenge-response protocol (e.g., SRP) would avoid sending the plaintext, but adds significant complexity for no practical security gain on a local socket.
 
-## 35. No memory zeroization of secret material
-
-**What:** The `session_secret`, `admin_password_hash`, TLS private key, and plaintext passwords during verification are held in standard Rust `String` values. When dropped, the memory is freed but not zeroed — the secret data may linger in the process heap until overwritten by a future allocation.
-
-**Why:** Simplicity. The `zeroize` crate exists for this purpose but was not added.
-
-**Risk:** A memory dump of the agent process (via `/proc/pid/mem`, core dump, or cold boot attack) could recover secret material. An attacker who can dump the agent's memory already has root access, so the practical risk is limited to forensic scenarios.
-
-**Proper fix:** Use `zeroize::Zeroizing<String>` for secret values to ensure they are zeroed on drop. Apply to variables holding `session_secret`, password hash strings, plaintext passwords, and TLS key PEM data.
-
 ## 36. runZero API token stored in plaintext
 
 **What:** The `runzero_token` config value (a runZero Export API token, XT-prefixed) is stored unencrypted in the SQLite config table, same as `wg_private_key`.
@@ -176,15 +146,13 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Acceptable for the threat model — root access is already game over. If persistence is needed later, store failure counts in SQLite with a TTL column.
 
-## 46. DHCP server opens a new IPC connection per request
+## 46. DHCP server IPC connection reuse
 
-**What:** The `agent_request()` function (`hermitshell-dhcp/src/main.rs:168`) opens a new `UnixStream` for every IPC call. Each DHCP DISCOVER triggers one connection, and each DHCP REQUEST triggers two (one for discover, one for provision).
+**What:** The DHCP server holds a persistent `UnixStream` to the agent's DHCP IPC socket, reusing it across requests with automatic reconnect on error.
 
-**Why:** Simplicity. A persistent connection would require reconnection logic if the agent restarts.
+**Risk:** If the agent restarts, the DHCP server's cached connection becomes stale. The retry logic reconnects once on failure, so at most one DHCP request is lost per agent restart.
 
-**Risk:** Under heavy DHCP traffic (many devices joining simultaneously), the DHCP server opens many short-lived connections. Each connection spawns a tokio task in the agent (`socket.rs:233`). This compounds with issue #19 (no connection limiting) — a DHCP flood creates both rate-limit map entries (now bounded by LRU) and agent connections (unbounded).
-
-**Mitigating factor:** The 10-second rate limit per MAC means legitimate traffic creates at most one connection per device per 10 seconds. The risk is primarily from spoofed-MAC floods, which are already mitigated by the LRU cap discarding old entries.
+**Status: Fixed.** Replaced per-request `UnixStream::connect()` with `AgentConn` struct that holds a persistent connection and retries once on write/read failure.
 
 ## 48. Per-IP rate limit cache can be evicted by distributed attack
 
@@ -327,26 +295,6 @@ This document tracks security compromises made during implementation, why they w
 ---
 
 ## Performance and Resource Management
-
-## 67. rollup_all_pending holds DB mutex for unbounded time
-
-**What:** The `rollup_all_pending()` method iterates over every unrolled hour since the earliest connection log entry, executing an INSERT+SELECT per hour while holding the DB mutex. On first run after a long uptime (e.g., 1 year = 8,760 hours), this can take seconds to minutes.
-
-**Why:** The rollup needs consistent reads across the iteration and the current architecture uses a single `Mutex<Db>` for all access.
-
-**Risk:** While the mutex is held, all other IPC operations are blocked — DHCP provisioning, device management, DNS log ingestion, and all web UI requests. A client calling `run_bandwidth_rollup` could effectively DoS the router's management plane.
-
-**Proper fix:** Cap iterations per call (e.g., max 168 hours per invocation) so the rollup catches up incrementally across multiple hourly triggers, or release and re-acquire the mutex between iterations.
-
-## 70. Speed test blocks tokio runtime thread for up to 30 seconds
-
-**What:** The `handle_run_speed_test` handler calls `tokio::task::block_in_place()` to run the HTTP download synchronously. The speed test has a 30-second timeout (`qos.rs`). During this time, one tokio worker thread is blocked.
-
-**Why:** The speed test needs synchronous integration with the IPC response pattern. `block_in_place` was the simplest approach.
-
-**Risk:** While the speed test runs, the blocked worker thread cannot serve other async tasks. Multiple concurrent speed test requests would block multiple threads. The speed test is admin-triggered, so concurrent requests are unlikely.
-
-**Proper fix:** Use `tokio::spawn` to run the speed test asynchronously, return a "test started" response immediately, and provide a separate IPC method to poll for results. Alternatively, reject concurrent speed test requests.
 
 ## 72. HKDF with no salt for WiFi password encryption
 
