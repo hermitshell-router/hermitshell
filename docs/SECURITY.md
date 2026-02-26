@@ -297,3 +297,37 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** Theoretical. With high-entropy input, unsalted HKDF produces output indistinguishable from random. The risk would only materialize if the session_secret generation were weakened to use a low-entropy source.
 
 **Proper fix:** Acceptable as-is given the high-entropy input. If the session_secret generation ever changes to accept user-provided input, add a salt at that time with a versioned encryption prefix (e.g., `enc:v2:`) and migration.
+
+---
+
+## mDNS Proxy
+
+## 73. mDNS service registry has no size limits
+
+**What:** The in-memory `ServiceRegistry` accepts unlimited service records per device with no cap on record count, total registry size, or TTL ceiling. A device can announce services with TTLs up to 2^32 seconds (~136 years).
+
+**Why:** Simplicity. Real mDNS devices announce a small number of services with reasonable TTLs (typically 75 minutes). Adding limits would require choosing arbitrary thresholds.
+
+**Risk:** A malicious or misbehaving device on the LAN can exhaust agent memory by flooding unique mDNS announcements. The 60-second expiry sweep only clears records past their TTL, so high-TTL records persist indefinitely. This is a local-network-only DoS — the attacker must already be on the LAN.
+
+**Proper fix:** Cap TTL to a reasonable maximum (e.g., 4500 seconds, matching the mDNS standard recommendation). Limit per-device records (e.g., 50 services). Limit total registry size (e.g., 10,000 records). Drop announcements that would exceed limits and log a warning.
+
+## 74. mDNS announcement attribution trusts IP-to-MAC mapping
+
+**What:** `handle_announcement` resolves the UDP source IP to a device MAC via the DB, then stores service records under that MAC. The attribution relies on the source IP being correct.
+
+**Why:** Per-device /32 isolation with nftables ensures each device can only send traffic from its assigned IP. IP spoofing at L3 is blocked by the firewall rules. There is no mDNS-layer authentication (mDNS is inherently unauthenticated).
+
+**Risk:** Low. If a device could bypass nftables (e.g., via a kernel bug or misconfigured rule), it could spoof another device's IP and register fake services under that device's MAC. The mDNS proxy would then serve those fake services to queriers, potentially directing traffic to the attacker.
+
+**Proper fix:** Acceptable given the nftables enforcement. For defense-in-depth, the proxy could cross-check the A record IP in announcements against the source IP — if a device announces services for an IP that isn't its own, drop the announcement.
+
+## 75. Auto-classify bypasses quarantine based on device fingerprint
+
+**What:** When `auto_classify_devices` is enabled, new devices are promoted from quarantine to "trusted" or "iot" based solely on runZero's `device_type` heuristic (OS fingerprinting, HTTP headers, etc.).
+
+**Why:** Convenience. Manual classification of every device is tedious for home users. The toggle is off by default, requiring explicit opt-in.
+
+**Risk:** An attacker can craft a device that fingerprints as a "laptop" or "phone" (matching the OS stack, open ports, and HTTP headers that runZero expects) and get automatically placed in the trusted group. This bypasses the quarantine review that would otherwise catch unauthorized devices.
+
+**Proper fix:** Acceptable as opt-in. For stronger security, auto-classify could suggest a group in the UI without applying it (current behavior when the toggle is off). If auto-apply is desired, consider a confirmation period (e.g., device stays quarantined for 5 minutes, then auto-promotes if the classification is stable).
