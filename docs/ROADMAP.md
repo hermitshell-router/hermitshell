@@ -26,7 +26,7 @@
 
 ### Security Hardening
 
-- [ ] WiFi AP TLS verification when CA cert provided (#55)
+- [x] WiFi AP TLS verification with TOFU pinning (#55)
 - [ ] EAP session caching to reduce credential exposure (#57)
 - [ ] L2 RA Guard via ebtables (#28)
 - [ ] DUID-EN/UUID MAC fallback (#29)
