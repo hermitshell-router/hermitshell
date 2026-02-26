@@ -705,6 +705,9 @@ async fn main() -> Result<()> {
         log_export::start(db_export, log_rx).await;
     });
 
+    // Create mDNS registry (shared between proxy task and socket handler)
+    let mdns_registry: mdns::SharedRegistry = Arc::new(Mutex::new(mdns::ServiceRegistry::new()));
+
     // Spawn socket server
     let db_clone = db.clone();
     let blocky_clone = blocky_mgr.clone();
@@ -715,8 +718,9 @@ async fn main() -> Result<()> {
         Arc::new(Mutex::new(std::collections::HashMap::new()));
     let bandwidth_rt_for_socket = bandwidth_realtime.clone();
     let speed_test_state: crate::socket::SpeedTestState = Arc::new(Mutex::new((false, None, None)));
+    let mdns_reg_for_socket = mdns_registry.clone();
     tokio::spawn(async move {
-        if let Err(e) = socket::run_server(SOCKET_PATH, db_clone, start_time, blocky_clone, wan_for_socket, lan_for_socket, log_tx_socket, bandwidth_rt_for_socket, speed_test_state).await {
+        if let Err(e) = socket::run_server(SOCKET_PATH, db_clone, start_time, blocky_clone, wan_for_socket, lan_for_socket, log_tx_socket, bandwidth_rt_for_socket, speed_test_state, mdns_reg_for_socket).await {
             error!(error = %e, "socket server error");
         }
     });
@@ -747,6 +751,14 @@ async fn main() -> Result<()> {
     let db_wifi = db.clone();
     tokio::spawn(async move {
         wifi::run(db_wifi).await;
+    });
+
+    // Spawn mDNS proxy
+    let db_mdns = db.clone();
+    let lan_mdns = lan_iface.to_string();
+    let mdns_reg_for_task = mdns_registry.clone();
+    tokio::spawn(async move {
+        mdns::run(db_mdns, lan_mdns, mdns_reg_for_task).await;
     });
 
     // Spawn update check loop (opt-in)
