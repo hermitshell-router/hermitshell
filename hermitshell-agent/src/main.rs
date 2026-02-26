@@ -5,6 +5,7 @@ mod crypto;
 mod db;
 mod dns_log;
 mod log_export;
+mod mdns;
 mod nftables;
 mod pd;
 mod qos;
