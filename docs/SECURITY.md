@@ -347,3 +347,13 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** While the speed test runs, the blocked worker thread cannot serve other async tasks. Multiple concurrent speed test requests would block multiple threads. The speed test is admin-triggered, so concurrent requests are unlikely.
 
 **Proper fix:** Use `tokio::spawn` to run the speed test asynchronously, return a "test started" response immediately, and provide a separate IPC method to poll for results. Alternatively, reject concurrent speed test requests.
+
+## 72. HKDF with no salt for WiFi password encryption
+
+**What:** The `derive_key` function in `crypto.rs` uses `Hkdf::<Sha256>::new(None, session_secret)` — HKDF-SHA256 with no salt to derive the AES-256 key for WiFi AP password encryption.
+
+**Why:** The session_secret is already 32 bytes of cryptographically random data (generated via `rand::thread_rng()`). HKDF salt provides domain separation and defense against weak input keying material, but the input here is already high-entropy. Adding a salt would require a migration path for existing encrypted passwords, which are auto-generated random values the admin never sees — breaking decryption would make APs unmanageable with no recovery path.
+
+**Risk:** Theoretical. With high-entropy input, unsalted HKDF produces output indistinguishable from random. The risk would only materialize if the session_secret generation were weakened to use a low-entropy source.
+
+**Proper fix:** Acceptable as-is given the high-entropy input. If the session_secret generation ever changes to accept user-provided input, add a salt at that time with a versioned encryption prefix (e.g., `enc:v2:`) and migration.
