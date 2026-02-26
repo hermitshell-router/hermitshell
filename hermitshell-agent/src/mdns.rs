@@ -3,7 +3,8 @@ use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use simple_dns::{Packet, PacketFlag};
+use simple_dns::rdata::{RData, SRV, TXT, A};
+use simple_dns::{Name, Packet, PacketFlag, ResourceRecord, CLASS};
 use tracing::{debug, error, info, warn};
 
 use crate::db::Db;
@@ -126,6 +127,40 @@ impl ServiceRegistry {
         result
     }
 
+    /// Query visible services with full internal data for response building.
+    fn query_full(
+        &self,
+        querier_group: &str,
+        service_type_filter: Option<&str>,
+        db: &Db,
+    ) -> Vec<&ServiceRecord> {
+        let allowed_groups: &[&str] = match querier_group {
+            "trusted" => &["trusted", "iot", "servers"],
+            "iot" | "servers" => &["trusted"],
+            _ => return Vec::new(),
+        };
+
+        let mut result = Vec::new();
+        for (mac, entries) in &self.records {
+            let group = match db.get_device(mac) {
+                Ok(Some(dev)) => dev.device_group,
+                _ => continue,
+            };
+            if !allowed_groups.contains(&group.as_str()) {
+                continue;
+            }
+            for rec in entries {
+                if let Some(filter) = service_type_filter {
+                    if rec.service_type != filter {
+                        continue;
+                    }
+                }
+                result.push(rec);
+            }
+        }
+        result
+    }
+
     /// Return all services for a specific device (for the UI).
     pub fn services_for_device(&self, mac: &str) -> Vec<MdnsService> {
         self.records
@@ -181,27 +216,331 @@ fn create_mdns_socket(lan_iface: &str) -> anyhow::Result<UdpSocket> {
 
 /// Handle an mDNS announcement (response packet).
 fn handle_announcement(
-    _src: SocketAddr,
-    _packet: &Packet<'_>,
-    _db: &Arc<Mutex<Db>>,
-    _registry: &SharedRegistry,
+    src: SocketAddr,
+    packet: &Packet<'_>,
+    db: &Arc<Mutex<Db>>,
+    registry: &SharedRegistry,
 ) {
-    // TODO: Parse SRV/TXT/A records from answers, resolve source IP to MAC,
-    // and upsert service records into the registry.
-    debug!("mDNS announcement received");
+    let src_ip = match src {
+        SocketAddr::V4(addr) => *addr.ip(),
+        _ => return,
+    };
+
+    let db_guard = db.lock().unwrap();
+    let mac = match ip_to_mac(&db_guard, &src_ip) {
+        Some(m) => m,
+        None => {
+            debug!(ip = %src_ip, "mDNS announcement from unknown device");
+            return;
+        }
+    };
+
+    // First pass: collect records by type.
+    // A records: hostname -> IP
+    let mut a_records: HashMap<String, Ipv4Addr> = HashMap::new();
+    // SRV records: instance name -> (port, target hostname)
+    let mut srv_records: HashMap<String, (u16, String)> = HashMap::new();
+    // TXT records: instance name -> key-value pairs
+    let mut txt_records: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    // PTR records: service type -> list of instance names
+    let mut ptr_records: HashMap<String, Vec<String>> = HashMap::new();
+    // Track TTLs per instance name (use SRV TTL when available)
+    let mut ttl_map: HashMap<String, u32> = HashMap::new();
+
+    let all_records = packet.answers.iter().chain(packet.additional_records.iter());
+
+    for rr in all_records {
+        let name = rr.name.to_string();
+        match &rr.rdata {
+            RData::A(a) => {
+                let ip = Ipv4Addr::from(a.address);
+                a_records.insert(name, ip);
+            }
+            RData::SRV(srv) => {
+                let target = srv.target.to_string();
+                srv_records.insert(name.clone(), (srv.port, target));
+                ttl_map.insert(name, rr.ttl);
+            }
+            RData::TXT(txt) => {
+                let attrs = txt.attributes();
+                let pairs: Vec<(String, String)> = attrs
+                    .into_iter()
+                    .map(|(k, v)| (k, v.unwrap_or_default()))
+                    .collect();
+                txt_records.insert(name, pairs);
+            }
+            RData::PTR(ptr) => {
+                let instance = ptr.0.to_string();
+                ptr_records.entry(name).or_default().push(instance);
+            }
+            _ => {}
+        }
+    }
+
+    // Second pass: combine records. Walk PTR records to discover services,
+    // then correlate with SRV/TXT/A for each instance.
+    let mut registry_guard = registry.lock().unwrap();
+
+    for (service_type, instances) in &ptr_records {
+        for instance_name in instances {
+            let (port, target) = match srv_records.get(instance_name) {
+                Some(s) => s.clone(),
+                None => continue, // No SRV record for this instance
+            };
+
+            let txt = txt_records
+                .get(instance_name)
+                .cloned()
+                .unwrap_or_default();
+
+            // Look up A record for the SRV target hostname
+            let host_ip = a_records
+                .get(&target)
+                .copied()
+                .unwrap_or(src_ip); // Fall back to source IP if no A record
+
+            let ttl = ttl_map.get(instance_name).copied().unwrap_or(120);
+
+            debug!(
+                mac = %mac,
+                service_type = %service_type,
+                instance = %instance_name,
+                port = port,
+                host = %host_ip,
+                "mDNS service discovered"
+            );
+
+            registry_guard.upsert(
+                &mac,
+                service_type,
+                instance_name,
+                port,
+                txt,
+                host_ip,
+                ttl,
+            );
+        }
+    }
+
+    // Also handle announcements that only have SRV records without PTR.
+    // In this case, derive the service type from the instance name.
+    for (instance_name, (port, target)) in &srv_records {
+        // Skip instances already handled via PTR records
+        let already_handled = ptr_records
+            .values()
+            .any(|instances| instances.contains(instance_name));
+        if already_handled {
+            continue;
+        }
+
+        // Derive service type: "Living Room._googlecast._tcp.local" -> "_googlecast._tcp.local"
+        let service_type = match instance_name.find("._") {
+            Some(pos) => &instance_name[pos + 1..],
+            None => continue,
+        };
+
+        let txt = txt_records
+            .get(instance_name)
+            .cloned()
+            .unwrap_or_default();
+
+        let host_ip = a_records
+            .get(target)
+            .copied()
+            .unwrap_or(src_ip);
+
+        let ttl = ttl_map.get(instance_name).copied().unwrap_or(120);
+
+        debug!(
+            mac = %mac,
+            service_type = %service_type,
+            instance = %instance_name,
+            port = port,
+            host = %host_ip,
+            "mDNS service discovered (no PTR)"
+        );
+
+        registry_guard.upsert(
+            &mac,
+            service_type,
+            instance_name,
+            *port,
+            txt,
+            host_ip,
+            ttl,
+        );
+    }
 }
 
 /// Handle an mDNS query.
 fn handle_query(
-    _src: SocketAddr,
-    _packet: &Packet<'_>,
-    _db: &Arc<Mutex<Db>>,
-    _registry: &SharedRegistry,
-    _socket: &UdpSocket,
+    src: SocketAddr,
+    packet: &Packet<'_>,
+    db: &Arc<Mutex<Db>>,
+    registry: &SharedRegistry,
+    socket: &UdpSocket,
 ) {
-    // TODO: Look up matching services in the registry (filtered by querier's
-    // device group) and send unicast or multicast response.
-    debug!("mDNS query received");
+    let src_ip = match src {
+        SocketAddr::V4(addr) => *addr.ip(),
+        _ => return,
+    };
+
+    let db_guard = db.lock().unwrap();
+
+    // Resolve querier IP to MAC and get device group
+    let mac = match ip_to_mac(&db_guard, &src_ip) {
+        Some(m) => m,
+        None => {
+            debug!(ip = %src_ip, "mDNS query from unknown device");
+            return;
+        }
+    };
+
+    let group = match db_guard.get_device(&mac) {
+        Ok(Some(dev)) => dev.device_group,
+        _ => return,
+    };
+
+    let registry_guard = registry.lock().unwrap();
+
+    for question in &packet.questions {
+        let qname = question.qname.to_string();
+        debug!(from = %src_ip, name = %qname, "mDNS query");
+
+        let records = registry_guard.query_full(&group, Some(&qname), &db_guard);
+        if records.is_empty() {
+            continue;
+        }
+
+        // Collect owned data from registry before building the packet, so all
+        // Name/TXT values can be constructed from owned strings.
+        struct OwnedEntry {
+            service_type: String,
+            service_name: String,
+            hostname: String,
+            port: u16,
+            ttl: u32,
+            txt_pairs: Vec<(String, String)>,
+            host_ipv4: Ipv4Addr,
+        }
+
+        let entries: Vec<OwnedEntry> = records
+            .iter()
+            .map(|rec| {
+                let hostname = format!(
+                    "{}.local",
+                    rec.service_name
+                        .split('.')
+                        .next()
+                        .unwrap_or("unknown")
+                        .replace(' ', "-")
+                        .to_lowercase()
+                );
+                OwnedEntry {
+                    service_type: rec.service_type.clone(),
+                    service_name: rec.service_name.clone(),
+                    hostname,
+                    port: rec.port,
+                    ttl: rec.ttl_secs,
+                    txt_pairs: rec.txt_records.clone(),
+                    host_ipv4: rec.host_ipv4,
+                }
+            })
+            .collect();
+
+        // Release the registry lock before building the response
+        drop(records);
+
+        let mut response = Packet::new_reply(0);
+        response.set_flags(PacketFlag::AUTHORITATIVE_ANSWER);
+
+        for entry in &entries {
+            let service_type_name = match Name::new(&entry.service_type) {
+                Ok(n) => n.into_owned(),
+                Err(_) => continue,
+            };
+            let instance_name = match Name::new(&entry.service_name) {
+                Ok(n) => n.into_owned(),
+                Err(_) => continue,
+            };
+            let host_name = match Name::new(&entry.hostname) {
+                Ok(n) => n.into_owned(),
+                Err(_) => continue,
+            };
+
+            // 1. PTR record: service_type -> instance_name
+            response.answers.push(ResourceRecord::new(
+                service_type_name,
+                CLASS::IN,
+                entry.ttl,
+                RData::PTR(simple_dns::rdata::PTR(instance_name.clone())),
+            ));
+
+            // 2. SRV record: instance_name -> port + target hostname
+            response.additional_records.push(ResourceRecord::new(
+                instance_name.clone(),
+                CLASS::IN,
+                entry.ttl,
+                RData::SRV(SRV {
+                    priority: 0,
+                    weight: 0,
+                    port: entry.port,
+                    target: host_name.clone(),
+                }),
+            ));
+
+            // 3. TXT record: instance_name -> key-value pairs
+            let mut txt = TXT::new();
+            if entry.txt_pairs.is_empty() {
+                // mDNS requires at least one TXT string, even if empty
+                txt.add_char_string(
+                    simple_dns::CharacterString::new(b"").unwrap_or_else(|_| {
+                        // Fallback: shouldn't happen for empty string
+                        unreachable!()
+                    }),
+                );
+            } else {
+                for (k, v) in &entry.txt_pairs {
+                    let s = if v.is_empty() {
+                        k.clone()
+                    } else {
+                        format!("{}={}", k, v)
+                    };
+                    match simple_dns::CharacterString::try_from(s) {
+                        Ok(cs) => txt.add_char_string(cs),
+                        Err(e) => {
+                            debug!(error = %e, key = %k, "failed to add TXT attribute");
+                        }
+                    }
+                }
+            }
+            response.additional_records.push(ResourceRecord::new(
+                instance_name,
+                CLASS::IN,
+                entry.ttl,
+                RData::TXT(txt),
+            ));
+
+            // 4. A record: target hostname -> IP
+            response.additional_records.push(ResourceRecord::new(
+                host_name,
+                CLASS::IN,
+                entry.ttl,
+                RData::A(A::from(entry.host_ipv4)),
+            ));
+        }
+
+        match response.build_bytes_vec_compressed() {
+            Ok(bytes) => {
+                if let Err(e) = socket.send_to(&bytes, src) {
+                    debug!(error = %e, dest = %src, "failed to send mDNS response");
+                }
+            }
+            Err(e) => {
+                debug!(error = %e, "failed to build mDNS response packet");
+            }
+        }
+    }
 }
 
 /// Main mDNS proxy loop. Listens for multicast mDNS traffic on the LAN interface,
