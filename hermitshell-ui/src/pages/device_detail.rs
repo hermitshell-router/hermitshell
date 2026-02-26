@@ -112,37 +112,47 @@ pub fn DeviceDetail() -> impl IntoView {
                             // Bandwidth history chart and top destinations
                             {
                                 let bw_mac = d.mac.clone();
-                                let bw_data = client::get_bandwidth_history(Some(&bw_mac), "24h").unwrap_or_default();
-                                let chart_svg = crate::charts::bandwidth_chart(&bw_data, 800, 200);
-                                let top_dests = client::get_top_destinations(&bw_mac, "24h", 10).unwrap_or_default();
 
-                                view! {
-                                    <h2 class="section-header">"Bandwidth (24h)"</h2>
-                                    <div inner_html={chart_svg}></div>
+                                match client::get_bandwidth_history(Some(&bw_mac), "24h") {
+                                    Ok(bw_data) => {
+                                        let chart_svg = crate::charts::bandwidth_chart(&bw_data, 800, 200);
 
-                                    {if !top_dests.is_empty() {
+                                        let top_dests_view = match client::get_top_destinations(&bw_mac, "24h", 10) {
+                                            Ok(top_dests) if !top_dests.is_empty() => {
+                                                view! {
+                                                    <h2 class="section-header">"Top Destinations"</h2>
+                                                    <table class="data-table">
+                                                        <thead><tr>
+                                                            <th>"Destination"</th><th>"Port"</th><th>"Total"</th>
+                                                        </tr></thead>
+                                                        <tbody>
+                                                            {top_dests.iter().map(|td| {
+                                                                view! {
+                                                                    <tr>
+                                                                        <td>{td.dest_ip.clone()}</td>
+                                                                        <td>{td.dest_port}</td>
+                                                                        <td>{crate::format_bytes(td.total_bytes)}</td>
+                                                                    </tr>
+                                                                }
+                                                            }).collect_view()}
+                                                        </tbody>
+                                                    </table>
+                                                }.into_any()
+                                            }
+                                            Ok(_) => view! { <span></span> }.into_any(),
+                                            Err(e) => view! { <p class="error">{format!("Error loading top destinations: {e}")}</p> }.into_any(),
+                                        };
+
                                         view! {
-                                            <h2 class="section-header">"Top Destinations"</h2>
-                                            <table class="data-table">
-                                                <thead><tr>
-                                                    <th>"Destination"</th><th>"Port"</th><th>"Total"</th>
-                                                </tr></thead>
-                                                <tbody>
-                                                    {top_dests.iter().map(|td| {
-                                                        view! {
-                                                            <tr>
-                                                                <td>{td.dest_ip.clone()}</td>
-                                                                <td>{td.dest_port}</td>
-                                                                <td>{crate::format_bytes(td.total_bytes)}</td>
-                                                            </tr>
-                                                        }
-                                                    }).collect_view()}
-                                                </tbody>
-                                            </table>
+                                            <h2 class="section-header">"Bandwidth (24h)"</h2>
+                                            <div inner_html={chart_svg}></div>
+                                            {top_dests_view}
                                         }.into_any()
-                                    } else {
-                                        view! { <span></span> }.into_any()
-                                    }}
+                                    }
+                                    Err(e) => view! {
+                                        <h2 class="section-header">"Bandwidth (24h)"</h2>
+                                        <p class="error">{format!("Error loading bandwidth: {e}")}</p>
+                                    }.into_any(),
                                 }
                             }
 
@@ -235,19 +245,21 @@ pub fn DeviceDetail() -> impl IntoView {
                             {
                                 let device_ip = d.ipv4.clone();
 
-                                let conn_logs = device_ip.as_ref()
-                                    .map(|ip| client::list_connection_logs(Some(ip), 50).unwrap_or_default())
-                                    .unwrap_or_default();
+                                let conn_result: Result<Vec<_>, String> = match device_ip.as_ref() {
+                                    Some(ip) => client::list_connection_logs(Some(ip), 50),
+                                    None => Ok(vec![]),
+                                };
 
-                                let dns_logs = device_ip.as_ref()
-                                    .map(|ip| client::list_dns_logs(Some(ip), 50).unwrap_or_default())
-                                    .unwrap_or_default();
+                                let dns_result: Result<Vec<_>, String> = match device_ip.as_ref() {
+                                    Some(ip) => client::list_dns_logs(Some(ip), 50),
+                                    None => Ok(vec![]),
+                                };
 
-                                view! {
-                                    <h2 class="section-header">"Recent Connections"</h2>
-                                    {if conn_logs.is_empty() {
+                                let conn_view = match conn_result {
+                                    Ok(conn_logs) if conn_logs.is_empty() => {
                                         view! { <p class="muted">"No connections recorded."</p> }.into_any()
-                                    } else {
+                                    }
+                                    Ok(conn_logs) => {
                                         view! {
                                             <table class="data-table">
                                                 <thead><tr>
@@ -270,12 +282,17 @@ pub fn DeviceDetail() -> impl IntoView {
                                                 </tbody>
                                             </table>
                                         }.into_any()
-                                    }}
+                                    }
+                                    Err(e) => {
+                                        view! { <p class="error">{format!("Error loading connections: {e}")}</p> }.into_any()
+                                    }
+                                };
 
-                                    <h2 class="section-header">"Recent DNS Queries"</h2>
-                                    {if dns_logs.is_empty() {
+                                let dns_view = match dns_result {
+                                    Ok(dns_logs) if dns_logs.is_empty() => {
                                         view! { <p class="muted">"No DNS queries recorded."</p> }.into_any()
-                                    } else {
+                                    }
+                                    Ok(dns_logs) => {
                                         view! {
                                             <table class="data-table">
                                                 <thead><tr>
@@ -294,17 +311,27 @@ pub fn DeviceDetail() -> impl IntoView {
                                                 </tbody>
                                             </table>
                                         }.into_any()
-                                    }}
+                                    }
+                                    Err(e) => {
+                                        view! { <p class="error">{format!("Error loading DNS logs: {e}")}</p> }.into_any()
+                                    }
+                                };
+
+                                view! {
+                                    <h2 class="section-header">"Recent Connections"</h2>
+                                    {conn_view}
+
+                                    <h2 class="section-header">"Recent DNS Queries"</h2>
+                                    {dns_view}
                                 }
                             }
 
                             {
-                                let device_alerts = client::list_alerts(Some(&mac_for_alerts), 50).unwrap_or_default();
-                                view! {
-                                    <h2 class="section-header">"Recent Alerts"</h2>
-                                    {if device_alerts.is_empty() {
+                                let alerts_view = match client::list_alerts(Some(&mac_for_alerts), 50) {
+                                    Ok(device_alerts) if device_alerts.is_empty() => {
                                         view! { <p class="muted">"No alerts for this device."</p> }.into_any()
-                                    } else {
+                                    }
+                                    Ok(device_alerts) => {
                                         view! {
                                             <table class="data-table">
                                                 <thead><tr>
@@ -329,7 +356,15 @@ pub fn DeviceDetail() -> impl IntoView {
                                                 </tbody>
                                             </table>
                                         }.into_any()
-                                    }}
+                                    }
+                                    Err(e) => {
+                                        view! { <p class="error">{format!("Error loading alerts: {e}")}</p> }.into_any()
+                                    }
+                                };
+
+                                view! {
+                                    <h2 class="section-header">"Recent Alerts"</h2>
+                                    {alerts_view}
                                 }
                             }
                         }.into_any()

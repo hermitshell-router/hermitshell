@@ -22,7 +22,7 @@ pub fn Traffic() -> impl IntoView {
         || (),
         |_| async {
             let devices = client::list_devices()?;
-            let realtime = client::get_bandwidth_realtime().unwrap_or_default();
+            let realtime = client::get_bandwidth_realtime()?;
             Ok::<_, String>((devices, realtime))
         },
     );
@@ -47,8 +47,10 @@ fn render_traffic(mut devices: Vec<crate::types::Device>, realtime: Vec<hermitsh
     let total_tx: i64 = devices.iter().map(|d| d.tx_bytes).sum();
 
     // Fetch bandwidth history for network-wide chart (default 24h)
-    let history = client::get_bandwidth_history(None, "24h").unwrap_or_default();
-    let chart_svg = charts::bandwidth_chart(&history, 800, 250);
+    let (chart_svg, history_err) = match client::get_bandwidth_history(None, "24h") {
+        Ok(history) => (charts::bandwidth_chart(&history, 800, 250), None),
+        Err(e) => (String::new(), Some(e)),
+    };
 
     // Sort real-time by throughput (descending)
     let mut rt_sorted = realtime;
@@ -74,7 +76,11 @@ fn render_traffic(mut devices: Vec<crate::types::Device>, realtime: Vec<hermitsh
 
         <div class="section">
             <h2>"Network Bandwidth (24h)"</h2>
-            <div inner_html={chart_svg}></div>
+            {if let Some(ref e) = history_err {
+                view! { <p class="error">{format!("Error loading bandwidth: {e}")}</p> }.into_any()
+            } else {
+                view! { <div inner_html={chart_svg}></div> }.into_any()
+            }}
         </div>
 
         {if !rt_sorted.is_empty() && rt_sorted.iter().any(|r| r.rx_bps > 0 || r.tx_bps > 0) {
