@@ -33,17 +33,20 @@ pub trait WifiSession: Send + Sync {
 }
 
 /// Creates a session for a given provider type.
+/// Returns `(session, tofu_cert_pem)` where tofu_cert_pem is `Some` if a TOFU
+/// certificate was captured (first connection without a CA cert).
 pub async fn connect(
     provider: &str,
     ip: &str,
     username: &str,
     password: &str,
     ca_cert_pem: Option<&str>,
-) -> Result<Box<dyn WifiSession>> {
+) -> Result<(Box<dyn WifiSession>, Option<String>)> {
     match provider {
         "eap_standalone" => {
-            let session = eap_standalone::EapSession::login(ip, username, password, ca_cert_pem).await?;
-            Ok(Box::new(session))
+            let (session, tofu_pem) =
+                eap_standalone::EapSession::login(ip, username, password, ca_cert_pem).await?;
+            Ok((Box::new(session), tofu_pem))
         }
         _ => anyhow::bail!("unknown wifi provider: {}", provider),
     }
@@ -98,7 +101,14 @@ pub async fn run(db: Arc<Mutex<Db>>) {
             };
 
             match connect(&ap.provider, &ip, &username, &password, ca_cert.as_deref()).await {
-                Ok(session) => {
+                Ok((session, tofu_pem)) => {
+                    // Save TOFU-pinned cert if this was a first connection
+                    if let Some(ref pem) = tofu_pem {
+                        let db = db.lock().unwrap();
+                        let _ = db.set_wifi_ap_ca_cert(&ap.mac, Some(pem));
+                        info!(ap = %ap.name, "TOFU: pinned TLS certificate");
+                    }
+
                     // Update AP status
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)

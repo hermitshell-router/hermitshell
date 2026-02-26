@@ -174,6 +174,7 @@ pub(super) async fn handle_wifi_async(req: &Request, db: &Arc<Mutex<Db>>) -> Res
 }
 
 /// Helper: connect to an AP by MAC, looking up credentials from DB.
+/// If a TOFU cert is captured (first connection without CA), saves it.
 async fn connect_to_ap(mac: &str, db: &Arc<Mutex<Db>>) -> Result<Box<dyn crate::wifi::WifiSession>, Response> {
     let (ip, username, password_enc, ca_cert_pem) = {
         let db = db.lock().unwrap();
@@ -210,7 +211,14 @@ async fn connect_to_ap(mac: &str, db: &Arc<Mutex<Db>>) -> Result<Box<dyn crate::
     };
 
     match crate::wifi::connect(&provider, &ip, &username, &password, ca_cert_pem.as_deref()).await {
-        Ok(session) => Ok(session),
+        Ok((session, tofu_pem)) => {
+            // Save TOFU cert if captured
+            if let Some(ref pem) = tofu_pem {
+                let db = db.lock().unwrap();
+                let _ = db.set_wifi_ap_ca_cert(mac, Some(pem));
+            }
+            Ok(session)
+        }
         Err(e) => Err(Response::err(&format!("AP connection failed: {}", e))),
     }
 }

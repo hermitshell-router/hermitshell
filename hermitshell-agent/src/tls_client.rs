@@ -6,9 +6,12 @@
 //!   (validates cert chain, skips hostname check). Best for services with
 //!   modern TLS (2048-bit+ RSA/ECC, forward-secrecy ciphers).
 //!
-//! - `builder_with_ca_native` — Uses native-tls (OpenSSL) with custom CA
-//!   cert verification and hostname bypass. Required for IoT devices with
-//!   legacy TLS (1024-bit RSA, TLS_RSA_WITH_* ciphers).
+//! - `builder_wifi_native_verified` — Uses native-tls (OpenSSL) with CA cert
+//!   verification. Required for IoT devices with legacy TLS (1024-bit RSA,
+//!   TLS_RSA_WITH_* ciphers).
+//!
+//! Additionally, `grab_leaf_cert` performs a bare TLS handshake to extract the
+//! server's leaf certificate for TOFU (trust-on-first-use) pinning.
 
 use std::sync::Arc;
 
@@ -117,22 +120,51 @@ pub fn builder_with_ca(ca_cert_pem: Option<&str>) -> Result<reqwest::ClientBuild
     }
 }
 
-/// Build a reqwest client using native-tls (OpenSSL) with custom CA cert.
+/// Build a reqwest client using native-tls (OpenSSL) with CA cert verification.
 ///
-/// Validates cert chain against the CA but skips hostname verification.
-/// Works with legacy TLS (1024-bit RSA, non-ECDHE ciphers) common on
-/// IoT devices like WiFi APs with old firmware.
-pub fn builder_with_ca_native(ca_cert_pem: Option<&str>) -> Result<reqwest::ClientBuilder> {
-    let base = reqwest::Client::builder().use_native_tls();
-    if let Some(pem) = ca_cert_pem {
-        let cert = reqwest::Certificate::from_pem(pem.as_bytes())?;
-        // IoT devices often have weak TLS (1024-bit RSA, legacy ciphers).
-        // We accept invalid certs at the TLS level but store the expected
-        // CA cert so users can detect certificate changes.
-        Ok(base
-            .add_root_certificate(cert)
-            .danger_accept_invalid_certs(true))
-    } else {
-        Ok(base.danger_accept_invalid_certs(true))
+/// Validates cert chain against the provided CA. Skips hostname verification
+/// (APs are accessed by IP, not hostname). Works with legacy TLS (1024-bit RSA,
+/// non-ECDHE ciphers) common on IoT devices.
+pub fn builder_wifi_native_verified(ca_cert_pem: &str) -> Result<reqwest::ClientBuilder> {
+    let cert = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
+    Ok(reqwest::Client::builder()
+        .use_native_tls()
+        .add_root_certificate(cert)
+        .tls_built_in_root_certs(false)
+        .danger_accept_invalid_certs(false))
+}
+
+/// Perform a bare TLS handshake to `ip:port` and extract the server's leaf
+/// certificate as PEM.  No HTTP data is sent.  Uses native-tls with
+/// verification disabled so it works with any cert (self-signed, expired, etc).
+pub async fn grab_leaf_cert(ip: &str, port: u16) -> Result<String> {
+    let connector = native_tls::TlsConnector::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .map_err(|e| anyhow::anyhow!("TLS connector: {}", e))?;
+    let connector = tokio_native_tls::TlsConnector::from(connector);
+
+    let tcp = tokio::net::TcpStream::connect((ip, port)).await?;
+    let tls = connector.connect(ip, tcp).await
+        .map_err(|e| anyhow::anyhow!("TLS handshake failed: {}", e))?;
+
+    let cert = tls.get_ref()
+        .peer_certificate()
+        .map_err(|e| anyhow::anyhow!("peer_certificate: {}", e))?
+        .ok_or_else(|| anyhow::anyhow!("server sent no certificate"))?;
+
+    let der = cert.to_der()
+        .map_err(|e| anyhow::anyhow!("cert to DER: {}", e))?;
+
+    // Encode as PEM
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&der);
+    let mut pem = String::from("-----BEGIN CERTIFICATE-----\n");
+    for chunk in b64.as_bytes().chunks(64) {
+        pem.push_str(std::str::from_utf8(chunk).unwrap());
+        pem.push('\n');
     }
+    pem.push_str("-----END CERTIFICATE-----\n");
+
+    Ok(pem)
 }
