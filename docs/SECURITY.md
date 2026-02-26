@@ -146,14 +146,6 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Acceptable for the threat model — root access is already game over. If persistence is needed later, store failure counts in SQLite with a TTL column.
 
-## 46. DHCP server IPC connection reuse
-
-**What:** The DHCP server holds a persistent `UnixStream` to the agent's DHCP IPC socket, reusing it across requests with automatic reconnect on error.
-
-**Risk:** If the agent restarts, the DHCP server's cached connection becomes stale. The retry logic reconnects once on failure, so at most one DHCP request is lost per agent restart.
-
-**Status: Fixed.** Replaced per-request `UnixStream::connect()` with `AgentConn` struct that holds a persistent connection and retries once on write/read failure.
-
 ## 48. Per-IP rate limit cache can be evicted by distributed attack
 
 **What:** The web UI per-IP rate limiter uses an `LruCache` capped at 1,000 entries. An attacker with access to many source IPs (e.g., multiple compromised LAN devices) could flood the cache with new entries, evicting a previously tracked IP and resetting its backoff counter.
