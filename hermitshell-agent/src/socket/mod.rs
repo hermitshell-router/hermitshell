@@ -216,6 +216,8 @@ struct Response {
     bandwidth_realtime: Option<Vec<crate::db::BandwidthRealtime>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     top_destinations: Option<Vec<crate::db::TopDestination>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mdns_services: Option<Vec<hermitshell_common::MdnsService>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -428,6 +430,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "get_bandwidth_realtime" => logs::handle_get_bandwidth_realtime(&req, db, bandwidth_rt),
         "get_top_destinations" => logs::handle_get_top_destinations(&req, db),
         "run_bandwidth_rollup" => logs::handle_run_bandwidth_rollup(&req, db),
+        "list_mdns_services" => devices::handle_list_mdns_services(&req, db, mdns_registry),
         _ => Response::err("unknown method"),
     }
 }

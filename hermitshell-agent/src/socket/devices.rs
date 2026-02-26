@@ -207,6 +207,26 @@ pub(super) fn handle_set_dhcp_reservation(req: &Request, db: &Arc<Mutex<Db>>) ->
     Response::ok()
 }
 
+pub(super) fn handle_list_mdns_services(req: &Request, db: &Arc<Mutex<Db>>, registry: &crate::mdns::SharedRegistry) -> Response {
+    let mac = match req.mac.as_ref() {
+        Some(m) => m,
+        None => return Response::err("mac required"),
+    };
+    let db_guard = db.lock().unwrap();
+    let _device = match db_guard.get_device(mac) {
+        Ok(Some(d)) => d,
+        Ok(None) => return Response::err("device not found"),
+        Err(e) => return Response::err(&e.to_string()),
+    };
+    let reg = registry.lock().unwrap();
+    let services = reg.services_for_device(mac);
+    Response {
+        ok: true,
+        mdns_services: Some(services),
+        ..Default::default()
+    }
+}
+
 pub(super) fn handle_remove_dhcp_reservation(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let Some(ref mac) = req.mac else {
         return Response::err("mac required");
