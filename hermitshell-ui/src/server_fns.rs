@@ -259,8 +259,24 @@ pub async fn set_qos_test_url(url: String) -> Result<(), ServerFnError> {
 
 #[server]
 pub async fn run_speed_test() -> Result<(), ServerFnError> {
+    // Start the test
     crate::client::run_speed_test()
         .map_err(|e| ServerFnError::new(e))?;
+    // Poll for result (up to 35 seconds)
+    for _ in 0..70 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        match crate::client::get_speed_test_result() {
+            Ok(result) => {
+                if let Some(status) = result.get("status").and_then(|s| s.as_str()) {
+                    match status {
+                        "complete" | "error" | "idle" => break,
+                        _ => continue,
+                    }
+                }
+            }
+            Err(_) => break,
+        }
+    }
     leptos_axum::redirect("/settings");
     Ok(())
 }

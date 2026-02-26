@@ -52,6 +52,9 @@ const SESSION_ABSOLUTE_TIMEOUT_SECS: u64 = 28800; // 8 hours
 type LoginRateLimit = Arc<Mutex<(u32, Option<std::time::Instant>)>>;
 type PasswordLock = Arc<Mutex<()>>;
 
+/// Shared state for async speed test: (running, result_mbps, error)
+pub type SpeedTestState = Arc<Mutex<(bool, Option<u32>, Option<String>)>>;
+
 /// In-memory real-time bandwidth map: IP -> (prev_rx, prev_tx, curr_rx, curr_tx, poll_time)
 pub type BandwidthRealtimeMap = Arc<Mutex<std::collections::HashMap<String, (i64, i64, i64, i64, std::time::Instant)>>>;
 
@@ -250,7 +253,7 @@ impl Response {
 }
 
 /// Start the main Unix socket API server that handles all agent commands.
-pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, bandwidth_rt: BandwidthRealtimeMap) -> Result<()> {
+pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, bandwidth_rt: BandwidthRealtimeMap, speed_test_state: SpeedTestState) -> Result<()> {
     // Remove stale socket from previous run (ignore: may not exist)
     let _ = std::fs::remove_file(socket_path);
     if let Some(parent) = std::path::Path::new(socket_path).parent() {
@@ -289,16 +292,17 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
         let lrl = login_rate_limit.clone();
         let pwl = password_lock.clone();
         let brt = bandwidth_rt.clone();
+        let sts = speed_test_state.clone();
         tokio::spawn(async move {
             let _permit = permit; // held until task completes
-            if let Err(e) = handle_client(stream, db, start, blocky, wan, lan, ltx, lrl, pwl, brt).await {
+            if let Err(e) = handle_client(stream, db, start, blocky, wan, lan, ltx, lrl, pwl, brt, sts).await {
                 warn!(error = %e, "client error");
             }
         });
     }
 }
 
-async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: LoginRateLimit, password_lock: PasswordLock, bandwidth_rt: BandwidthRealtimeMap) -> Result<()> {
+async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: LoginRateLimit, password_lock: PasswordLock, bandwidth_rt: BandwidthRealtimeMap, speed_test_state: SpeedTestState) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
@@ -318,7 +322,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                             | "wifi_get_radios" | "wifi_set_radio" => {
                                 wifi::handle_wifi_async(&req, &db).await
                             }
-                            _ => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt),
+                            _ => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt, &speed_test_state),
                         }
                     }
                 } else {
@@ -327,7 +331,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                         | "wifi_get_radios" | "wifi_set_radio" => {
                             wifi::handle_wifi_async(&req, &db).await
                         }
-                        _ => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt),
+                        _ => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt, &speed_test_state),
                     }
                 }
             }
@@ -341,7 +345,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
     Ok(())
 }
 
-fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: &Arc<Mutex<BlockyManager>>, wan_iface: &str, lan_iface: &str, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: &LoginRateLimit, password_lock: &PasswordLock, bandwidth_rt: &BandwidthRealtimeMap) -> Response {
+fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: &Arc<Mutex<BlockyManager>>, wan_iface: &str, lan_iface: &str, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: &LoginRateLimit, password_lock: &PasswordLock, bandwidth_rt: &BandwidthRealtimeMap, speed_test_state: &SpeedTestState) -> Response {
     if let Some(ref mac) = req.mac {
         if let Err(e) = nftables::validate_mac(mac) {
             return Response::err(&e.to_string());
@@ -399,7 +403,8 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "get_qos_config" => config::handle_get_qos_config(&req, db),
         "set_qos_config" => config::handle_set_qos_config(&req, db, wan_iface),
         "set_qos_test_url" => config::handle_set_qos_test_url(&req, db),
-        "run_speed_test" => config::handle_run_speed_test(&req, db),
+        "run_speed_test" => config::handle_run_speed_test(&req, db, speed_test_state),
+        "get_speed_test_result" => config::handle_get_speed_test_result(&req, speed_test_state),
         "list_connection_logs" => logs::handle_list_connection_logs(&req, db),
         "list_dns_logs" => logs::handle_list_dns_logs(&req, db),
         "list_alerts" => logs::handle_list_alerts(&req, db),

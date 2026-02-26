@@ -713,8 +713,9 @@ async fn main() -> Result<()> {
     let bandwidth_realtime: crate::socket::BandwidthRealtimeMap =
         Arc::new(Mutex::new(std::collections::HashMap::new()));
     let bandwidth_rt_for_socket = bandwidth_realtime.clone();
+    let speed_test_state: crate::socket::SpeedTestState = Arc::new(Mutex::new((false, None, None)));
     tokio::spawn(async move {
-        if let Err(e) = socket::run_server(SOCKET_PATH, db_clone, start_time, blocky_clone, wan_for_socket, lan_for_socket, log_tx_socket, bandwidth_rt_for_socket).await {
+        if let Err(e) = socket::run_server(SOCKET_PATH, db_clone, start_time, blocky_clone, wan_for_socket, lan_for_socket, log_tx_socket, bandwidth_rt_for_socket, speed_test_state).await {
             error!(error = %e, "socket server error");
         }
     });

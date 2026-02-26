@@ -365,6 +365,11 @@ pub fn run_speed_test() -> Result<serde_json::Value, String> {
     Ok(resp.qos_config.unwrap_or(json!({})))
 }
 
+pub fn get_speed_test_result() -> Result<serde_json::Value, String> {
+    let resp = ok_or_err(send(json!({"method": "get_speed_test_result"}))?)?;
+    resp.qos_config.ok_or_else(|| "no result".to_string())
+}
+
 pub fn log_audit(action: &str, detail: &str) -> Result<(), String> {
     ok_or_err(send(json!({"method": "log_audit", "value": action, "key": detail}))?)?;
     Ok(())

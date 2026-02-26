@@ -720,24 +720,51 @@ pub(super) fn handle_check_update(_req: &Request, db: &Arc<Mutex<Db>>) -> Respon
     resp
 }
 
-pub(super) fn handle_run_speed_test(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+pub(super) fn handle_run_speed_test(_req: &Request, db: &Arc<Mutex<Db>>, state: &SpeedTestState) -> Response {
+    {
+        let st = state.lock().unwrap();
+        if st.0 {
+            return Response::err("speed test already running");
+        }
+    }
     let db = db.lock().unwrap();
     let url = match db.get_config("qos_test_url") {
         Ok(Some(u)) if !u.is_empty() => u,
         _ => return Response::err("no speed test URL configured; set it first via set_qos_test_url"),
     };
     drop(db);
-    let result = tokio::task::block_in_place(|| {
-        tokio::runtime::Handle::current().block_on(crate::qos::run_speed_test(&url))
-    });
-    match result {
-        Ok(mbps) => {
-            let mut resp = Response::ok();
-            resp.qos_config = Some(serde_json::json!({
-                "download_mbps": mbps,
-            }));
-            resp
-        }
-        Err(e) => Response::err(&format!("speed test failed: {}", e)),
+    {
+        let mut st = state.lock().unwrap();
+        st.0 = true;
+        st.1 = None;
+        st.2 = None;
     }
+    let state = state.clone();
+    tokio::spawn(async move {
+        let result = crate::qos::run_speed_test(&url).await;
+        let mut st = state.lock().unwrap();
+        st.0 = false;
+        match result {
+            Ok(mbps) => st.1 = Some(mbps),
+            Err(e) => st.2 = Some(format!("{}", e)),
+        }
+    });
+    let mut resp = Response::ok();
+    resp.config_value = Some("started".to_string());
+    resp
+}
+
+pub(super) fn handle_get_speed_test_result(_req: &Request, state: &SpeedTestState) -> Response {
+    let st = state.lock().unwrap();
+    let mut resp = Response::ok();
+    if st.0 {
+        resp.qos_config = Some(serde_json::json!({"status": "running"}));
+    } else if let Some(mbps) = st.1 {
+        resp.qos_config = Some(serde_json::json!({"status": "complete", "download_mbps": mbps}));
+    } else if let Some(ref err) = st.2 {
+        resp.qos_config = Some(serde_json::json!({"status": "error", "error": err}));
+    } else {
+        resp.qos_config = Some(serde_json::json!({"status": "idle"}));
+    }
+    resp
 }
