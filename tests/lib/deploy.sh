@@ -12,6 +12,7 @@ deploy_build() {
         docker save hermitshell:latest -o "$TESTS_DIR/../target/release/hermitshell-aio.tar"
         echo "Docker image saved: target/release/hermitshell-aio.tar"
     fi
+    # deb mode: build-agent.sh already builds the .deb if cargo-deb is available
 }
 
 # Rsync to router VM
@@ -53,6 +54,13 @@ deploy_start() {
         install)
             vm_sudo router "bash /opt/hermitshell/install.sh --wan eth1 --lan eth2 --local /opt/hermitshell/hermitshell-local.tar.gz"
             ;;
+        deb)
+            vm_sudo router "dpkg -i /opt/hermitshell/hermitshell_*.deb || true"
+            vm_sudo router "apt-get install -f -y"
+            vm_sudo router "sed -i 's/^WAN_IFACE=.*/WAN_IFACE=eth1/' /etc/default/hermitshell"
+            vm_sudo router "sed -i 's/^LAN_IFACE=.*/LAN_IFACE=eth2/' /etc/default/hermitshell"
+            vm_sudo router "systemctl start hermitshell-agent hermitshell-ui"
+            ;;
         direct)
             vm_sudo router "rm -f /run/hermitshell/*.sock && cp /opt/hermitshell/hermitshell-agent.service /etc/systemd/system/ && systemctl daemon-reload && systemctl restart hermitshell-agent"
             vm_sudo router "if [ -f /opt/hermitshell/hermitshell-container.tar ]; then docker load -i /opt/hermitshell/hermitshell-container.tar; docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --restart unless-stopped --network host --read-only --cap-drop ALL --security-opt no-new-privileges -v /run/hermitshell:/run/hermitshell hermitshell:latest; fi"
@@ -66,7 +74,7 @@ deploy_stop_agent() {
         docker)
             vm_sudo router "docker stop hermitshell-aio"
             ;;
-        install|direct)
+        install|direct|deb)
             vm_sudo router "systemctl stop hermitshell-agent 2>/dev/null; killall hermitshell-age hermitshell-dhc blocky 2>/dev/null; true"
             ;;
     esac
@@ -78,7 +86,7 @@ deploy_start_agent() {
         docker)
             vm_sudo router "rm -f /run/hermitshell/*.sock && docker start hermitshell-aio"
             ;;
-        install)
+        install|deb)
             vm_sudo router "rm -f /run/hermitshell/*.sock && systemctl restart hermitshell-agent"
             # Wait for socket, then restart UI (PartOf= may race with socket creation)
             for i in $(seq 1 15); do
@@ -104,7 +112,7 @@ deploy_agent_dead() {
             state=$(vm_exec router "docker inspect -f '{{.State.Running}}' hermitshell-aio 2>/dev/null" 2>/dev/null || echo "false")
             [ "$state" != "true" ]
             ;;
-        install|direct)
+        install|direct|deb)
             ! vm_exec router "pgrep -x hermitshell-age" 2>/dev/null | grep -q '[0-9]'
             ;;
     esac
@@ -116,7 +124,7 @@ deploy_check_blocky_running() {
         docker)
             vm_exec router "docker exec hermitshell-aio pgrep blocky" 2>/dev/null | grep -q '[0-9]'
             ;;
-        install|direct)
+        install|direct|deb)
             vm_exec router "pgrep blocky" 2>/dev/null | grep -q '[0-9]'
             ;;
     esac
@@ -127,7 +135,7 @@ deploy_check_dhcp_running() {
         docker)
             vm_exec router "docker exec hermitshell-aio pgrep -x hermitshell-dhc" 2>/dev/null | grep -q '[0-9]'
             ;;
-        install|direct)
+        install|direct|deb)
             vm_exec router "pgrep -x hermitshell-dhc" 2>/dev/null | grep -q '[0-9]'
             ;;
     esac
@@ -139,7 +147,7 @@ deploy_restart_webui() {
         docker)
             vm_sudo router "docker restart hermitshell-aio"
             ;;
-        install)
+        install|deb)
             vm_sudo router "systemctl restart hermitshell-ui"
             ;;
         direct)
@@ -160,7 +168,7 @@ deploy_get_agent_log() {
         docker)
             vm_sudo router "docker logs hermitshell-aio 2>&1"
             ;;
-        install|direct)
+        install|direct|deb)
             vm_sudo router "journalctl -u hermitshell-agent --no-pager -n 500"
             ;;
     esac

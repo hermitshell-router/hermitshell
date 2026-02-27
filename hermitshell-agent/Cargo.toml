@@ -41,5 +41,26 @@ simple-dns = "0.9"
 uuid = { version = "1", features = ["v4"] }
 axum = "0.8"
 
+[package.metadata.deb]
+name = "hermitshell"
+maintainer = "HermitShell <hello@hermitshell.dev>"
+copyright = "2025-2026, HermitShell contributors"
+license-file = ["../LICENSE", "0"]
+depends = "nftables, conntrack, wireguard-tools, iproute2"
+section = "net"
+priority = "optional"
+extended-description = "Open-source router platform. No cloud, no controller, runs on commodity hardware."
+assets = [
+    ["target/release/hermitshell-agent", "/opt/hermitshell/hermitshell-agent", "755"],
+    ["target/release/hermitshell-dhcp", "/opt/hermitshell/hermitshell-dhcp", "755"],
+    ["target/release/hermitshell", "/opt/hermitshell/hermitshell", "755"],
+    ["target/release/blocky", "/opt/hermitshell/blocky", "755"],
+    ["../systemd/hermitshell-agent-deb.service", "/lib/systemd/system/hermitshell-agent.service", "644"],
+    ["../systemd/hermitshell-ui-native.service", "/lib/systemd/system/hermitshell-ui.service", "644"],
+    ["../debian/hermitshell.default", "/etc/default/hermitshell", "644"],
+]
+conf-files = ["/etc/default/hermitshell"]
+maintainer-scripts = "../debian/"
+
 [lints]
 workspace = true

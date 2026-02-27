@@ -7,7 +7,7 @@ HERMIT_MODE="${HERMIT_MODE:-direct}"
 while [ $# -gt 0 ]; do
     case "$1" in
         --mode) HERMIT_MODE="$2"; shift 2 ;;
-        *) echo "Usage: $0 [--mode docker|install|direct]"; exit 1 ;;
+        *) echo "Usage: $0 [--mode docker|install|deb|direct]"; exit 1 ;;
     esac
 done
 export HERMIT_MODE
@@ -186,7 +186,7 @@ run_phase() {
 
 # Deployment-specific checks
 run_phase "deploy-check" \
-    "cases/34-deploy-docker.sh cases/35-deploy-install.sh"
+    "cases/34-deploy-docker.sh cases/35-deploy-install.sh cases/46-deploy-deb.sh"
 
 # All tests run serially to avoid vagrant SSH contention.
 # Parallel groups cause intermittent empty socat/curl responses.
