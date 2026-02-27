@@ -14,3 +14,14 @@ device_ip=$(vm_exec lan "ip -4 addr show eth1 | grep inet | awk '{print \$2}' | 
 neigh=$(vm_sudo router "ip neigh show $device_ip dev eth2")
 assert_match "$neigh" "PERMANENT" "Device has permanent ARP entry on router"
 assert_contains "$neigh" "$lan_mac" "ARP entry maps to correct MAC"
+
+# --- Phase 2: nftables MAC-IP validation ---
+
+# Verify the mac_ip_validate chain exists
+chain=$(vm_nft "list chain inet filter mac_ip_validate" || echo "")
+assert_match "$chain" "mac_ip_validate" "mac_ip_validate chain exists"
+
+# Verify there's a rule binding our device's IP to its MAC
+# Rule format: ip saddr <ip> ether saddr != <mac> counter drop
+assert_contains "$chain" "$device_ip" "mac_ip_validate has rule for device IP"
+assert_contains "$chain" "$lan_mac" "mac_ip_validate binds to correct MAC"

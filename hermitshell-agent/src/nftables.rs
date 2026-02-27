@@ -137,6 +137,9 @@ table inet filter {{
     }}
     chain port_fwd {{
     }}
+    chain mac_ip_validate {{
+        type filter hook forward priority -5; policy accept;
+    }}
 }}
 
 table ip nat {{
@@ -331,6 +334,9 @@ pub fn remove_device_forward_rule(ip: &str) -> Result<()> {
         .args(["-D", "-s", ip])
         .status();
 
+    // Also remove MAC-IP validation rule
+    let _ = remove_mac_ip_rule(ip);
+
     Ok(())
 }
 
@@ -341,6 +347,9 @@ pub fn remove_device_forward_rule_v6(ip: &str) -> Result<()> {
     let _ = Command::new("/usr/sbin/nft")
         .args(["delete", "element", "inet", "filter", "device_groups_v6", &element])
         .status();
+
+    // Also remove MAC-IP validation rule
+    let _ = remove_mac_ip_rule(ip);
 
     Ok(())
 }
@@ -379,6 +388,70 @@ pub fn add_device_route_v6(device_ipv6: &str, lan_iface: &str, mac: &str) -> Res
         .args(["-6", "neigh", "replace", device_ipv6, "lladdr", mac, "nud", "permanent", "dev", lan_iface])
         .status();
     debug!(route = %route, mac = mac, iface = lan_iface, "added device v6 route + NDP binding");
+    Ok(())
+}
+
+/// Add MAC-IP validation rule: drop packets from device_ip if source MAC is not the expected mac.
+pub fn add_mac_ip_rule(device_ip: &str, mac: &str) -> Result<()> {
+    validate_ip(device_ip)?;
+    validate_mac(mac)?;
+    let comment = format!("mac-ip-{}", device_ip);
+    let status = Command::new("/usr/sbin/nft")
+        .args([
+            "add", "rule", "inet", "filter", "mac_ip_validate",
+            "ip", "saddr", device_ip,
+            "ether", "saddr", "!=", mac,
+            "counter", "drop",
+            "comment", &format!("\"{}\"", comment),
+        ])
+        .status()?;
+    if status.success() {
+        debug!(ip = %device_ip, mac = %mac, "added MAC-IP validation rule");
+        Ok(())
+    } else {
+        anyhow::bail!("failed to add MAC-IP validation rule for {}", device_ip)
+    }
+}
+
+/// Add IPv6 MAC-IP validation rule.
+pub fn add_mac_ip_rule_v6(device_ipv6: &str, mac: &str) -> Result<()> {
+    validate_ipv6_ula(device_ipv6)?;
+    validate_mac(mac)?;
+    let comment = format!("mac-ip-{}", device_ipv6);
+    let status = Command::new("/usr/sbin/nft")
+        .args([
+            "add", "rule", "inet", "filter", "mac_ip_validate",
+            "ip6", "saddr", device_ipv6,
+            "ether", "saddr", "!=", mac,
+            "counter", "drop",
+            "comment", &format!("\"{}\"", comment),
+        ])
+        .status()?;
+    if status.success() {
+        debug!(ip = %device_ipv6, mac = %mac, "added MAC-IP v6 validation rule");
+        Ok(())
+    } else {
+        anyhow::bail!("failed to add MAC-IP v6 validation rule for {}", device_ipv6)
+    }
+}
+
+/// Remove MAC-IP validation rules for a device IP (by searching for comment).
+pub fn remove_mac_ip_rule(device_ip: &str) -> Result<()> {
+    let comment = format!("mac-ip-{}", device_ip);
+    let output = Command::new("/usr/sbin/nft")
+        .args(["-a", "list", "chain", "inet", "filter", "mac_ip_validate"])
+        .output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains(&comment) {
+            if let Some(handle) = trimmed.rsplit("# handle ").next().and_then(|s| s.trim().parse::<u64>().ok()) {
+                let _ = Command::new("/usr/sbin/nft")
+                    .args(["delete", "rule", "inet", "filter", "mac_ip_validate", "handle", &handle.to_string()])
+                    .status();
+            }
+        }
+    }
     Ok(())
 }
 

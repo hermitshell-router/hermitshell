@@ -538,6 +538,8 @@ async fn main() -> Result<()> {
                     let _ = nftables::add_device_route_v6(&ipv6, &lan_iface, &dev.mac);
                     let _ = nftables::add_device_counter_v6(&ipv6);
                     let _ = nftables::add_device_forward_rule_v6(&ipv6, &dev.device_group);
+                    let _ = nftables::add_mac_ip_rule(ip, &dev.mac);
+                    let _ = nftables::add_mac_ip_rule_v6(&ipv6, &dev.mac);
                     info!(mac = %dev.mac, ip = %ip, subnet_id = sid, group = %dev.device_group, "device restored");
                 }
             }

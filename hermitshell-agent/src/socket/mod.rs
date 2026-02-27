@@ -599,6 +599,8 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
             }
             // best-effort: IPv6 mirrors IPv4 but is not fatal
             let _ = nftables::add_device_forward_rule_v6(&ipv6, "quarantine");
+            let _ = nftables::add_mac_ip_rule(&ipv4, &mac);
+            let _ = nftables::add_mac_ip_rule_v6(&ipv6, &mac);
             let qos_enabled = {
                 let db = db.lock().unwrap();
                 db.get_config_bool("qos_enabled", false)
