@@ -65,18 +65,44 @@ pub fn spawn_update_loop(db: Arc<Mutex<crate::db::Db>>) {
                 let result = check_for_update().await;
 
                 // Always update last_check to prevent rapid retries on failure
-                let db = db.lock().unwrap();
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
-                    .to_string();
-                let _ = db.set_config("update_last_check", &now);
+                {
+                    let db = db.lock().unwrap();
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                        .to_string();
+                    let _ = db.set_config("update_last_check", &now);
+                }
 
                 match result {
                     Ok(Some(version)) => {
-                        let _ = db.set_config("update_latest_version", &version);
+                        {
+                            let db = db.lock().unwrap();
+                            let _ = db.set_config("update_latest_version", &version);
+                        }
                         debug!(version = %version, "update check complete");
+
+                        // Auto-update if enabled and version differs
+                        let auto_enabled = {
+                            let db = db.lock().unwrap();
+                            db.get_config("auto_update_enabled").ok().flatten()
+                                .map(|v| v == "true").unwrap_or(false)
+                        };
+                        let current = format!("v{}", current_version());
+                        if auto_enabled && version != current {
+                            tracing::info!(version = %version, "auto-update: applying");
+                            match apply_update(&db).await {
+                                Ok(v) => {
+                                    tracing::info!(version = %v, "auto-update: download complete, restarting");
+                                    trigger_staged_restart();
+                                    return; // exit loop — agent is restarting
+                                }
+                                Err(e) => {
+                                    warn!(error = %e, "auto-update: apply failed");
+                                }
+                            }
+                        }
                     }
                     Ok(None) => {
                         debug!("no release found");
