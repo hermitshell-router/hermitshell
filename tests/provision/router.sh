@@ -2,6 +2,14 @@
 set -e
 
 apt-get update
+
+# On Ubuntu: install ifupdown, disable Netplan
+if grep -q '^ID=ubuntu' /etc/os-release; then
+    apt-get install -y ifupdown
+    rm -f /etc/netplan/*.yaml
+    netplan apply 2>/dev/null || true
+fi
+
 apt-get install -y nftables docker.io socat conntrack curl dnsutils wireguard-tools
 usermod -aG docker vagrant
 
