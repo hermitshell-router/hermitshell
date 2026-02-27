@@ -3,7 +3,13 @@ use tracing::{debug, warn};
 
 const GITHUB_RELEASES_URL: &str =
     "https://api.github.com/repos/jnordwick/hermitshell/releases/latest";
+const GITHUB_DOWNLOAD_URL: &str = "https://github.com/jnordwick/hermitshell/releases/download";
 const CHECK_INTERVAL_SECS: u64 = 86400; // 24 hours
+const INSTALL_DIR: &str = "/opt/hermitshell";
+const ROLLBACK_DIR: &str = "/opt/hermitshell/rollback";
+const STAGING_DIR: &str = "/opt/hermitshell/staging";
+const UPDATE_MARKER: &str = "/run/hermitshell/update-pending";
+const BINARIES: &[&str] = &["hermitshell-agent", "hermitshell-dhcp", "hermitshell", "blocky"];
 
 /// Poll GitHub releases API for the latest release tag.
 async fn check_for_update() -> anyhow::Result<Option<String>> {
@@ -83,5 +89,147 @@ pub fn spawn_update_loop(db: Arc<Mutex<crate::db::Db>>) {
 
             tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
         }
+    });
+}
+
+/// Current agent version from Cargo.toml.
+pub fn current_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+/// Download, verify, and stage a new release. Returns the version string on success.
+/// Does NOT restart — the caller must trigger the restart after responding to the client.
+pub async fn apply_update(db: &std::sync::Arc<std::sync::Mutex<crate::db::Db>>) -> anyhow::Result<String> {
+    let latest = {
+        let db = db.lock().unwrap();
+        db.get_config("update_latest_version").ok().flatten()
+    };
+    let Some(version) = latest else {
+        anyhow::bail!("no update available");
+    };
+    let current = format!("v{}", current_version());
+    if version == current {
+        anyhow::bail!("already running {}", version);
+    }
+
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x86_64",
+        "aarch64" => "aarch64",
+        _ => anyhow::bail!("unsupported architecture: {}", std::env::consts::ARCH),
+    };
+
+    let tarball_name = format!("hermitshell-{}-{}-linux.tar.gz", version, arch);
+    let tarball_url = format!("{}/{}/{}", GITHUB_DOWNLOAD_URL, version, tarball_name);
+    let checksum_url = format!("{}.sha256", tarball_url);
+
+    tracing::info!(version = %version, "downloading update");
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .user_agent("hermitshell-agent")
+        .build()?;
+
+    // Download tarball
+    let tarball_bytes = client.get(&tarball_url).send().await?
+        .error_for_status()?
+        .bytes().await?;
+
+    // Download and verify checksum
+    let checksum_text = client.get(&checksum_url).send().await?
+        .error_for_status()?
+        .text().await?;
+    let expected_hash = checksum_text.split_whitespace().next()
+        .ok_or_else(|| anyhow::anyhow!("invalid checksum file"))?;
+
+    use sha2::{Sha256, Digest};
+    let actual_hash = hex::encode(Sha256::digest(&tarball_bytes));
+    if actual_hash != expected_hash {
+        anyhow::bail!("checksum mismatch: expected {} got {}", expected_hash, actual_hash);
+    }
+    tracing::info!("checksum verified");
+
+    // Create rollback dir and copy current binaries
+    std::fs::create_dir_all(ROLLBACK_DIR)?;
+    for bin in BINARIES {
+        let src = format!("{}/{}", INSTALL_DIR, bin);
+        let dst = format!("{}/{}", ROLLBACK_DIR, bin);
+        if std::path::Path::new(&src).exists() {
+            std::fs::copy(&src, &dst)?;
+        }
+    }
+    tracing::info!("current binaries backed up to rollback/");
+
+    // Extract to staging dir
+    let staging = std::path::Path::new(STAGING_DIR);
+    if staging.exists() {
+        std::fs::remove_dir_all(staging)?;
+    }
+    std::fs::create_dir_all(staging)?;
+
+    let tar_gz = flate2::read::GzDecoder::new(std::io::Cursor::new(&tarball_bytes));
+    let mut archive = tar::Archive::new(tar_gz);
+    archive.unpack(staging)?;
+
+    // Atomic rename each binary from staging to install dir
+    for bin in BINARIES {
+        // tarball may have a top-level directory — find the binary
+        let staged = find_binary(staging, bin)?;
+        let dest = format!("{}/{}", INSTALL_DIR, bin);
+        std::fs::rename(&staged, &dest)?;
+    }
+    tracing::info!("binaries swapped");
+
+    // Clean up staging
+    let _ = std::fs::remove_dir_all(staging);
+
+    // Write update marker
+    std::fs::write(UPDATE_MARKER, &version)?;
+    tracing::info!(version = %version, "update marker written");
+
+    // Store version in DB
+    {
+        let db = db.lock().unwrap();
+        let _ = db.set_config("update_installed_version", &version);
+    }
+
+    Ok(version)
+}
+
+/// Find a binary inside the staging directory (may be nested in a subdirectory).
+fn find_binary(staging: &std::path::Path, name: &str) -> anyhow::Result<std::path::PathBuf> {
+    // Check top-level first
+    let direct = staging.join(name);
+    if direct.exists() {
+        return Ok(direct);
+    }
+    // Check one level of subdirectory (tarball with strip-components=1 equivalent)
+    for entry in std::fs::read_dir(staging)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            let nested = entry.path().join(name);
+            if nested.exists() {
+                return Ok(nested);
+            }
+        }
+    }
+    anyhow::bail!("binary '{}' not found in staging", name)
+}
+
+/// Trigger staged restart: UI first, then agent.
+/// This function spawns a detached task and returns immediately.
+pub fn trigger_staged_restart() {
+    tokio::spawn(async {
+        tracing::info!("restarting hermitshell-ui");
+        let _ = tokio::process::Command::new("systemctl")
+            .args(["restart", "hermitshell-ui"])
+            .status().await;
+
+        // Brief pause to let UI come up before agent restarts
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        tracing::info!("restarting hermitshell-agent");
+        let _ = tokio::process::Command::new("systemctl")
+            .args(["restart", "hermitshell-agent"])
+            .status().await;
     });
 }
