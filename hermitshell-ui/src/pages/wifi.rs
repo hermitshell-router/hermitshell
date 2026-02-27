@@ -3,13 +3,18 @@ use leptos_router::hooks::use_query_map;
 use crate::client;
 use crate::components::layout::Layout;
 use crate::components::toast::ErrorToast;
-use crate::server_fns::{AdoptWifiAp, RemoveWifiAp, SetWifiSsid, DeleteWifiSsid, SetWifiRadio};
+use crate::server_fns::{AddWifiProvider, RemoveWifiProvider, SetWifiSsid, DeleteWifiSsid, SetWifiRadio};
 
 #[component]
 pub fn Wifi() -> impl IntoView {
     let query = use_query_map();
     let selected_ap = move || query.with(|q| q.get("ap"));
+    let selected_provider = move || query.with(|q| q.get("provider"));
 
+    let providers = Resource::new(
+        || (),
+        |_| async { client::wifi_list_providers() },
+    );
     let aps = Resource::new(
         || (),
         |_| async { client::wifi_list_aps() },
@@ -18,14 +23,142 @@ pub fn Wifi() -> impl IntoView {
         || (),
         |_| async { client::wifi_get_clients() },
     );
-    let adopt_action = ServerAction::<AdoptWifiAp>::new();
-    let remove_action = ServerAction::<RemoveWifiAp>::new();
+    let add_provider_action = ServerAction::<AddWifiProvider>::new();
+    let remove_provider_action = ServerAction::<RemoveWifiProvider>::new();
     let set_ssid_action = ServerAction::<SetWifiSsid>::new();
     let delete_ssid_action = ServerAction::<DeleteWifiSsid>::new();
     let set_radio_action = ServerAction::<SetWifiRadio>::new();
 
     view! {
         <Layout title="WiFi" active_page="wifi">
+            // --- Providers ---
+            <div class="settings-section">
+                <h3>"WiFi Providers"</h3>
+                <Suspense fallback=move || view! { <p>"Loading..."</p> }>
+                    {move || providers.get().map(|result| match result {
+                        Ok(provs) => {
+                            if provs.is_empty() {
+                                view! { <p class="text-muted">"No WiFi providers configured."</p> }.into_any()
+                            } else {
+                                view! {
+                                    <table class="device-table">
+                                        <thead>
+                                            <tr>
+                                                <th>"Name"</th>
+                                                <th>"Type"</th>
+                                                <th>"URL"</th>
+                                                <th>"Status"</th>
+                                                <th>"APs"</th>
+                                                <th></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {provs.iter().map(|p| {
+                                                let id = p.id.clone();
+                                                let id2 = p.id.clone();
+                                                let type_label = match p.provider_type.as_str() {
+                                                    "eap_standalone" => "TP-Link EAP",
+                                                    "unifi" => "UniFi",
+                                                    other => other,
+                                                };
+                                                view! {
+                                                    <tr>
+                                                        <td>{p.name.clone()}</td>
+                                                        <td>{type_label.to_string()}</td>
+                                                        <td style="font-size:0.85em">{p.url.clone()}</td>
+                                                        <td>{p.status.clone()}</td>
+                                                        <td>{p.ap_count.to_string()}</td>
+                                                        <td>
+                                                            <a href={format!("/wifi?provider={}", id)} class="btn btn-sm">"Manage SSIDs"</a>
+                                                            " "
+                                                            <ActionForm action=remove_provider_action attr:style="display:inline">
+                                                                <input type="hidden" name="id" value={id2} />
+                                                                <button type="submit" class="btn btn-sm btn-danger">"Remove"</button>
+                                                            </ActionForm>
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            }).collect_view()}
+                                        </tbody>
+                                    </table>
+                                }.into_any()
+                            }
+                        }
+                        Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
+                    })}
+                </Suspense>
+                <ErrorToast value=remove_provider_action.value() />
+            </div>
+
+            // --- Provider Detail (SSIDs) ---
+            {move || {
+                let sel = selected_provider();
+                sel.map(|pid| {
+                    let pid2 = pid.clone();
+                    view! {
+                        <div class="settings-section">
+                            <h3>{format!("SSIDs for Provider")}</h3>
+                            <ProviderDetail provider_id=pid2
+                                set_ssid_action=set_ssid_action
+                                delete_ssid_action=delete_ssid_action />
+                        </div>
+                    }
+                })
+            }}
+
+            // --- Add Provider ---
+            <div class="settings-section">
+                <h3>"Add WiFi Provider"</h3>
+                <ActionForm action=add_provider_action>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="provider-type">"Provider Type"</label>
+                            <select id="provider-type" name="provider_type">
+                                <option value="eap_standalone">"TP-Link EAP (standalone)"</option>
+                                <option value="unifi">"UniFi Controller"</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="provider-name">"Name"</label>
+                            <input type="text" id="provider-name" name="name" placeholder="Office WiFi" required />
+                        </div>
+                        <div class="form-group">
+                            <label for="provider-username">"Username"</label>
+                            <input type="text" id="provider-username" name="username" value="admin" />
+                        </div>
+                        <div class="form-group">
+                            <label for="provider-password">"Password"</label>
+                            <input type="password" id="provider-password" name="password" required />
+                        </div>
+                    </div>
+                    <p class="text-muted" style="margin-top:0.5em;margin-bottom:0.5em;">"For TP-Link EAP (standalone):"</p>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="provider-mac">"AP MAC Address"</label>
+                            <input type="text" id="provider-mac" name="mac" placeholder="aa:bb:cc:dd:ee:ff" />
+                        </div>
+                        <div class="form-group">
+                            <label for="provider-url-eap">"AP IP Address"</label>
+                            <input type="text" id="provider-url-eap" name="url" placeholder="192.168.1.100" />
+                        </div>
+                    </div>
+                    <p class="text-muted" style="margin-top:0.5em;margin-bottom:0.5em;">"For UniFi Controller:"</p>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="provider-site">"Site"</label>
+                            <input type="text" id="provider-site" name="site" placeholder="default" />
+                        </div>
+                        <div class="form-group">
+                            <label for="provider-api-key">"API Key (optional)"</label>
+                            <input type="text" id="provider-api-key" name="api_key" placeholder="(optional)" />
+                        </div>
+                    </div>
+                    <button type="submit" class="btn">"Add Provider"</button>
+                </ActionForm>
+                <ErrorToast value=add_provider_action.value() />
+            </div>
+
+            // --- Access Points ---
             <div class="settings-section">
                 <h3>"Access Points"</h3>
                 <Suspense fallback=move || view! { <p>"Loading..."</p> }>
@@ -34,7 +167,7 @@ pub fn Wifi() -> impl IntoView {
                         aps.get().map(|result| match result {
                         Ok(aps) => {
                             if aps.is_empty() {
-                                view! { <p class="text-muted">"No access points adopted."</p> }.into_any()
+                                view! { <p class="text-muted">"No access points discovered."</p> }.into_any()
                             } else {
                                 view! {
                                     <table class="device-table">
@@ -51,7 +184,6 @@ pub fn Wifi() -> impl IntoView {
                                         <tbody>
                                             {aps.iter().map(|ap| {
                                                 let mac = ap.mac.clone();
-                                                let mac2 = ap.mac.clone();
                                                 let is_expanded = sel.as_deref() == Some(ap.mac.as_str());
                                                 view! {
                                                     <tr>
@@ -66,11 +198,6 @@ pub fn Wifi() -> impl IntoView {
                                                             } else {
                                                                 view! { <a href={format!("/wifi?ap={}", mac)} class="btn btn-sm">"Manage"</a> }.into_any()
                                                             }}
-                                                            " "
-                                                            <ActionForm action=remove_action attr:style="display:inline">
-                                                                <input type="hidden" name="mac" value={mac2} />
-                                                                <button type="submit" class="btn btn-sm btn-danger">"Remove"</button>
-                                                            </ActionForm>
                                                         </td>
                                                     </tr>
                                                     {if is_expanded {
@@ -86,8 +213,6 @@ pub fn Wifi() -> impl IntoView {
                                                                 <td colspan="6">
                                                                     <ApDetail mac=ap_mac
                                                                         ap_clients=ap_clients
-                                                                        set_ssid_action=set_ssid_action
-                                                                        delete_ssid_action=delete_ssid_action
                                                                         set_radio_action=set_radio_action />
                                                                 </td>
                                                             </tr>
@@ -99,8 +224,6 @@ pub fn Wifi() -> impl IntoView {
                                             }).collect_view()}
                                         </tbody>
                                     </table>
-                                    <ErrorToast value=set_ssid_action.value() />
-                                    <ErrorToast value=delete_ssid_action.value() />
                                     <ErrorToast value=set_radio_action.value() />
                                 }.into_any()
                             }
@@ -108,39 +231,9 @@ pub fn Wifi() -> impl IntoView {
                         Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
                     })}}
                 </Suspense>
-                <ErrorToast value=remove_action.value() />
             </div>
 
-            <div class="settings-section">
-                <h3>"Adopt Access Point"</h3>
-                <ActionForm action=adopt_action>
-                    <div class="form-grid">
-                        <div class="form-group">
-                            <label for="ap-mac">"MAC Address"</label>
-                            <input type="text" id="ap-mac" name="mac" placeholder="aa:bb:cc:dd:ee:ff" required />
-                        </div>
-                        <div class="form-group">
-                            <label for="ap-ip">"IP Address"</label>
-                            <input type="text" id="ap-ip" name="ip" placeholder="192.168.1.100" required />
-                        </div>
-                        <div class="form-group">
-                            <label for="ap-name">"Name"</label>
-                            <input type="text" id="ap-name" name="name" placeholder="Office AP" required />
-                        </div>
-                        <div class="form-group">
-                            <label for="ap-username">"Username"</label>
-                            <input type="text" id="ap-username" name="username" value="admin" />
-                        </div>
-                        <div class="form-group">
-                            <label for="ap-password">"Password"</label>
-                            <input type="password" id="ap-password" name="password" required />
-                        </div>
-                    </div>
-                    <button type="submit" class="btn">"Adopt AP"</button>
-                </ActionForm>
-                <ErrorToast value=adopt_action.value() />
-            </div>
-
+            // --- WiFi Clients ---
             <div class="settings-section">
                 <h3>"WiFi Clients"</h3>
                 <Suspense fallback=move || view! { <p>"Loading..."</p> }>
@@ -186,42 +279,31 @@ pub fn Wifi() -> impl IntoView {
     }
 }
 
+/// Provider detail: shows SSIDs for a provider with add/edit/delete forms.
 #[component]
-fn ApDetail(
-    mac: String,
-    ap_clients: Vec<hermitshell_common::WifiClient>,
+fn ProviderDetail(
+    provider_id: String,
     set_ssid_action: ServerAction<SetWifiSsid>,
     delete_ssid_action: ServerAction<DeleteWifiSsid>,
-    set_radio_action: ServerAction<SetWifiRadio>,
 ) -> impl IntoView {
-    let mac_for_ssids = mac.clone();
-    let mac_for_radios = mac.clone();
+    let pid_for_ssids = provider_id.clone();
+    let pid_for_form = provider_id.clone();
+    let pid_for_view = provider_id.clone();
 
     let ssids = Resource::new(
         || (),
         move |_| {
-            let m = mac_for_ssids.clone();
-            async move { client::wifi_get_ssids(&m) }
+            let p = pid_for_ssids.clone();
+            async move { client::wifi_get_ssids(&p) }
         },
     );
-    let radios = Resource::new(
-        || (),
-        move |_| {
-            let m = mac_for_radios.clone();
-            async move { client::wifi_get_radios(&m) }
-        },
-    );
-
-    let mac_for_ssid_form = mac.clone();
-    let mac_for_view = mac.clone();
 
     view! {
         <div class="ap-detail" style="padding: 1em; background: var(--bg-secondary, #f5f5f5); border-radius: 4px;">
-            // --- SSIDs ---
             <h4>"SSIDs"</h4>
             <Suspense fallback=move || view! { <p>"Loading SSIDs..."</p> }>
                 {move || {
-                    let mac_c = mac_for_view.clone();
+                    let pid_c = pid_for_view.clone();
                     ssids.get().map(move |result| match result {
                     Ok(ssids) => {
                         let ssids = ssids.clone();
@@ -242,7 +324,7 @@ fn ApDetail(
                                     </thead>
                                     <tbody>
                                         {ssids.into_iter().map(|s| {
-                                            let mac_del = mac_c.clone();
+                                            let pid_del = pid_c.clone();
                                             view! {
                                                 <tr>
                                                     <td>{s.ssid_name.clone()}</td>
@@ -252,7 +334,7 @@ fn ApDetail(
                                                     <td>{if s.enabled { "Yes" } else { "No" }}</td>
                                                     <td>
                                                         <ActionForm action=delete_ssid_action attr:style="display:inline">
-                                                            <input type="hidden" name="mac" value={mac_del} />
+                                                            <input type="hidden" name="provider_id" value={pid_del} />
                                                             <input type="hidden" name="ssid_name" value={s.ssid_name} />
                                                             <input type="hidden" name="band" value={s.band} />
                                                             <button type="submit" class="btn btn-sm btn-danger">"Delete"</button>
@@ -272,7 +354,7 @@ fn ApDetail(
 
             <h4>"Add / Edit SSID"</h4>
             <ActionForm action=set_ssid_action>
-                <input type="hidden" name="mac" value={mac_for_ssid_form} />
+                <input type="hidden" name="provider_id" value={pid_for_form} />
                 <div class="form-grid">
                     <div class="form-group">
                         <label>"SSID Name"</label>
@@ -306,9 +388,33 @@ fn ApDetail(
                 </div>
                 <button type="submit" class="btn">"Save SSID"</button>
             </ActionForm>
+            <ErrorToast value=set_ssid_action.value() />
+            <ErrorToast value=delete_ssid_action.value() />
+        </div>
+    }
+}
 
+/// AP detail: shows radio config and connected clients (no SSIDs -- those are on the provider).
+#[component]
+fn ApDetail(
+    mac: String,
+    ap_clients: Vec<hermitshell_common::WifiClient>,
+    set_radio_action: ServerAction<SetWifiRadio>,
+) -> impl IntoView {
+    let mac_for_radios = mac.clone();
+
+    let radios = Resource::new(
+        || (),
+        move |_| {
+            let m = mac_for_radios.clone();
+            async move { client::wifi_get_radios(&m) }
+        },
+    );
+
+    view! {
+        <div class="ap-detail" style="padding: 1em; background: var(--bg-secondary, #f5f5f5); border-radius: 4px;">
             // --- Radios ---
-            <h4 style="margin-top: 1.5em;">"Radios"</h4>
+            <h4>"Radios"</h4>
             <Suspense fallback=move || view! { <p>"Loading radios..."</p> }>
                 {move || {
                     let mac_r = mac.clone();

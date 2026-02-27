@@ -36,6 +36,7 @@ pub struct Response {
     pub audit_logs: Option<Vec<crate::types::AuditEntry>>,
     pub tls_status: Option<serde_json::Value>,
     pub wifi_aps: Option<Vec<hermitshell_common::WifiAp>>,
+    pub wifi_providers: Option<Vec<hermitshell_common::WifiProviderInfo>>,
     pub wifi_clients: Option<Vec<hermitshell_common::WifiClient>>,
     pub wifi_ssids: Option<Vec<hermitshell_common::WifiSsidConfig>>,
     pub wifi_radios: Option<Vec<hermitshell_common::WifiRadioConfig>>,
@@ -441,21 +442,44 @@ pub fn wifi_list_aps() -> Result<Vec<hermitshell_common::WifiAp>, String> {
     Ok(resp.wifi_aps.unwrap_or_default())
 }
 
-pub fn wifi_adopt_ap(mac: &str, ip: &str, name: &str, username: &str, password: &str) -> Result<(), String> {
-    ok_or_err(send(json!({
-        "method": "wifi_adopt_ap",
-        "mac": mac,
-        "url": ip,
+pub fn wifi_list_providers() -> Result<Vec<hermitshell_common::WifiProviderInfo>, String> {
+    let resp = ok_or_err(send(json!({"method": "wifi_list_providers"}))?)?;
+    Ok(resp.wifi_providers.unwrap_or_default())
+}
+
+pub fn wifi_add_provider(
+    provider_type: &str,
+    name: &str,
+    url: &str,
+    username: &str,
+    password: &str,
+    mac: Option<&str>,
+    site: Option<&str>,
+    api_key: Option<&str>,
+) -> Result<(), String> {
+    let mut req = json!({
+        "method": "wifi_add_provider",
+        "protocol": provider_type,
         "name": name,
+        "url": url,
         "key": username,
         "value": password,
-        "protocol": "eap_standalone"
-    }))?)?;
+    });
+    if let Some(m) = mac {
+        req["mac"] = serde_json::Value::String(m.to_string());
+    }
+    if let Some(s) = site {
+        req["site"] = serde_json::Value::String(s.to_string());
+    }
+    if let Some(ak) = api_key {
+        req["api_key"] = serde_json::Value::String(ak.to_string());
+    }
+    ok_or_err(send(req)?)?;
     Ok(())
 }
 
-pub fn wifi_remove_ap(mac: &str) -> Result<(), String> {
-    ok_or_err(send(json!({"method": "wifi_remove_ap", "mac": mac}))?)?;
+pub fn wifi_remove_provider(id: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "wifi_remove_provider", "provider_id": id}))?)?;
     Ok(())
 }
 
@@ -464,15 +488,15 @@ pub fn wifi_get_clients() -> Result<Vec<hermitshell_common::WifiClient>, String>
     Ok(resp.wifi_clients.unwrap_or_default())
 }
 
-pub fn wifi_get_ssids(mac: &str) -> Result<Vec<hermitshell_common::WifiSsidConfig>, String> {
-    let resp = ok_or_err(send(json!({"method": "wifi_get_ssids", "mac": mac}))?)?;
+pub fn wifi_get_ssids(provider_id: &str) -> Result<Vec<hermitshell_common::WifiSsidConfig>, String> {
+    let resp = ok_or_err(send(json!({"method": "wifi_get_ssids", "provider_id": provider_id}))?)?;
     Ok(resp.wifi_ssids.unwrap_or_default())
 }
 
-pub fn wifi_set_ssid(mac: &str, ssid_name: &str, password: Option<&str>, band: &str, security: &str, hidden: bool) -> Result<(), String> {
+pub fn wifi_set_ssid(provider_id: &str, ssid_name: &str, password: Option<&str>, band: &str, security: &str, hidden: bool) -> Result<(), String> {
     let mut req = json!({
         "method": "wifi_set_ssid",
-        "mac": mac,
+        "provider_id": provider_id,
         "ssid_name": ssid_name,
         "band": band,
         "security": security,
@@ -485,10 +509,10 @@ pub fn wifi_set_ssid(mac: &str, ssid_name: &str, password: Option<&str>, band: &
     Ok(())
 }
 
-pub fn wifi_delete_ssid(mac: &str, ssid_name: &str, band: &str) -> Result<(), String> {
+pub fn wifi_delete_ssid(provider_id: &str, ssid_name: &str, band: &str) -> Result<(), String> {
     ok_or_err(send(json!({
         "method": "wifi_delete_ssid",
-        "mac": mac,
+        "provider_id": provider_id,
         "ssid_name": ssid_name,
         "band": band,
     }))?)?;

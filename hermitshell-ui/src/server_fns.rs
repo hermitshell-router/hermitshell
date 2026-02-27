@@ -333,26 +333,44 @@ pub async fn set_tls_acme(
 }
 
 #[server]
-pub async fn adopt_wifi_ap(mac: String, ip: String, name: String, username: String, password: String) -> Result<(), ServerFnError> {
-    crate::client::wifi_adopt_ap(&mac, &ip, &name, &username, &password)
-        .map_err(|e| ServerFnError::new(e))?;
-    let _ = crate::client::log_audit("wifi_adopt_ap", &format!("{}: {}", name, mac));
+pub async fn add_wifi_provider(
+    provider_type: String,
+    name: String,
+    url: String,
+    username: String,
+    password: String,
+    mac: Option<String>,
+    site: Option<String>,
+    api_key: Option<String>,
+) -> Result<(), ServerFnError> {
+    crate::client::wifi_add_provider(
+        &provider_type,
+        &name,
+        &url,
+        &username,
+        &password,
+        mac.as_deref(),
+        site.as_deref(),
+        api_key.as_deref(),
+    )
+    .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("wifi_add_provider", &format!("{}: {}", name, provider_type));
     leptos_axum::redirect("/wifi");
     Ok(())
 }
 
 #[server]
-pub async fn remove_wifi_ap(mac: String) -> Result<(), ServerFnError> {
-    crate::client::wifi_remove_ap(&mac)
+pub async fn remove_wifi_provider(id: String) -> Result<(), ServerFnError> {
+    crate::client::wifi_remove_provider(&id)
         .map_err(|e| ServerFnError::new(e))?;
-    let _ = crate::client::log_audit("wifi_remove_ap", &mac);
+    let _ = crate::client::log_audit("wifi_remove_provider", &id);
     leptos_axum::redirect("/wifi");
     Ok(())
 }
 
 #[server]
 pub async fn set_wifi_ssid(
-    mac: String,
+    provider_id: String,
     ssid_name: String,
     password: Option<String>,
     band: String,
@@ -360,19 +378,19 @@ pub async fn set_wifi_ssid(
     hidden: Option<String>,
 ) -> Result<(), ServerFnError> {
     let hidden = hidden.as_deref() == Some("on");
-    crate::client::wifi_set_ssid(&mac, &ssid_name, password.as_deref(), &band, &security, hidden)
+    crate::client::wifi_set_ssid(&provider_id, &ssid_name, password.as_deref(), &band, &security, hidden)
         .map_err(|e| ServerFnError::new(e))?;
-    let _ = crate::client::log_audit("wifi_set_ssid", &format!("{}: {} on {}", mac, ssid_name, band));
-    leptos_axum::redirect(&format!("/wifi?ap={}", mac));
+    let _ = crate::client::log_audit("wifi_set_ssid", &format!("{}: {} on {}", provider_id, ssid_name, band));
+    leptos_axum::redirect(&format!("/wifi?provider={}", provider_id));
     Ok(())
 }
 
 #[server]
-pub async fn delete_wifi_ssid(mac: String, ssid_name: String, band: String) -> Result<(), ServerFnError> {
-    crate::client::wifi_delete_ssid(&mac, &ssid_name, &band)
+pub async fn delete_wifi_ssid(provider_id: String, ssid_name: String, band: String) -> Result<(), ServerFnError> {
+    crate::client::wifi_delete_ssid(&provider_id, &ssid_name, &band)
         .map_err(|e| ServerFnError::new(e))?;
-    let _ = crate::client::log_audit("wifi_delete_ssid", &format!("{}: {} on {}", mac, ssid_name, band));
-    leptos_axum::redirect(&format!("/wifi?ap={}", mac));
+    let _ = crate::client::log_audit("wifi_delete_ssid", &format!("{}: {} on {}", provider_id, ssid_name, band));
+    leptos_axum::redirect(&format!("/wifi?provider={}", provider_id));
     Ok(())
 }
 
