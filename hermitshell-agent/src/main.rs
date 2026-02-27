@@ -6,6 +6,7 @@ mod db;
 mod dns_log;
 mod log_export;
 mod mdns;
+mod natpmp;
 mod nftables;
 mod pd;
 mod portmap;
