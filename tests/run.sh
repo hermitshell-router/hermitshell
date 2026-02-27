@@ -4,13 +4,16 @@ cd "$(dirname "$0")"
 
 # Parse arguments
 HERMIT_MODE="${HERMIT_MODE:-direct}"
+HERMIT_DISTRO="${HERMIT_DISTRO:-debian12}"
 while [ $# -gt 0 ]; do
     case "$1" in
         --mode) HERMIT_MODE="$2"; shift 2 ;;
-        *) echo "Usage: $0 [--mode docker|install|deb|direct]"; exit 1 ;;
+        --distro) HERMIT_DISTRO="$2"; shift 2 ;;
+        *) echo "Usage: $0 [--mode docker|install|deb|direct] [--distro debian12|debian13|ubuntu2204|ubuntu2404]"; exit 1 ;;
     esac
 done
 export HERMIT_MODE
+export HERMIT_DISTRO
 
 # Clear stale SSH config cache from prior VM sessions
 rm -rf /tmp/hermit-ssh-cache
@@ -19,7 +22,7 @@ source lib/helpers.sh
 
 SUITE_START=$SECONDS
 
-echo "=== HermitShell Integration Tests (mode: $HERMIT_MODE) ==="
+echo "=== HermitShell Integration Tests (mode: $HERMIT_MODE, distro: $HERMIT_DISTRO) ==="
 echo
 
 # Build artifacts
