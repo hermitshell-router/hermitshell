@@ -25,3 +25,12 @@ assert_match "$chain" "mac_ip_validate" "mac_ip_validate chain exists"
 # Rule format: ip saddr <ip> ether saddr != <mac> counter drop
 assert_contains "$chain" "$device_ip" "mac_ip_validate has rule for device IP"
 assert_contains "$chain" "$lan_mac" "mac_ip_validate binds to correct MAC"
+
+# --- Phase 3: DHCP fingerprint recording ---
+
+# Get device info and check for dhcp_fingerprint field
+device_info=$(vm_exec router "echo '{\"method\":\"list_devices\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock")
+assert_match "$device_info" '"dhcp_fingerprint"' "Device has dhcp_fingerprint field"
+# The LAN VM (Ubuntu) should have a non-empty fingerprint after DHCP
+# Option 55 produces a comma-separated list of option codes
+assert_match "$device_info" '"dhcp_fingerprint":"[0-9]' "Device has non-empty DHCP fingerprint"

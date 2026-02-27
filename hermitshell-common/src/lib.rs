@@ -55,6 +55,8 @@ pub struct Device {
     pub wifi_ap_mac: Option<String>,
     #[serde(default)]
     pub wifi_last_seen: Option<i64>,
+    #[serde(default)]
+    pub dhcp_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

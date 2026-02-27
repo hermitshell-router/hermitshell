@@ -151,6 +151,7 @@ fn device_from_row(row: &rusqlite::Row) -> rusqlite::Result<Device> {
         wifi_rssi: row.get(19)?,
         wifi_ap_mac: row.get(20)?,
         wifi_last_seen: row.get(21)?,
+        dhcp_fingerprint: row.get(22)?,
     })
 }
 
@@ -327,6 +328,15 @@ impl Db {
             )?;
         }
 
+        if version < 7 {
+            let _ = conn.execute_batch("ALTER TABLE devices ADD COLUMN dhcp_fingerprint TEXT");
+            conn.execute(
+                "INSERT INTO config (key, value) VALUES ('schema_version', '7')
+                 ON CONFLICT(key) DO UPDATE SET value = '7'",
+                [],
+            )?;
+        }
+
         Ok(())
     }
 
@@ -340,7 +350,7 @@ impl Db {
 
     pub fn list_devices(&self) -> Result<Vec<Device>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname, wifi_ssid, wifi_band, wifi_rssi, wifi_ap_mac, wifi_last_seen FROM devices"
+            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname, wifi_ssid, wifi_band, wifi_rssi, wifi_ap_mac, wifi_last_seen, dhcp_fingerprint FROM devices"
         )?;
         let devices = stmt.query_map([], |row| device_from_row(row))?;
         Ok(devices.filter_map(|d| d.ok()).collect())
@@ -348,7 +358,7 @@ impl Db {
 
     pub fn get_device(&self, mac: &str) -> Result<Option<Device>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname, wifi_ssid, wifi_band, wifi_rssi, wifi_ap_mac, wifi_last_seen FROM devices WHERE mac = ?1"
+            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname, wifi_ssid, wifi_band, wifi_rssi, wifi_ap_mac, wifi_last_seen, dhcp_fingerprint FROM devices WHERE mac = ?1"
         )?;
         let mut rows = stmt.query([mac])?;
         if let Some(row) = rows.next()? {
@@ -446,7 +456,7 @@ impl Db {
     /// List all devices that have subnet_id set (for state restoration on startup)
     pub fn list_assigned_devices(&self) -> Result<Vec<Device>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname, wifi_ssid, wifi_band, wifi_rssi, wifi_ap_mac, wifi_last_seen FROM devices WHERE subnet_id IS NOT NULL"
+            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname, wifi_ssid, wifi_band, wifi_rssi, wifi_ap_mac, wifi_last_seen, dhcp_fingerprint FROM devices WHERE subnet_id IS NOT NULL"
         )?;
         let devices = stmt.query_map([], |row| device_from_row(row))?;
         Ok(devices.filter_map(|d| d.ok()).collect())
@@ -707,6 +717,14 @@ impl Db {
         self.conn.execute(
             "UPDATE devices SET hostname = ?1, last_seen = ?2 WHERE mac = ?3",
             (hostname, now, mac),
+        )?;
+        Ok(())
+    }
+
+    pub fn set_device_dhcp_fingerprint(&self, mac: &str, fingerprint: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE devices SET dhcp_fingerprint = ?1 WHERE mac = ?2",
+            (fingerprint, mac),
         )?;
         Ok(())
     }

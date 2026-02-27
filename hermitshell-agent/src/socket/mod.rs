@@ -138,6 +138,7 @@ struct Request {
     ca_cert: Option<String>,
     period: Option<String>,
     device_mac: Option<String>,
+    dhcp_fingerprint: Option<String>,
 }
 
 /// JSON response envelope. `ok` indicates success; `error` carries failure details.
@@ -512,6 +513,9 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
                 if !clean.is_empty() {
                     let _ = db.set_device_hostname(&mac, &clean);
                 }
+            }
+            if let Some(ref fp) = req.dhcp_fingerprint {
+                let _ = db.set_device_dhcp_fingerprint(&mac, fp);
             }
             let reserved_sid = db.get_dhcp_reservation(&mac).ok().flatten().map(|r| r.subnet_id);
             match db.get_device(&mac) {

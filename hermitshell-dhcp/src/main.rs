@@ -284,12 +284,26 @@ fn handle_discover(agent: &mut AgentConn, request: &Message, mac: &str) -> Resul
         }
         _ => None,
     };
+    // Extract DHCP fingerprint (Option 55: Parameter Request List)
+    let fingerprint = match request.opts().get(dhcproto::v4::OptionCode::ParameterRequestList) {
+        Some(DhcpOption::ParameterRequestList(codes)) => {
+            let code_strs: Vec<String> = codes.iter().map(|c| {
+                let n: u8 = (*c).into();
+                n.to_string()
+            }).collect();
+            Some(code_strs.join(","))
+        }
+        _ => None,
+    };
     let mut req = serde_json::json!({
         "method": "dhcp_discover",
         "mac": mac,
     });
     if let Some(ref h) = hostname {
         req["hostname"] = serde_json::Value::String(h.clone());
+    }
+    if let Some(ref fp) = fingerprint {
+        req["dhcp_fingerprint"] = serde_json::Value::String(fp.clone());
     }
     let resp = agent.request(&req)?;
 
@@ -339,12 +353,26 @@ fn handle_request(agent: &mut AgentConn, request: &Message, mac: &str) -> Result
         }
         _ => None,
     };
+    // Extract DHCP fingerprint (Option 55: Parameter Request List)
+    let fingerprint = match request.opts().get(dhcproto::v4::OptionCode::ParameterRequestList) {
+        Some(DhcpOption::ParameterRequestList(codes)) => {
+            let code_strs: Vec<String> = codes.iter().map(|c| {
+                let n: u8 = (*c).into();
+                n.to_string()
+            }).collect();
+            Some(code_strs.join(","))
+        }
+        _ => None,
+    };
     let mut req = serde_json::json!({
         "method": "dhcp_discover",
         "mac": mac,
     });
     if let Some(ref h) = hostname {
         req["hostname"] = serde_json::Value::String(h.clone());
+    }
+    if let Some(ref fp) = fingerprint {
+        req["dhcp_fingerprint"] = serde_json::Value::String(fp.clone());
     }
     let resp = agent.request(&req)?;
 
