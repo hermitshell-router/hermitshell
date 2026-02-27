@@ -31,7 +31,7 @@ How HermitShell compares to the platforms most home and prosumer users actually 
 | **WiFi AP management** | TP-Link EAP720 only | Native (runs on the AP) | Not built-in | Not applicable (wired only) | UniFi APs only | Native (hostapd, the device IS the AP) | Not built-in |
 | **Multi-WAN failover** | Not yet | Packages (mwan3) | Built-in (gateway groups) | Built-in | Built-in | Not built-in | Built-in (load balancing) |
 | **Setup** | Install script + web wizard | Flash firmware, LuCI | ISO install + web wizard | Plug in, app setup | Plug in, app setup | Install script + web UI | ISO install + CLI |
-| **Updates** | Manual (installer --upgrade) | Sysupgrade | GUI one-click + firmware mirrors | Automatic OTA | Automatic OTA | apt upgrade | apt (rolling) or image (LTS) |
+| **Updates** | GUI one-click + auto-update (opt-in) | Sysupgrade | GUI one-click + firmware mirrors | Automatic OTA | Automatic OTA | apt upgrade | apt (rolling) or image (LTS) |
 | **Multi-admin** | Single admin | Multi-user | Multi-user + RBAC | Multi-user | Multi-user | Single admin | Multi-user + RBAC |
 
 ## Where HermitShell is Stronger

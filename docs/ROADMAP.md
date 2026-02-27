@@ -22,6 +22,7 @@
 | 16 | Multi-AP management UI (inline SSID/radio config, per-AP clients) | 2026-02-25 |
 | 17 | mDNS proxy (group-based service discovery across isolated subnets) | 2026-02-26 |
 | 18 | UPnP IGD + NAT-PMP + PCP (automatic port mapping, trusted-only) | 2026-02-27 |
+| 19 | GUI one-click updates (download, verify, staged restart, rollback, opt-in auto-update) | 2026-02-27 |
 
 ## Future Work
 
