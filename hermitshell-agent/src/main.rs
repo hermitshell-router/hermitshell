@@ -686,9 +686,9 @@ async fn main() -> Result<()> {
     let blocky_mgr = {
         let dns_strings: Vec<String> = upstream_dns.iter().map(|ip| ip.to_string()).collect();
         let blocky_listen = if has_ipv6_ula {
-            format!("{}:53,[{}]:53", lan_ip, lan_ip_v6)
+            "127.0.0.1:5353,[::1]:5353".to_string()
         } else {
-            format!("{}:53", lan_ip)
+            "127.0.0.1:5353".to_string()
         };
         let blocky_bin = std::env::var("BLOCKY_BIN")
             .unwrap_or_else(|_| "/opt/hermitshell/blocky".into());

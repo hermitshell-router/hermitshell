@@ -95,7 +95,7 @@ pub fn validate_protocol(protocol: &str) -> Result<()> {
 }
 
 
-fn build_base_ruleset(wan_iface: &str, lan_iface: &str, lan_ip: &str) -> String {
+fn build_base_ruleset(wan_iface: &str, lan_iface: &str, _lan_ip: &str) -> String {
     format!(r#"#!/usr/sbin/nft -f
 flush ruleset
 
@@ -173,8 +173,8 @@ table ip nat {{
         type nat hook prerouting priority -100;
         iifname "{lan_iface}" tcp dport 443 redirect to :8443
         iifname "{lan_iface}" tcp dport 80 redirect to :8080
-        iifname "{lan_iface}" udp dport 53 dnat to {lan_ip}:53
-        iifname "{lan_iface}" tcp dport 53 dnat to {lan_ip}:53
+        iifname {{ "{lan_iface}", "wg0" }} udp dport 53 dnat to 127.0.0.1:5353
+        iifname {{ "{lan_iface}", "wg0" }} tcp dport 53 dnat to 127.0.0.1:5353
     }}
     chain postrouting {{
         type nat hook postrouting priority 100;
