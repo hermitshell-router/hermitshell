@@ -68,6 +68,35 @@ async fn handle_restore_config(
     }
 }
 
+async fn security_headers_middleware(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(req).await;
+    let h = response.headers_mut();
+    h.insert(
+        axum::http::header::STRICT_TRANSPORT_SECURITY,
+        axum::http::HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+    );
+    h.insert(
+        axum::http::header::CONTENT_SECURITY_POLICY,
+        axum::http::HeaderValue::from_static("default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'"),
+    );
+    h.insert(
+        axum::http::header::X_FRAME_OPTIONS,
+        axum::http::HeaderValue::from_static("DENY"),
+    );
+    h.insert(
+        axum::http::header::X_CONTENT_TYPE_OPTIONS,
+        axum::http::HeaderValue::from_static("nosniff"),
+    );
+    h.insert(
+        axum::http::header::REFERRER_POLICY,
+        axum::http::HeaderValue::from_static("strict-origin-when-cross-origin"),
+    );
+    response
+}
+
 async fn csrf_middleware(
     req: axum::extract::Request,
     next: axum::middleware::Next,
@@ -124,10 +153,17 @@ async fn auth_middleware(
 ) -> axum::response::Response {
     let path = req.uri().path().to_string();
 
+    let is_setup_path = path.starts_with("/api/setup_interfaces")
+        || path.starts_with("/api/get_interfaces");
+
     if path == "/login" || path == "/setup" || path == "/style.css"
         || path.starts_with("/api/login") || path.starts_with("/api/setup_password")
-        || path.starts_with("/api/setup_interfaces") || path.starts_with("/api/get_interfaces")
     {
+        return next.run(req).await;
+    }
+
+    // Setup endpoints only bypass auth before a password is set
+    if is_setup_path && !client::has_password().unwrap_or(true) {
         return next.run(req).await;
     }
 
@@ -250,6 +286,7 @@ async fn main() {
             rate_limit_middleware,
         ))
         .layer(axum::middleware::from_fn(csrf_middleware))
+        .layer(axum::middleware::from_fn(security_headers_middleware))
         .with_state(leptos_options);
 
     // Load TLS cert from agent
@@ -305,9 +342,17 @@ async fn main() {
     });
 
     // HTTP on port 8080 -- redirect to HTTPS (nftables redirects 80 -> 8080)
-    let redirect_app = Router::new().fallback(|| async {
-        axum::response::Redirect::permanent("https://hermitshell.local/")
-    });
+    let redirect_app = Router::new().fallback(
+        |req: axum::extract::Request| async move {
+            let host = req.headers()
+                .get(axum::http::header::HOST)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("hermitshell.local");
+            // Strip port if present (e.g., "192.168.1.1:8080" → "192.168.1.1")
+            let host = host.split(':').next().unwrap_or(host);
+            axum::response::Redirect::permanent(&format!("https://{host}/"))
+        },
+    );
     let http_addr = std::net::SocketAddr::from(([0, 0, 0, 0], 8080));
     let listener = tokio::net::TcpListener::bind(&http_addr).await.unwrap();
     println!("Listening on https://{} and http://{}", https_addr, http_addr);
