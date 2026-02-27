@@ -1,9 +1,7 @@
 name: Update Apt Repository
 
 on:
-  workflow_run:
-    workflows: ["Release"]
-    types: [completed]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -11,8 +9,8 @@ permissions:
 
 jobs:
   update-repo:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    environment: apt-repo
     steps:
       - uses: actions/checkout@v4
         with:
