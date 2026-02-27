@@ -485,6 +485,9 @@ fn run_dhcpv6_server(lan_iface: &str) -> Result<()> {
     let mut buf = [0u8; 1500];
     let mut solicit_times: LruCache<String, Instant> = LruCache::new(NonZeroUsize::new(10_000).expect("nonzero constant"));
     let mut neigh_cache: LruCache<Ipv6Addr, String> = LruCache::new(NonZeroUsize::new(10_000).expect("nonzero constant"));
+    // Global rate limit for neighbor cache subprocess lookups (max 10/sec)
+    let mut neigh_lookup_count: u32 = 0;
+    let mut neigh_lookup_window = Instant::now();
 
     loop {
         let (len, src_addr) = match udp.recv_from(&mut buf) {
@@ -523,6 +526,16 @@ fn run_dhcpv6_server(lan_iface: &str) -> Result<()> {
         let mac = if let Some(cached) = neigh_cache.get(&src_ip) {
             cached.clone()
         } else {
+            // Reset counter each second; drop packet if over 10 lookups/sec
+            if neigh_lookup_window.elapsed().as_secs() >= 1 {
+                neigh_lookup_count = 0;
+                neigh_lookup_window = Instant::now();
+            }
+            if neigh_lookup_count >= 10 {
+                warn!(src = %src_ip, "DHCPv6 neighbor lookup rate-limited");
+                continue;
+            }
+            neigh_lookup_count += 1;
             match resolve_mac_from_neigh(&src_ip, lan_iface) {
                 Some(m) => {
                     neigh_cache.put(src_ip, m.clone());
