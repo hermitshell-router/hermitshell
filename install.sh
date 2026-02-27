@@ -25,18 +25,29 @@ check_root() {
     fi
 }
 
-check_debian() {
+check_distro() {
     if [ ! -f /etc/os-release ]; then
         echo "Error: cannot detect OS" >&2
         exit 1
     fi
     . /etc/os-release
-    if [ "$ID" != "debian" ] && [ "$ID" != "raspbian" ]; then
-        echo "Error: requires Debian 12 (detected: $ID)" >&2
-        exit 1
-    fi
-    if [ "${VERSION_ID:-}" != "12" ]; then
-        echo "Warning: tested on Debian 12, detected version $VERSION_ID" >&2
+
+    case "$ID" in
+        debian|raspbian) KNOWN_VERSIONS="12 13" ;;
+        ubuntu)          KNOWN_VERSIONS="22.04 24.04" ;;
+        *)
+            echo "Error: unsupported OS (detected: $ID)" >&2
+            echo "  Supported: Debian 12+, Ubuntu 22.04+, Raspbian" >&2
+            exit 1
+            ;;
+    esac
+
+    local known=false
+    for v in $KNOWN_VERSIONS; do
+        [ "${VERSION_ID:-}" = "$v" ] && known=true
+    done
+    if ! $known; then
+        echo "Warning: tested on $ID $KNOWN_VERSIONS (detected: ${VERSION_ID:-unknown})" >&2
     fi
 }
 
@@ -73,7 +84,7 @@ get_latest_version() {
 do_install() {
     local wan="$1" lan="$2"
 
-    check_debian
+    check_distro
     check_iface "$wan" "wan"
     check_iface "$lan" "lan"
 
@@ -88,6 +99,12 @@ do_install() {
     # Install system dependencies
     apt-get update -qq
     apt-get install -y -qq nftables conntrack wireguard-tools iproute2 curl >/dev/null
+
+    # On Ubuntu, install ifupdown (replaces Netplan for interface management)
+    . /etc/os-release
+    if [ "$ID" = "ubuntu" ]; then
+        apt-get install -y -qq ifupdown >/dev/null
+    fi
 
     # Install binaries
     mkdir -p "$INSTALL_DIR"
