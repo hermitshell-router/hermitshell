@@ -526,11 +526,11 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Encrypt any legacy plaintext WiFi AP passwords
+    // Encrypt any legacy plaintext WiFi provider passwords
     {
         let db_lock = db.lock().unwrap();
         if let Ok(Some(secret)) = db_lock.get_config("session_secret") {
-            if let Err(e) = db_lock.encrypt_wifi_passwords(&secret) {
+            if let Err(e) = db_lock.encrypt_wifi_provider_passwords(&secret) {
                 warn!(error = %e, "failed to encrypt legacy WiFi passwords");
             }
         }

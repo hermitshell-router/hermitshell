@@ -76,6 +76,7 @@ pub(super) fn handle_export_config(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
         .filter(|p| matches!(p.get("protocol").and_then(|v| v.as_str()), Some("tcp" | "udp")))
         .collect();
     let wifi_aps = db.list_wifi_aps().unwrap_or_default();
+    let wifi_providers = db.list_wifi_providers().unwrap_or_default();
 
     // v2 expanded config allowlist
     let config_keys = [
@@ -107,11 +108,12 @@ pub(super) fn handle_export_config(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
             }
         }
 
-        // Decrypt WiFi AP passwords
+        // Decrypt WiFi provider passwords and API keys
         let session_secret = db.get_config("session_secret").ok().flatten().unwrap_or_default();
-        let mut wifi_ap_passwords = serde_json::Map::new();
-        for ap in &wifi_aps {
-            if let Ok(Some((_ip, _username, password_enc))) = db.get_wifi_ap_credentials(&ap.mac) {
+        let mut wifi_provider_passwords = serde_json::Map::new();
+        let mut wifi_provider_api_keys = serde_json::Map::new();
+        for provider in &wifi_providers {
+            if let Ok(Some((_ptype, _url, _username, password_enc, _site, api_key_enc))) = db.get_wifi_provider_credentials(&provider.id) {
                 if !password_enc.is_empty() {
                     let plaintext = if crate::crypto::is_encrypted(&password_enc) {
                         crate::crypto::decrypt_password(&password_enc, &session_secret)
@@ -119,11 +121,23 @@ pub(super) fn handle_export_config(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
                     } else {
                         password_enc
                     };
-                    wifi_ap_passwords.insert(ap.mac.clone(), serde_json::Value::String(plaintext));
+                    wifi_provider_passwords.insert(provider.id.clone(), serde_json::Value::String(plaintext));
+                }
+                if let Some(api_key) = api_key_enc {
+                    if !api_key.is_empty() {
+                        let plaintext = if crate::crypto::is_encrypted(&api_key) {
+                            crate::crypto::decrypt_password(&api_key, &session_secret)
+                                .unwrap_or_else(|_| api_key.clone())
+                        } else {
+                            api_key
+                        };
+                        wifi_provider_api_keys.insert(provider.id.clone(), serde_json::Value::String(plaintext));
+                    }
                 }
             }
         }
-        secrets_map.insert("wifi_ap_passwords".to_string(), serde_json::Value::Object(wifi_ap_passwords));
+        secrets_map.insert("wifi_provider_passwords".to_string(), serde_json::Value::Object(wifi_provider_passwords));
+        secrets_map.insert("wifi_provider_api_keys".to_string(), serde_json::Value::Object(wifi_provider_api_keys));
 
         let secrets_json = serde_json::Value::Object(secrets_map);
 
@@ -160,12 +174,21 @@ pub(super) fn handle_export_config(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
             "device_group": p.device_group, "enabled": p.enabled
         })).collect::<Vec<_>>(),
         "ipv6_pinholes": pinholes,
+        "wifi_providers": wifi_providers.iter().map(|p| {
+            let ca_cert_pem = db.get_wifi_provider_ca_cert(&p.id).ok().flatten();
+            let creds = db.get_wifi_provider_credentials(&p.id).ok().flatten();
+            let (site, username) = creds.map(|c| (c.4, c.2)).unwrap_or((None, String::new()));
+            serde_json::json!({
+                "id": p.id, "provider_type": p.provider_type, "name": p.name,
+                "url": p.url, "enabled": p.enabled, "site": site,
+                "username": username, "ca_cert_pem": ca_cert_pem,
+            })
+        }).collect::<Vec<_>>(),
         "wifi_aps": wifi_aps.iter().map(|ap| {
-            let ca_cert_pem = db.get_wifi_ap_ca_cert(&ap.mac).ok().flatten();
             serde_json::json!({
                 "mac": ap.mac, "ip": ap.ip, "name": ap.name, "provider": ap.provider,
                 "model": ap.model, "firmware": ap.firmware, "enabled": ap.enabled,
-                "ca_cert_pem": ca_cert_pem,
+                "provider_id": ap.provider_id,
             })
         }).collect::<Vec<_>>(),
         "config": config_map,
@@ -324,67 +347,121 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
         }
     }
 
-    // Import WiFi APs: best-effort per-entry.
-    if let Some(wifi_aps) = parsed.get("wifi_aps").and_then(|v| v.as_array()) {
+    // Import WiFi providers: best-effort per-entry.
+    if let Some(wifi_providers) = parsed.get("wifi_providers").and_then(|v| v.as_array()) {
         let session_secret = db.get_config("session_secret").ok().flatten().unwrap_or_default();
-        let ap_passwords = secrets_obj.as_ref()
-            .and_then(|s| s.get("wifi_ap_passwords"))
+        let provider_passwords = secrets_obj.as_ref()
+            .and_then(|s| s.get("wifi_provider_passwords"))
+            .and_then(|v| v.as_object());
+        let provider_api_keys = secrets_obj.as_ref()
+            .and_then(|s| s.get("wifi_provider_api_keys"))
             .and_then(|v| v.as_object());
 
-        for ap in wifi_aps {
-            let mac = ap.get("mac").and_then(|v| v.as_str()).unwrap_or("");
-            let ip = ap.get("ip").and_then(|v| v.as_str()).unwrap_or("");
-            let name = ap.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            if mac.is_empty() || ip.is_empty() || name.is_empty() {
+        for p in wifi_providers {
+            let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let provider_type = p.get("provider_type").and_then(|v| v.as_str()).unwrap_or("");
+            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let url = p.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            if id.is_empty() || provider_type.is_empty() || name.is_empty() || url.is_empty() {
                 continue;
             }
-            let provider = ap.get("provider").and_then(|v| v.as_str()).unwrap_or("eap_standalone");
-            let enabled = ap.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
-
-            // Validate AP fields (same checks as handle_wifi_adopt_ap)
-            if ip.parse::<std::net::IpAddr>().is_err() {
-                warn!(ip = %ip, "import_config: skipping WiFi AP with invalid IP");
+            let valid_types = ["eap_standalone", "unifi"];
+            if !valid_types.contains(&provider_type) {
+                warn!(provider_type = %provider_type, "import_config: skipping WiFi provider with unknown type");
                 continue;
             }
             if name.len() > 64
                 || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ' ' || c == '.')
             {
-                warn!(name = %name, "import_config: skipping WiFi AP with invalid name");
-                continue;
-            }
-            let valid_providers = ["eap_standalone"];
-            if !valid_providers.contains(&provider) {
-                warn!(provider = %provider, "import_config: skipping WiFi AP with unknown provider");
+                warn!(name = %name, "import_config: skipping WiFi provider with invalid name");
                 continue;
             }
 
+            let username = p.get("username").and_then(|v| v.as_str()).unwrap_or("admin");
+            let site = p.get("site").and_then(|v| v.as_str());
+
             // Look up plaintext password from secrets, re-encrypt with current session_secret
-            let password_enc = ap_passwords
-                .and_then(|m| m.get(mac))
+            let password_enc = provider_passwords
+                .and_then(|m| m.get(id))
                 .and_then(|v| v.as_str())
                 .and_then(|plaintext| crate::crypto::encrypt_password(plaintext, &session_secret).ok())
                 .unwrap_or_default();
 
-            // Delete existing AP with same MAC, then insert
-            let _ = db.remove_wifi_ap(mac);
-            let _ = db.insert_wifi_ap(mac, ip, name, provider, "admin", &password_enc);
+            let api_key_enc = provider_api_keys
+                .and_then(|m| m.get(id))
+                .and_then(|v| v.as_str())
+                .and_then(|plaintext| crate::crypto::encrypt_password(plaintext, &session_secret).ok());
 
-            // Update model/firmware if present
-            let model = ap.get("model").and_then(|v| v.as_str());
-            let firmware = ap.get("firmware").and_then(|v| v.as_str());
-            if model.is_some() || firmware.is_some() {
-                let _ = db.update_wifi_ap_info(mac, model, firmware);
-            }
-
-            // Set enabled state: insert defaults to enabled, so only update if disabled
-            if !enabled {
-                let _ = db.set_wifi_ap_enabled(mac, false);
-            }
+            // Delete existing provider with same ID, then insert
+            let _ = db.remove_wifi_provider(id);
+            let _ = db.insert_wifi_provider(id, provider_type, name, url, username, &password_enc, site, api_key_enc.as_deref());
 
             // Import CA cert if present
-            let ca_cert = ap.get("ca_cert_pem").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+            let ca_cert = p.get("ca_cert_pem").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
             if let Some(pem) = ca_cert {
-                let _ = db.set_wifi_ap_ca_cert(mac, Some(pem));
+                let _ = db.set_wifi_provider_ca_cert(id, Some(pem));
+            }
+        }
+    }
+
+    // Import WiFi APs: best-effort per-entry.
+    if let Some(wifi_aps) = parsed.get("wifi_aps").and_then(|v| v.as_array()) {
+        for ap in wifi_aps {
+            let mac = ap.get("mac").and_then(|v| v.as_str()).unwrap_or("");
+            let provider_id = ap.get("provider_id").and_then(|v| v.as_str()).unwrap_or("");
+            if mac.is_empty() || provider_id.is_empty() {
+                continue;
+            }
+            let ip = ap.get("ip").and_then(|v| v.as_str()).unwrap_or("");
+            let name = ap.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let _ = db.insert_wifi_ap_for_provider(mac, provider_id, ip, name);
+        }
+    }
+
+    // Backward compat: old-format wifi_aps with username/password (pre-v8 schema)
+    // If wifi_providers section is absent but wifi_aps has credential fields, create providers.
+    if parsed.get("wifi_providers").is_none() {
+        if let Some(wifi_aps) = parsed.get("wifi_aps").and_then(|v| v.as_array()) {
+            let session_secret = db.get_config("session_secret").ok().flatten().unwrap_or_default();
+            let ap_passwords = secrets_obj.as_ref()
+                .and_then(|s| s.get("wifi_ap_passwords"))
+                .and_then(|v| v.as_object());
+
+            for ap in wifi_aps {
+                let mac = ap.get("mac").and_then(|v| v.as_str()).unwrap_or("");
+                let ip = ap.get("ip").and_then(|v| v.as_str()).unwrap_or("");
+                let name = ap.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                if mac.is_empty() || ip.is_empty() || name.is_empty() {
+                    continue;
+                }
+                let provider_type = ap.get("provider").and_then(|v| v.as_str()).unwrap_or("eap_standalone");
+                let valid_types = ["eap_standalone"];
+                if !valid_types.contains(&provider_type) {
+                    continue;
+                }
+                if ip.parse::<std::net::IpAddr>().is_err() {
+                    continue;
+                }
+                if name.len() > 64
+                    || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ' ' || c == '.')
+                {
+                    continue;
+                }
+
+                let password_enc = ap_passwords
+                    .and_then(|m| m.get(mac))
+                    .and_then(|v| v.as_str())
+                    .and_then(|plaintext| crate::crypto::encrypt_password(plaintext, &session_secret).ok())
+                    .unwrap_or_default();
+
+                let provider_id = uuid::Uuid::new_v4().to_string();
+                let _ = db.insert_wifi_provider(&provider_id, provider_type, name, ip, "admin", &password_enc, None, None);
+                let _ = db.insert_wifi_ap_for_provider(mac, &provider_id, ip, name);
+
+                let ca_cert = ap.get("ca_cert_pem").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+                if let Some(pem) = ca_cert {
+                    let _ = db.set_wifi_provider_ca_cert(&provider_id, Some(pem));
+                }
             }
         }
     }
