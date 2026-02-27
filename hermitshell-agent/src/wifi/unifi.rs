@@ -619,7 +619,7 @@ impl WifiProvider for UnifiSession {
             self.api_put(&url, &body).await?;
         } else {
             // Create new SSID.
-            let url = self.site_url("rest/wlanconf");
+            let url = self.site_url("add/wlanconf");
             self.api_post(&url, &body).await?;
         }
 
