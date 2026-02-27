@@ -189,3 +189,37 @@ pub(super) fn handle_list_ipv6_pinholes(_req: &Request, db: &Arc<Mutex<Db>>) -> 
         Err(e) => Response::err(&e.to_string()),
     }
 }
+
+pub(super) fn handle_get_upnp_config(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let db = db.lock().unwrap();
+    let enabled = db.get_config_bool("upnp_enabled", false);
+    let auto_count = db.count_automatic_port_forwards().unwrap_or(0);
+    let mut resp = Response::ok();
+    resp.config_value = Some(serde_json::json!({
+        "enabled": enabled,
+        "active_mappings": auto_count,
+    }).to_string());
+    resp
+}
+
+pub(super) fn handle_set_upnp_config(
+    req: &Request, db: &Arc<Mutex<Db>>, portmap: &crate::portmap::SharedRegistry
+) -> Response {
+    let Some(ref value) = req.value else {
+        return Response::err("value required (true or false)");
+    };
+    match value.as_str() {
+        "true" | "false" => {}
+        _ => return Response::err("value must be true or false"),
+    }
+    {
+        let db_guard = db.lock().unwrap();
+        if let Err(e) = db_guard.set_config("upnp_enabled", value) {
+            return Response::err(&e.to_string());
+        }
+    }
+    if value == "false" {
+        portmap.clear_automatic();
+    }
+    Response::ok()
+}

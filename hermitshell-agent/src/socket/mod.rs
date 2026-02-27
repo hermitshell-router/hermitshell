@@ -391,6 +391,8 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "add_ipv6_pinhole" => network::handle_add_ipv6_pinhole(&req, db),
         "remove_ipv6_pinhole" => network::handle_remove_ipv6_pinhole(&req, db),
         "list_ipv6_pinholes" => network::handle_list_ipv6_pinholes(&req, db),
+        "get_upnp_config" => network::handle_get_upnp_config(&req, db),
+        "set_upnp_config" => network::handle_set_upnp_config(&req, db, portmap),
         "get_config" => config::handle_get_config(&req, db),
         "set_config" => config::handle_set_config(&req, db),
         "get_ad_blocking" => config::handle_get_ad_blocking(&req, db),
