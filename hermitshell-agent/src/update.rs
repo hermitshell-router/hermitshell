@@ -1,5 +1,5 @@
 use std::sync::{Arc, Mutex};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 const GITHUB_RELEASES_URL: &str =
     "https://api.github.com/repos/jnordwick/hermitshell/releases/latest";
@@ -91,10 +91,10 @@ pub fn spawn_update_loop(db: Arc<Mutex<crate::db::Db>>) {
                         };
                         let current = format!("v{}", current_version());
                         if auto_enabled && version != current {
-                            tracing::info!(version = %version, "auto-update: applying");
+                            info!(version = %version, "auto-update: applying");
                             match apply_update(&db).await {
                                 Ok(v) => {
-                                    tracing::info!(version = %v, "auto-update: download complete, restarting");
+                                    info!(version = %v, "auto-update: download complete, restarting");
                                     trigger_staged_restart();
                                     return; // exit loop — agent is restarting
                                 }
@@ -123,6 +123,16 @@ pub fn current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// Validate that a version string looks like a release tag (e.g. v0.1.0, v1.2.3-rc1).
+fn validate_version(v: &str) -> anyhow::Result<()> {
+    if !v.starts_with('v') || v.len() > 32
+        || !v[1..].chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
+        anyhow::bail!("invalid version format: {}", v);
+    }
+    Ok(())
+}
+
 /// Download, verify, and stage a new release. Returns the version string on success.
 /// Does NOT restart — the caller must trigger the restart after responding to the client.
 pub async fn apply_update(db: &std::sync::Arc<std::sync::Mutex<crate::db::Db>>) -> anyhow::Result<String> {
@@ -133,6 +143,7 @@ pub async fn apply_update(db: &std::sync::Arc<std::sync::Mutex<crate::db::Db>>) 
     let Some(version) = latest else {
         anyhow::bail!("no update available");
     };
+    validate_version(&version)?;
     let current = format!("v{}", current_version());
     if version == current {
         anyhow::bail!("already running {}", version);
@@ -148,7 +159,7 @@ pub async fn apply_update(db: &std::sync::Arc<std::sync::Mutex<crate::db::Db>>) 
     let tarball_url = format!("{}/{}/{}", GITHUB_DOWNLOAD_URL, version, tarball_name);
     let checksum_url = format!("{}.sha256", tarball_url);
 
-    tracing::info!(version = %version, "downloading update");
+    info!(version = %version, "downloading update");
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
@@ -172,7 +183,7 @@ pub async fn apply_update(db: &std::sync::Arc<std::sync::Mutex<crate::db::Db>>) 
     if actual_hash != expected_hash {
         anyhow::bail!("checksum mismatch: expected {} got {}", expected_hash, actual_hash);
     }
-    tracing::info!("checksum verified");
+    info!("checksum verified");
 
     // Create rollback dir and copy current binaries
     std::fs::create_dir_all(ROLLBACK_DIR)?;
@@ -183,7 +194,7 @@ pub async fn apply_update(db: &std::sync::Arc<std::sync::Mutex<crate::db::Db>>) 
             std::fs::copy(&src, &dst)?;
         }
     }
-    tracing::info!("current binaries backed up to rollback/");
+    info!("current binaries backed up to rollback/");
 
     // Extract to staging dir
     let staging = std::path::Path::new(STAGING_DIR);
@@ -194,7 +205,14 @@ pub async fn apply_update(db: &std::sync::Arc<std::sync::Mutex<crate::db::Db>>) 
 
     let tar_gz = flate2::read::GzDecoder::new(std::io::Cursor::new(&tarball_bytes));
     let mut archive = tar::Archive::new(tar_gz);
-    archive.unpack(staging)?;
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let path = entry.path()?;
+        if path.is_absolute() || path.components().any(|c| c == std::path::Component::ParentDir) {
+            anyhow::bail!("tarball contains unsafe path: {}", path.display());
+        }
+        entry.unpack_in(staging)?;
+    }
 
     // Atomic rename each binary from staging to install dir
     for bin in BINARIES {
@@ -203,14 +221,14 @@ pub async fn apply_update(db: &std::sync::Arc<std::sync::Mutex<crate::db::Db>>) 
         let dest = format!("{}/{}", INSTALL_DIR, bin);
         std::fs::rename(&staged, &dest)?;
     }
-    tracing::info!("binaries swapped");
+    info!("binaries swapped");
 
     // Clean up staging
     let _ = std::fs::remove_dir_all(staging);
 
     // Write update marker
     std::fs::write(UPDATE_MARKER, &version)?;
-    tracing::info!(version = %version, "update marker written");
+    info!(version = %version, "update marker written");
 
     // Store version in DB
     {
@@ -245,18 +263,24 @@ fn find_binary(staging: &std::path::Path, name: &str) -> anyhow::Result<std::pat
 /// This function spawns a detached task and returns immediately.
 pub fn trigger_staged_restart() {
     tokio::spawn(async {
-        tracing::info!("restarting hermitshell-ui");
-        let _ = tokio::process::Command::new("systemctl")
+        info!("restarting hermitshell-ui");
+        if let Err(e) = tokio::process::Command::new("systemctl")
             .args(["restart", "hermitshell-ui"])
-            .status().await;
+            .status().await
+        {
+            warn!(error = %e, "failed to restart hermitshell-ui");
+        }
 
         // Brief pause to let UI come up before agent restarts
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-        tracing::info!("restarting hermitshell-agent");
-        let _ = tokio::process::Command::new("systemctl")
+        info!("restarting hermitshell-agent");
+        if let Err(e) = tokio::process::Command::new("systemctl")
             .args(["restart", "hermitshell-agent"])
-            .status().await;
+            .status().await
+        {
+            warn!(error = %e, "failed to restart hermitshell-agent");
+        }
     });
 }
 
@@ -274,7 +298,7 @@ pub fn check_update_marker() -> anyhow::Result<Option<String>> {
         // Update succeeded — clean up
         std::fs::remove_file(marker)?;
         let _ = std::fs::remove_dir_all(ROLLBACK_DIR);
-        tracing::info!(version = %current, "update successful, marker cleared");
+        info!(version = %current, "update successful, marker cleared");
         Ok(Some(current))
     } else {
         // Version mismatch — rollback was triggered by rollback.sh,

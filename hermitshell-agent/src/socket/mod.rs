@@ -36,6 +36,8 @@ const BLOCKED_CONFIG_KEYS: &[&str] = &[
     "acme_cf_api_token",
     "acme_account_key",
     "webhook_secret",
+    "update_latest_version",
+    "update_installed_version",
 ];
 
 fn is_blocked_config_key(key: &str) -> bool {

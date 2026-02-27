@@ -52,7 +52,7 @@ How HermitShell compares to the platforms most home and prosumer users actually 
 
 **Fewer supported hardware platforms.** x86_64 and aarch64 only. OpenWrt runs on MIPS, ARM32, and hundreds of specific router boards. OPNsense and VyOS support x86_64 only but have mature installers. RaspAP targets Raspberry Pi and Debian-based ARM boards. HermitShell requires a mini PC or SBC with two network interfaces.
 
-**No automatic updates.** You must run the upgrade command manually. Firewalla and Ubiquiti push updates automatically. OPNsense has one-click updates in its GUI.
+**No signed updates.** GUI one-click and opt-in auto-update are available, but releases are verified by SHA256 checksum only — no GPG signature. Firewalla and Ubiquiti sign their firmware. OPNsense signs packages with `pkg` keys.
 
 **Debian only.** The installer requires Debian 12 or Raspbian. OpenWrt is its own OS; OPNsense is FreeBSD-based; VyOS is Debian-based with its own installer; RaspAP runs on Raspberry Pi OS / Debian; Firewalla and Ubiquiti ship their own firmware.
 
