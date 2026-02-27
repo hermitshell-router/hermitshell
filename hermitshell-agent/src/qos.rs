@@ -82,7 +82,7 @@ pub fn enable(wan_iface: &str, upload_mbps: u32, download_mbps: u32) -> Result<(
     let status = Command::new("/usr/sbin/tc")
         .args([
             "qdisc", "replace", "dev", "ifb0", "root", "cake",
-            "bandwidth", &down_bw, "dual-dsthost", "nat", "wash", "diffserv4",
+            "bandwidth", &down_bw, "dual-dsthost", "nat", "wash", "diffserv4", "ingress",
         ])
         .status()?;
     if !status.success() {
