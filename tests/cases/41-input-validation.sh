@@ -65,13 +65,13 @@ assert_match "$result" '"ok":true' "log_audit accepts normal entry"
 
 # --- #65: WiFi SSID password validation ---
 # Too short password for wpa-psk
-WIFI_JSON='{"method":"wifi_set_ssid","mac":"FF:FF:FF:FF:FF:FF","ssid_name":"test","band":"2.4GHz","security":"wpa-psk","value":"short"}'
+WIFI_JSON='{"method":"wifi_set_ssid","provider_id":"fake-id","ssid_name":"test","band":"2.4GHz","security":"wpa-psk","value":"short"}'
 result=$(vm_exec router "echo '$WIFI_JSON' | socat - $SOCK")
 assert_match "$result" '"ok":false' "wifi_set_ssid rejects short WPA-PSK password"
 assert_match "$result" '8-63' "wifi password error mentions 8-63"
 
 # No password for wpa-psk
-WIFI_JSON='{"method":"wifi_set_ssid","mac":"FF:FF:FF:FF:FF:FF","ssid_name":"test","band":"2.4GHz","security":"wpa-psk"}'
+WIFI_JSON='{"method":"wifi_set_ssid","provider_id":"fake-id","ssid_name":"test","band":"2.4GHz","security":"wpa-psk"}'
 result=$(vm_exec router "echo '$WIFI_JSON' | socat - $SOCK")
 assert_match "$result" '"ok":false' "wifi_set_ssid rejects missing WPA-PSK password"
 assert_match "$result" 'password required' "wifi error mentions password required"
