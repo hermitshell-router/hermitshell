@@ -1,0 +1,79 @@
+name: Update Apt Repository
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  update-repo:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          fetch-depth: 0
+        continue-on-error: true
+
+      - name: Initialize gh-pages if needed
+        run: |
+          if [ ! -f index.html ]; then
+            git checkout --orphan gh-pages || true
+            git rm -rf . 2>/dev/null || true
+            echo "HermitShell Apt Repository" > index.html
+          fi
+
+      - name: Download .deb from latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p staging
+          gh release download --repo ${{ github.repository }} --pattern "*.deb" --dir staging
+
+      - name: Import GPG key
+        run: |
+          echo "${{ secrets.APT_GPG_PRIVATE_KEY }}" | gpg --batch --import
+
+      - name: Build apt repository structure
+        run: |
+          # Pool directory
+          mkdir -p pool/main/h/hermitshell
+          cp staging/*.deb pool/main/h/hermitshell/
+
+          # Generate Packages files per arch
+          for arch in amd64 arm64; do
+            dir="dists/stable/main/binary-${arch}"
+            mkdir -p "$dir"
+            dpkg-scanpackages --arch "$arch" pool/ > "${dir}/Packages"
+            gzip -k -f "${dir}/Packages"
+          done
+
+          # Generate Release file
+          cd dists/stable
+          apt-ftparchive release . > Release
+
+          # Sign Release
+          gpg --batch --yes --default-key "${{ secrets.APT_GPG_KEY_ID }}" \
+            -abs -o Release.gpg Release
+          gpg --batch --yes --default-key "${{ secrets.APT_GPG_KEY_ID }}" \
+            --clearsign -o InRelease Release
+
+      - name: Export public key
+        run: |
+          gpg --armor --export "${{ secrets.APT_GPG_KEY_ID }}" > key.gpg
+
+      - name: Push to gh-pages
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "Update apt repo for $(gh release view --repo ${{ github.repository }} --json tagName -q .tagName)"
+          git push origin gh-pages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
