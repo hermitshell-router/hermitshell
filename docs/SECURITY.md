@@ -40,6 +40,14 @@ This document tracks security compromises made during implementation, why they w
 
 ## Rate Limiting and Resource Exhaustion
 
+## ~~86. DHCPv6 neighbor lookup subprocess fork exhaustion~~
+
+**Status: Fixed.** The DHCPv6 server caches `resolve_mac_from_neigh` results in an LRU cache (10,000 entries) keyed by source IPv6 address, reducing forks from once-per-packet to once-per-new-device. A global rate limit of 10 new lookups per second caps fork rate under flood conditions. Remaining risk: an attacker flooding from spoofed link-local addresses can still trigger 10 forks/sec indefinitely, and cache entries have no TTL (stale MACs persist until LRU-evicted).
+
+## ~~87. NAT-PMP and UPnP WAN IP subprocess fork exhaustion~~
+
+**Status: Fixed.** Both `natpmp.rs` and `upnp.rs` cache the WAN IPv4 address in a static `Mutex` with a 30-second TTL, reducing `ip -4 addr show` forks from once-per-request to once-per-30-seconds. WAN IP changes take up to 30 seconds to propagate, which is acceptable since changes are rare and clients retry.
+
 ---
 
 ## Untrusted Network Input
