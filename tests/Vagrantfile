@@ -1,17 +1,25 @@
 # -*- mode: ruby -*-
+DISTRO_BOXES = {
+  "debian12"    => "generic/debian12",
+  "debian13"    => "generic/debian13",
+  "ubuntu2204"  => "generic/ubuntu2204",
+  "ubuntu2404"  => "generic/ubuntu2404",
+}
+
+distro = ENV['HERMIT_DISTRO'] || 'debian12'
+router_box = DISTRO_BOXES.fetch(distro) {
+  abort "Unknown distro '#{distro}'. Valid: #{DISTRO_BOXES.keys.join(', ')}"
+}
+
 Vagrant.configure("2") do |config|
-  config.vm.box = "generic/debian12"
-
-  # WAN network (between wan-vm and router)
-  # LAN network (between router and lan-vm)
-
   config.vm.provider :libvirt do |libvirt|
     libvirt.memory = 512
     libvirt.cpus = 1
   end
 
-  # WAN VM - fake ISP
+  # WAN VM - fake ISP (always Debian 12)
   config.vm.define "wan" do |wan|
+    wan.vm.box = "generic/debian12"
     wan.vm.hostname = "wan"
     wan.vm.network :private_network,
       libvirt__network_name: "hermit-wan",
@@ -21,8 +29,9 @@ Vagrant.configure("2") do |config|
     wan.vm.provision "shell", path: "provision/wan.sh"
   end
 
-  # Router VM - runs HermitShell
+  # Router VM - runs HermitShell (distro-selectable)
   config.vm.define "router" do |router|
+    router.vm.box = router_box
     router.vm.hostname = "router"
     router.vm.synced_folder "../target/release", "/opt/hermitshell", type: "rsync", create: true
     # WAN interface
@@ -40,8 +49,9 @@ Vagrant.configure("2") do |config|
     router.vm.provision "shell", path: "provision/router.sh"
   end
 
-  # LAN VM - test client
+  # LAN VM - test client (always Debian 12)
   config.vm.define "lan" do |lan|
+    lan.vm.box = "generic/debian12"
     lan.vm.hostname = "lan"
     lan.vm.network :private_network,
       libvirt__network_name: "hermit-lan",
