@@ -4,7 +4,13 @@ if [ "$1" = "configure" ]; then
     if ! id hermitshell >/dev/null 2>&1; then
         useradd --system --no-create-home --shell /usr/sbin/nologin hermitshell
     fi
-    mkdir -p /data/hermitshell/db /data/hermitshell/blocky /run/hermitshell
+    mkdir -p /var/lib/hermitshell/blocky /run/hermitshell
+    if [ -f /usr/lib/sysusers.d/hermitshell.conf ]; then
+        systemd-sysusers 2>/dev/null || true
+    fi
+    if [ -f /etc/sysctl.d/hermitshell.conf ]; then
+        sysctl -p /etc/sysctl.d/hermitshell.conf 2>/dev/null || true
+    fi
     systemctl daemon-reload
     systemctl enable hermitshell-agent hermitshell-ui
 fi
