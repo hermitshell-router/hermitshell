@@ -5,6 +5,7 @@ REPO="hermitshell/hermitshell"
 INSTALL_DIR="/opt/hermitshell"
 DATA_DIR="/var/lib/hermitshell"
 RUN_DIR="/run/hermitshell"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 usage() {
     echo "Usage: $0 [--wan IFACE] [--lan IFACE] [--local TARBALL] [--uninstall] [--upgrade]"
@@ -136,6 +137,13 @@ do_install() {
     chmod +x "$INSTALL_DIR"/hermitshell-agent "$INSTALL_DIR"/hermitshell-dhcp \
               "$INSTALL_DIR"/hermitshell "$INSTALL_DIR"/blocky
 
+    # Install rollback script
+    if [ -f "$SCRIPT_DIR/scripts/rollback.sh" ]; then
+        cp "$SCRIPT_DIR/scripts/rollback.sh" "$INSTALL_DIR/rollback.sh"
+        chmod +x "$INSTALL_DIR/rollback.sh"
+    fi
+    mkdir -p "$INSTALL_DIR/rollback"
+
     # Create data and runtime directories
     mkdir -p "$DATA_DIR/blocky" "$RUN_DIR"
 
@@ -164,6 +172,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=$INSTALL_DIR/hermitshell-agent
+ExecStopPost=$INSTALL_DIR/rollback.sh
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
