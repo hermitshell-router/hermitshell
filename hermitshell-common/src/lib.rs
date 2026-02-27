@@ -179,6 +179,42 @@ pub struct WifiAp {
     pub status: String,
     #[serde(default)]
     pub has_ca_cert: bool,
+    #[serde(default)]
+    pub provider_id: Option<String>,
+}
+
+/// A registered WiFi provider (controller or direct AP connection).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WifiProviderInfo {
+    pub id: String,
+    pub provider_type: String,
+    pub name: String,
+    pub url: String,
+    pub enabled: bool,
+    pub status: String,
+    #[serde(default)]
+    pub last_seen: Option<i64>,
+    #[serde(default)]
+    pub ap_count: u32,
+    #[serde(default)]
+    pub has_ca_cert: bool,
+}
+
+/// Device info returned by WifiProvider::list_devices().
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WifiDeviceInfo {
+    pub mac: String,
+    #[serde(default)]
+    pub ip: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub firmware: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub uptime: Option<u64>,
 }
 
 /// A WiFi client observed on an access point.

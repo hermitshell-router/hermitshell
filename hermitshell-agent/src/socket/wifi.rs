@@ -1,4 +1,5 @@
 use super::*;
+use zeroize::Zeroizing;
 
 /// Validate a PEM-encoded CA certificate string. Returns error message on failure.
 fn validate_ca_cert_pem(pem: &str) -> Result<(), String> {
@@ -25,39 +26,79 @@ pub(super) fn handle_wifi_list_aps(_req: &Request, db: &Arc<Mutex<Db>>) -> Respo
     }
 }
 
-pub(super) fn handle_wifi_adopt_ap(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
-    let Some(ref mac) = req.mac else {
-        return Response::err("mac required");
-    };
-    let Some(ref ip) = req.url else {
-        return Response::err("url required (AP IP address)");
-    };
+pub(super) fn handle_wifi_list_providers(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let db = db.lock().unwrap();
+    match db.list_wifi_providers() {
+        Ok(providers) => {
+            let mut resp = Response::ok();
+            resp.wifi_providers = Some(providers);
+            resp
+        }
+        Err(e) => Response::err(&e.to_string()),
+    }
+}
+
+pub(super) fn handle_wifi_add_provider(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let Some(ref name) = req.name else {
         return Response::err("name required");
     };
-    let username = req.key.as_deref().unwrap_or("admin");
+    let Some(ref url) = req.url else {
+        return Response::err("url required");
+    };
     let Some(ref password) = req.value else {
-        return Response::err("value required (AP password)");
+        return Response::err("value required (password)");
     };
     if password.is_empty() {
         return Response::err("password cannot be empty");
     }
-    let provider = req.protocol.as_deref().unwrap_or("eap_standalone");
+    let username = req.key.as_deref().unwrap_or("admin");
+    let provider_type = req.protocol.as_deref().unwrap_or("eap_standalone");
 
-    // Validate inputs
-    if ip.parse::<std::net::IpAddr>().is_err() {
-        return Response::err("url must be a valid IP address");
+    // Validate provider type
+    let valid_types = ["eap_standalone", "unifi"];
+    if !valid_types.contains(&provider_type) {
+        return Response::err("provider_type must be eap_standalone or unifi");
     }
+
+    // Validate name: 1-64 alphanumeric (+ - _ . space)
     if name.is_empty() || name.len() > 64
         || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ' ' || c == '.')
     {
         return Response::err("name must be 1-64 alphanumeric characters (plus - _ . space)");
     }
-    let valid_providers = ["eap_standalone"];
-    if !valid_providers.contains(&provider) {
-        return Response::err("unknown provider");
+
+    // Type-specific validation
+    match provider_type {
+        "eap_standalone" => {
+            // URL must be a valid IP
+            if url.parse::<std::net::IpAddr>().is_err() {
+                return Response::err("url must be a valid IP address for eap_standalone");
+            }
+            // MAC is required for eap_standalone
+            if req.mac.is_none() {
+                return Response::err("mac required for eap_standalone provider");
+            }
+        }
+        "unifi" => {
+            // URL must be a valid https URL
+            match reqwest::Url::parse(url) {
+                Ok(parsed) if parsed.scheme() == "https" => {}
+                Ok(_) => return Response::err("url must use https:// for unifi"),
+                Err(_) => return Response::err("url must be a valid URL (https://...) for unifi"),
+            }
+            // Validate site if provided
+            if let Some(ref site) = req.site {
+                if site.is_empty() || site.len() > 64
+                    || !site.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                {
+                    return Response::err("site must be 1-64 alphanumeric characters (plus - _)");
+                }
+            }
+        }
+        _ => {}
     }
 
+    // Encrypt password
     let session_secret = {
         let db_locked = db.lock().unwrap();
         db_locked.get_config("session_secret").ok().flatten()
@@ -72,65 +113,87 @@ pub(super) fn handle_wifi_adopt_ap(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
         }
     };
 
+    // Encrypt API key if provided
+    let api_key_enc = req.api_key.as_ref().and_then(|key| {
+        if key.is_empty() { return None; }
+        if session_secret.is_empty() {
+            Some(key.clone())
+        } else {
+            crate::crypto::encrypt_password(key, &session_secret).ok()
+        }
+    });
+
+    let provider_id = uuid::Uuid::new_v4().to_string();
+    let site = req.site.as_deref();
+
     let db = db.lock().unwrap();
-    if let Err(e) = db.insert_wifi_ap(mac, ip, name, provider, username, &password_enc) {
-        return Response::err(&format!("failed to adopt AP: {}", e));
+    if let Err(e) = db.insert_wifi_provider(
+        &provider_id, provider_type, name, url, username, &password_enc,
+        site, api_key_enc.as_deref(),
+    ) {
+        return Response::err(&format!("failed to add provider: {}", e));
     }
 
     // Store CA cert if provided
     if let Some(ref ca_cert) = req.ca_cert {
         if !ca_cert.is_empty() {
             if let Err(msg) = validate_ca_cert_pem(ca_cert) {
-                // Roll back: remove the AP we just inserted
-                let _ = db.remove_wifi_ap(mac);
+                let _ = db.remove_wifi_provider(&provider_id);
                 return Response::err(&msg);
             }
-            let _ = db.set_wifi_ap_ca_cert(mac, Some(ca_cert));
+            let _ = db.set_wifi_provider_ca_cert(&provider_id, Some(ca_cert));
         }
     }
 
-    let _ = db.log_audit("wifi_adopt_ap", &format!("adopted {} ({})", name, mac));
-    Response::ok()
-}
-
-pub(super) fn handle_wifi_remove_ap(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
-    let Some(ref mac) = req.mac else {
-        return Response::err("mac required");
-    };
-    let db = db.lock().unwrap();
-    if let Err(e) = db.remove_wifi_ap(mac) {
-        return Response::err(&format!("failed to remove AP: {}", e));
+    // For eap_standalone, insert the initial AP record
+    if provider_type == "eap_standalone" {
+        if let Some(ref mac) = req.mac {
+            let _ = db.insert_wifi_ap_for_provider(mac, &provider_id, url, name);
+        }
     }
-    let _ = db.log_audit("wifi_remove_ap", &format!("removed AP {}", mac));
+
+    let _ = db.log_audit("wifi_add_provider", &format!("added {} provider {}", provider_type, name));
     Response::ok()
 }
 
-pub(super) fn handle_wifi_set_ap_ca_cert(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
-    let Some(ref mac) = req.mac else {
-        return Response::err("mac required");
+pub(super) fn handle_wifi_remove_provider(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref provider_id) = req.provider_id else {
+        return Response::err("provider_id required");
+    };
+    let db = db.lock().unwrap();
+    if let Err(e) = db.remove_wifi_provider(provider_id) {
+        return Response::err(&format!("failed to remove provider: {}", e));
+    }
+    let _ = db.log_audit("wifi_remove_provider", &format!("removed provider {}", provider_id));
+    Response::ok()
+}
+
+pub(super) fn handle_wifi_set_provider_ca_cert(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref provider_id) = req.provider_id else {
+        return Response::err("provider_id required");
     };
     let db = db.lock().unwrap();
 
-    // Check AP exists
-    match db.get_wifi_ap(mac) {
+    // Check provider exists
+    match db.get_wifi_provider(provider_id) {
         Ok(Some(_)) => {}
-        Ok(None) => return Response::err("AP not found"),
+        Ok(None) => return Response::err("provider not found"),
         Err(e) => return Response::err(&format!("DB error: {}", e)),
     }
 
     // Empty or missing value clears the CA cert
     let ca_cert = req.value.as_deref().unwrap_or("");
     if ca_cert.is_empty() {
-        let _ = db.set_wifi_ap_ca_cert(mac, None);
-        let _ = db.log_audit("wifi_set_ap_ca_cert", &format!("cleared CA cert for {}", mac));
+        let _ = db.set_wifi_provider_ca_cert(provider_id, None);
+        let _ = db.log_audit("wifi_set_provider_ca_cert", &format!("cleared CA cert for provider {}", provider_id));
         return Response::ok();
     }
 
     if let Err(msg) = validate_ca_cert_pem(ca_cert) {
         return Response::err(&msg);
     }
-    let _ = db.set_wifi_ap_ca_cert(mac, Some(ca_cert));
-    let _ = db.log_audit("wifi_set_ap_ca_cert", &format!("set CA cert for {}", mac));
+    let _ = db.set_wifi_provider_ca_cert(provider_id, Some(ca_cert));
+    let _ = db.log_audit("wifi_set_provider_ca_cert", &format!("set CA cert for provider {}", provider_id));
     Response::ok()
 }
 
@@ -161,7 +224,7 @@ pub(super) fn handle_wifi_get_clients(_req: &Request, db: &Arc<Mutex<Db>>) -> Re
     }
 }
 
-/// Async handler for WiFi methods that require AP communication.
+/// Async handler for WiFi methods that require provider/AP communication.
 pub(super) async fn handle_wifi_async(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     match req.method.as_str() {
         "wifi_get_ssids" => handle_wifi_get_ssids(req, db).await,
@@ -173,65 +236,93 @@ pub(super) async fn handle_wifi_async(req: &Request, db: &Arc<Mutex<Db>>) -> Res
     }
 }
 
-/// Helper: connect to an AP by MAC, looking up credentials from DB.
+/// Helper: connect to a provider by provider_id, looking up credentials from DB.
 /// If a TOFU cert is captured (first connection without CA), saves it.
-async fn connect_to_ap(mac: &str, db: &Arc<Mutex<Db>>) -> Result<Box<dyn crate::wifi::WifiSession>, Response> {
-    let (ip, username, password_enc, ca_cert_pem) = {
+async fn connect_to_provider(provider_id: &str, db: &Arc<Mutex<Db>>) -> Result<Box<dyn crate::wifi::WifiProvider>, Response> {
+    let (provider_type, url, username, password_enc, site, api_key_enc, ca_cert_pem) = {
         let db = db.lock().unwrap();
-        let creds = match db.get_wifi_ap_credentials(mac) {
+        let creds = match db.get_wifi_provider_credentials(provider_id) {
             Ok(Some(creds)) => creds,
-            Ok(None) => return Err(Response::err("AP not found")),
+            Ok(None) => return Err(Response::err("provider not found")),
             Err(e) => return Err(Response::err(&format!("DB error: {}", e))),
         };
-        let ca_cert = db.get_wifi_ap_ca_cert(mac).ok().flatten();
-        (creds.0, creds.1, creds.2, ca_cert)
+        let ca_cert = db.get_wifi_provider_ca_cert(provider_id).ok().flatten();
+        (creds.0, creds.1, creds.2, creds.3, creds.4, creds.5, ca_cert)
     };
 
     // Decrypt password
-    let password = {
+    let password: Zeroizing<String> = {
         let session_secret = {
             let db = db.lock().unwrap();
             db.get_config("session_secret").ok().flatten().unwrap_or_default()
         };
         if session_secret.is_empty() || !crate::crypto::is_encrypted(&password_enc) {
-            password_enc
+            Zeroizing::new(password_enc)
         } else {
             match crate::crypto::decrypt_password(&password_enc, &session_secret) {
-                Ok(p) => p,
+                Ok(p) => Zeroizing::new(p),
                 Err(e) => return Err(Response::err(&format!("decrypt failed: {}", e))),
             }
         }
     };
 
-    let provider = {
-        let db = db.lock().unwrap();
-        db.get_wifi_ap(mac).ok().flatten()
-            .map(|ap| ap.provider)
-            .unwrap_or_else(|| "eap_standalone".to_string())
-    };
+    // Decrypt API key if present
+    let api_key: Option<Zeroizing<String>> = api_key_enc.and_then(|enc| {
+        if enc.is_empty() { return None; }
+        let session_secret = {
+            let db = db.lock().unwrap();
+            db.get_config("session_secret").ok().flatten().unwrap_or_default()
+        };
+        if session_secret.is_empty() || !crate::crypto::is_encrypted(&enc) {
+            Some(Zeroizing::new(enc))
+        } else {
+            crate::crypto::decrypt_password(&enc, &session_secret).ok().map(Zeroizing::new)
+        }
+    });
 
-    match crate::wifi::connect(&provider, &ip, &username, &password, ca_cert_pem.as_deref()).await {
-        Ok((session, tofu_pem)) => {
+    match crate::wifi::connect(
+        &provider_type, &url, &username, &password,
+        ca_cert_pem.as_deref(), site.as_deref(), api_key.as_ref().map(|k| k.as_str()),
+    ).await {
+        Ok((provider, tofu_pem)) => {
             // Save TOFU cert if captured
             if let Some(ref pem) = tofu_pem {
                 let db = db.lock().unwrap();
-                let _ = db.set_wifi_ap_ca_cert(mac, Some(pem));
+                let _ = db.set_wifi_provider_ca_cert(provider_id, Some(pem));
             }
-            Ok(session)
+            Ok(provider)
         }
-        Err(e) => Err(Response::err(&format!("AP connection failed: {}", e))),
+        Err(e) => Err(Response::err(&format!("provider connection failed: {}", e))),
+    }
+}
+
+/// Helper: for per-AP operations, look up the AP's provider_id and connect.
+async fn connect_to_ap_device(mac: &str, db: &Arc<Mutex<Db>>) -> Result<Box<dyn crate::wifi::WifiDevice>, Response> {
+    let provider_id = {
+        let db = db.lock().unwrap();
+        match db.get_wifi_ap_provider_id(mac) {
+            Ok(Some(id)) => id,
+            Ok(None) => return Err(Response::err("AP not found")),
+            Err(e) => return Err(Response::err(&format!("DB error: {}", e))),
+        }
+    };
+
+    let provider = connect_to_provider(&provider_id, db).await?;
+    match provider.device(mac).await {
+        Ok(device) => Ok(device),
+        Err(e) => Err(Response::err(&format!("failed to get device handle: {}", e))),
     }
 }
 
 async fn handle_wifi_get_ssids(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
-    let Some(ref mac) = req.mac else {
-        return Response::err("mac required");
+    let Some(ref provider_id) = req.provider_id else {
+        return Response::err("provider_id required");
     };
-    let session = match connect_to_ap(mac, db).await {
-        Ok(s) => s,
+    let provider = match connect_to_provider(provider_id, db).await {
+        Ok(p) => p,
         Err(resp) => return resp,
     };
-    match session.get_ssids().await {
+    match provider.get_ssids().await {
         Ok(ssids) => {
             let mut resp = Response::ok();
             resp.wifi_ssids = Some(ssids);
@@ -242,8 +333,8 @@ async fn handle_wifi_get_ssids(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
 }
 
 async fn handle_wifi_set_ssid(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
-    let Some(ref mac) = req.mac else {
-        return Response::err("mac required");
+    let Some(ref provider_id) = req.provider_id else {
+        return Response::err("provider_id required");
     };
     let Some(ref ssid_name) = req.ssid_name else {
         return Response::err("ssid_name required");
@@ -282,14 +373,14 @@ async fn handle_wifi_set_ssid(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
         security: security.to_string(),
     };
 
-    let session = match connect_to_ap(mac, db).await {
-        Ok(s) => s,
+    let provider = match connect_to_provider(provider_id, db).await {
+        Ok(p) => p,
         Err(resp) => return resp,
     };
-    match session.set_ssid(&config).await {
+    match provider.set_ssid(&config).await {
         Ok(()) => {
             let db = db.lock().unwrap();
-            let _ = db.log_audit("wifi_set_ssid", &format!("{} on {}", ssid_name, mac));
+            let _ = db.log_audit("wifi_set_ssid", &format!("{} on provider {}", ssid_name, provider_id));
             Response::ok()
         }
         Err(e) => Response::err(&format!("set_ssid failed: {}", e)),
@@ -297,8 +388,8 @@ async fn handle_wifi_set_ssid(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
 }
 
 async fn handle_wifi_delete_ssid(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
-    let Some(ref mac) = req.mac else {
-        return Response::err("mac required");
+    let Some(ref provider_id) = req.provider_id else {
+        return Response::err("provider_id required");
     };
     let Some(ref ssid_name) = req.ssid_name else {
         return Response::err("ssid_name required");
@@ -307,14 +398,14 @@ async fn handle_wifi_delete_ssid(req: &Request, db: &Arc<Mutex<Db>>) -> Response
         return Response::err("band required");
     };
 
-    let session = match connect_to_ap(mac, db).await {
-        Ok(s) => s,
+    let provider = match connect_to_provider(provider_id, db).await {
+        Ok(p) => p,
         Err(resp) => return resp,
     };
-    match session.delete_ssid(ssid_name, band).await {
+    match provider.delete_ssid(ssid_name, band).await {
         Ok(()) => {
             let db = db.lock().unwrap();
-            let _ = db.log_audit("wifi_delete_ssid", &format!("{} on {}", ssid_name, mac));
+            let _ = db.log_audit("wifi_delete_ssid", &format!("{} on provider {}", ssid_name, provider_id));
             Response::ok()
         }
         Err(e) => Response::err(&format!("delete_ssid failed: {}", e)),
@@ -325,11 +416,11 @@ async fn handle_wifi_get_radios(req: &Request, db: &Arc<Mutex<Db>>) -> Response 
     let Some(ref mac) = req.mac else {
         return Response::err("mac required");
     };
-    let session = match connect_to_ap(mac, db).await {
-        Ok(s) => s,
+    let device = match connect_to_ap_device(mac, db).await {
+        Ok(d) => d,
         Err(resp) => return resp,
     };
-    match session.get_radios().await {
+    match device.get_radios().await {
         Ok(radios) => {
             let mut resp = Response::ok();
             resp.wifi_radios = Some(radios);
@@ -358,11 +449,11 @@ async fn handle_wifi_set_radio(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
         enabled: req.enabled.unwrap_or(true),
     };
 
-    let session = match connect_to_ap(mac, db).await {
-        Ok(s) => s,
+    let device = match connect_to_ap_device(mac, db).await {
+        Ok(d) => d,
         Err(resp) => return resp,
     };
-    match session.set_radio(&config).await {
+    match device.set_radio(&config).await {
         Ok(()) => {
             let db = db.lock().unwrap();
             let _ = db.log_audit("wifi_set_radio", &format!("{} on {}", band, mac));

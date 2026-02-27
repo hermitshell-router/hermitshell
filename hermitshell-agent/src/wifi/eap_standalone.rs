@@ -7,7 +7,7 @@ use tracing::debug;
 
 use hermitshell_common::{WifiClient, WifiRadioConfig, WifiSsidConfig};
 
-use super::{ApStatus, WifiSession};
+use super::{ApStatus, WifiDevice, WifiProvider};
 
 /// Session to a TP-Link EAP in standalone mode via its HTTPS web UI.
 ///
@@ -16,11 +16,14 @@ use super::{ApStatus, WifiSession};
 ///   2. POST / with MD5-uppercase password to get JSESSIONID cookie
 ///   3. POST /data/login.json with operation=read to activate session
 ///   4. All subsequent requests include Cookie + Referer headers
+#[derive(Clone)]
 pub struct EapSession {
     client: reqwest::Client,
     base_url: String,
-    /// AP MAC in TP-Link format (XX-XX-XX-XX-XX-XX), read from status.device.json
-    ap_mac: String,
+    /// AP IP address used for login
+    ip: String,
+    /// AP MAC in colon-separated format (XX:XX:XX:XX:XX:XX), read from status.device.json
+    mac: String,
 }
 
 fn md5_upper(plaintext: &str) -> String {
@@ -159,12 +162,14 @@ impl EapSession {
         let mut session = Self {
             client,
             base_url,
-            ap_mac: String::new(),
+            ip: ip.to_string(),
+            mac: String::new(),
         };
 
         if let Ok(status) = session.get_data_get("status.device.json").await {
             if let Some(mac) = status.get("mac").and_then(|v| v.as_str()) {
-                session.ap_mac = mac.to_string();
+                // Convert TP-Link format (XX-XX-XX-XX-XX-XX) to colon-separated
+                session.mac = mac.replace('-', ":");
             }
         }
 
@@ -350,11 +355,10 @@ impl EapSession {
 
         Ok(ssids)
     }
-}
 
-#[async_trait]
-impl WifiSession for EapSession {
-    async fn get_status(&self) -> Result<ApStatus> {
+    // --- Inherent method implementations (delegated to by trait impls) ---
+
+    async fn get_device_status(&self) -> Result<ApStatus> {
         let data = self.get_data_get("status.device.json").await?;
 
         let model = data.get("deviceModel").and_then(|v| v.as_str()).map(String::from);
@@ -371,7 +375,7 @@ impl WifiSession for EapSession {
         })
     }
 
-    async fn get_clients(&self) -> Result<Vec<WifiClient>> {
+    async fn get_clients_impl(&self) -> Result<Vec<WifiClient>> {
         // status.client.user.json returns empty body when no clients
         let resp = self
             .client
@@ -400,7 +404,7 @@ impl WifiSession for EapSession {
             None => return Ok(vec![]),
         };
 
-        let ap_mac = self.ap_mac.replace('-', ":");
+        let ap_mac = self.mac.clone();
         let mut clients = Vec::new();
 
         for entry in arr {
@@ -452,14 +456,14 @@ impl WifiSession for EapSession {
         Ok(clients)
     }
 
-    async fn get_ssids(&self) -> Result<Vec<WifiSsidConfig>> {
+    async fn get_ssids_impl(&self) -> Result<Vec<WifiSsidConfig>> {
         // Fetch SSIDs for both radios (2.4GHz=0, 5GHz=1)
         let mut all = self.get_ssids_for_radio(0).await.unwrap_or_default();
         all.extend(self.get_ssids_for_radio(1).await.unwrap_or_default());
         Ok(all)
     }
 
-    async fn set_ssid(&self, config: &WifiSsidConfig) -> Result<()> {
+    async fn set_ssid_impl(&self, config: &WifiSsidConfig) -> Result<()> {
         let radio_id = band_to_radio_id(&config.band)
             .ok_or_else(|| anyhow::anyhow!("unknown band: {}", config.band))?;
 
@@ -518,7 +522,7 @@ impl WifiSession for EapSession {
         Ok(())
     }
 
-    async fn delete_ssid(&self, ssid_name: &str, band: &str) -> Result<()> {
+    async fn delete_ssid_impl(&self, ssid_name: &str, band: &str) -> Result<()> {
         let radio_id =
             band_to_radio_id(band).ok_or_else(|| anyhow::anyhow!("unknown band: {}", band))?;
 
@@ -546,7 +550,7 @@ impl WifiSession for EapSession {
         Ok(())
     }
 
-    async fn get_radios(&self) -> Result<Vec<WifiRadioConfig>> {
+    async fn get_radios_impl(&self) -> Result<Vec<WifiRadioConfig>> {
         let mut radios = Vec::new();
 
         for radio_id in [0u8, 1] {
@@ -579,7 +583,7 @@ impl WifiSession for EapSession {
         Ok(radios)
     }
 
-    async fn set_radio(&self, config: &WifiRadioConfig) -> Result<()> {
+    async fn set_radio_impl(&self, config: &WifiRadioConfig) -> Result<()> {
         let radio_id = band_to_radio_id(&config.band)
             .ok_or_else(|| anyhow::anyhow!("unknown band: {}", config.band))?;
 
@@ -615,19 +619,19 @@ impl WifiSession for EapSession {
         Ok(())
     }
 
-    async fn kick_client(&self, mac: &str) -> Result<()> {
+    async fn kick_client_impl(&self, mac: &str) -> Result<()> {
         // The EAP720 doesn't expose a direct "deauth client" API in standalone mode.
         // The closest mechanism is adding the client to the MAC filter deny list temporarily,
         // which forces disconnection. For now, we use the MAC filter approach.
         // First block, then unblock after a brief moment to just kick.
-        self.block_client(mac).await?;
+        self.block_client_impl(mac).await?;
         // Give the AP a moment to disconnect the client
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        self.unblock_client(mac).await?;
+        self.unblock_client_impl(mac).await?;
         Ok(())
     }
 
-    async fn block_client(&self, mac: &str) -> Result<()> {
+    async fn block_client_impl(&self, mac: &str) -> Result<()> {
         // Ensure MAC filtering is enabled in deny mode
         let filter_status = self.get_data_get("macFiltering.set.json").await?;
         let current_status = filter_status
@@ -653,7 +657,7 @@ impl WifiSession for EapSession {
         Ok(())
     }
 
-    async fn unblock_client(&self, mac: &str) -> Result<()> {
+    async fn unblock_client_impl(&self, mac: &str) -> Result<()> {
         let tp_mac = mac.replace(':', "-").to_uppercase();
 
         // Remove MAC from the filter list
@@ -672,5 +676,71 @@ impl WifiSession for EapSession {
         let json: Value = resp.json().await.context("not JSON")?;
         self.check_timeout(&json)?;
         Ok(())
+    }
+}
+
+#[async_trait]
+impl WifiProvider for EapSession {
+    async fn list_devices(&self) -> Result<Vec<hermitshell_common::WifiDeviceInfo>> {
+        let status = self.get_device_status().await?;
+        Ok(vec![hermitshell_common::WifiDeviceInfo {
+            mac: self.mac.clone(),
+            ip: Some(self.ip.clone()),
+            name: None,
+            model: status.model,
+            firmware: status.firmware,
+            status: "online".to_string(),
+            uptime: status.uptime,
+        }])
+    }
+
+    async fn device(&self, ap_mac: &str) -> Result<Box<dyn WifiDevice>> {
+        if ap_mac != self.mac {
+            anyhow::bail!("EAP standalone provider only manages AP {}", self.mac);
+        }
+        Ok(Box::new(self.clone()))
+    }
+
+    async fn get_ssids(&self) -> Result<Vec<WifiSsidConfig>> {
+        self.get_ssids_impl().await
+    }
+
+    async fn set_ssid(&self, config: &WifiSsidConfig) -> Result<()> {
+        self.set_ssid_impl(config).await
+    }
+
+    async fn delete_ssid(&self, ssid_name: &str, band: &str) -> Result<()> {
+        self.delete_ssid_impl(ssid_name, band).await
+    }
+
+    async fn kick_client(&self, mac: &str) -> Result<()> {
+        self.kick_client_impl(mac).await
+    }
+
+    async fn block_client(&self, mac: &str) -> Result<()> {
+        self.block_client_impl(mac).await
+    }
+
+    async fn unblock_client(&self, mac: &str) -> Result<()> {
+        self.unblock_client_impl(mac).await
+    }
+}
+
+#[async_trait]
+impl WifiDevice for EapSession {
+    async fn get_status(&self) -> Result<ApStatus> {
+        self.get_device_status().await
+    }
+
+    async fn get_clients(&self) -> Result<Vec<WifiClient>> {
+        self.get_clients_impl().await
+    }
+
+    async fn get_radios(&self) -> Result<Vec<WifiRadioConfig>> {
+        self.get_radios_impl().await
+    }
+
+    async fn set_radio(&self, config: &WifiRadioConfig) -> Result<()> {
+        self.set_radio_impl(config).await
     }
 }
