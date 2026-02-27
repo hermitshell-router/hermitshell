@@ -442,3 +442,27 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** The failed rustls handshake exposes a partial TLS connection to the network (ClientHello + server response). An observer learns that a connection attempt was made. The credential (MD5 password hash) is only sent after the successful handshake, so it is not exposed by the failed attempt. The doubled connection time (~200ms extra) is negligible for a 60-second polling cycle.
 
 **Proper fix:** Cache the TLS backend choice per AP after the first successful connection (e.g., a `tls_backend` column: "rustls" or "native"). Skip the probe on subsequent connections. This eliminates the extra handshake after the first poll cycle.
+
+---
+
+## Software Updates
+
+## 86. Update binaries downloaded without signature verification
+
+**What:** `apply_update` downloads release tarballs from GitHub and verifies them via SHA256 checksum. There is no GPG signature verification. The checksum is fetched alongside the tarball from the same origin.
+
+**Why:** The checksum verifies download integrity but not authenticity — an attacker who compromises the GitHub release could publish a malicious tarball with a matching checksum. This is the same trust model as the `install.sh` script and most projects that distribute via GitHub releases (OpenWrt, OPNsense).
+
+**Risk:** Medium. Requires compromising the GitHub repo or performing a MITM on the HTTPS connection to github.com (TLS protects against the latter). If successful, an attacker gets code execution as root on the router.
+
+**Proper fix:** GPG-sign releases with a project key. Embed the public key in the agent binary and verify the detached signature before extracting.
+
+## 87. Auto-update installs new code without admin interaction
+
+**What:** When `auto_update_enabled` is true, the agent downloads and installs new releases automatically when discovered by the update checker.
+
+**Why:** Convenience for users who prefer hands-off maintenance. Opt-in, disabled by default.
+
+**Risk:** Combined with #86 (no signature verification), a compromised release would be auto-installed without the admin seeing a notification first. The rollback mechanism catches crashes but not deliberately malicious code that runs successfully.
+
+**Proper fix:** Acceptable as opt-in. Signature verification (#86) is the proper mitigation.
