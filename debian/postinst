@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+if [ "$1" = "configure" ]; then
+    if ! id hermitshell >/dev/null 2>&1; then
+        useradd --system --no-create-home --shell /usr/sbin/nologin hermitshell
+    fi
+    mkdir -p /data/hermitshell/db /data/hermitshell/blocky /run/hermitshell
+    systemctl daemon-reload
+    systemctl enable hermitshell-agent hermitshell-ui
+fi
