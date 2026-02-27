@@ -49,3 +49,10 @@ if command -v docker &> /dev/null; then
     docker save hermitshell:latest -o target/release/hermitshell-container.tar
     echo "Container saved: target/release/hermitshell-container.tar"
 fi
+
+# Build .deb package if cargo-deb is available
+if command -v cargo-deb &> /dev/null || cargo deb --version &> /dev/null; then
+    cargo deb -p hermitshell-agent --no-build
+    cp target/debian/hermitshell_*.deb target/release/ 2>/dev/null || true
+    echo "Deb package: target/release/hermitshell_$(grep '^version' hermitshell-agent/Cargo.toml | head -1 | cut -d'"' -f2)-1_amd64.deb"
+fi
