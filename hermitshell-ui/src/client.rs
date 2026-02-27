@@ -122,6 +122,19 @@ pub fn set_ad_blocking(enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+pub fn get_upnp_enabled() -> Result<bool, String> {
+    let resp = ok_or_err(send(json!({"method": "get_upnp_config"}))?)?;
+    let config_str = resp.config_value.unwrap_or_default();
+    let parsed: serde_json::Value = serde_json::from_str(&config_str).unwrap_or_default();
+    Ok(parsed.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false))
+}
+
+pub fn set_upnp_enabled(enabled: bool) -> Result<(), String> {
+    let value = if enabled { "true" } else { "false" };
+    ok_or_err(send(json!({"method": "set_upnp_config", "value": value}))?)?;
+    Ok(())
+}
+
 pub fn get_wireguard() -> Result<crate::types::WireguardInfo, String> {
     let resp = ok_or_err(send(json!({"method": "get_wireguard"}))?)?;
     resp.wireguard.ok_or_else(|| "No wireguard info in response".to_string())

@@ -70,6 +70,16 @@ pub async fn toggle_ad_blocking(enabled: String) -> Result<(), ServerFnError> {
 }
 
 #[server]
+pub async fn toggle_upnp(enabled: String) -> Result<(), ServerFnError> {
+    let enabled = enabled == "true";
+    crate::client::set_upnp_enabled(enabled)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("set_upnp_config", &enabled.to_string());
+    leptos_axum::redirect("/port-forwarding");
+    Ok(())
+}
+
+#[server]
 pub async fn set_group(mac: String, group: String, redirect: Option<String>) -> Result<(), ServerFnError> {
     crate::client::set_device_group(&mac, &group)
         .map_err(|e| ServerFnError::new(e))?;

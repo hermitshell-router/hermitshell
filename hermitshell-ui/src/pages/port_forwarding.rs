@@ -2,13 +2,17 @@ use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
 use crate::components::toast::ErrorToast;
-use crate::server_fns::{AddPortForward, RemovePortForward};
+use crate::server_fns::{AddPortForward, RemovePortForward, ToggleUpnp};
 
 #[component]
 pub fn PortForwarding() -> impl IntoView {
     let data = Resource::new(
         || (),
         |_| async { client::list_port_forwards() },
+    );
+    let upnp_data = Resource::new(
+        || (),
+        |_| async { client::get_upnp_enabled() },
     );
 
     view! {
@@ -31,6 +35,7 @@ pub fn PortForwarding() -> impl IntoView {
                                         <th>"Internal IP"</th>
                                         <th>"Internal Port"</th>
                                         <th>"Description"</th>
+                                        <th>"Source"</th>
                                         <th>"Actions"</th>
                                     </tr>
                                 </thead>
@@ -50,6 +55,12 @@ pub fn PortForwarding() -> impl IntoView {
                                                 <td>{fwd.internal_ip.clone()}</td>
                                                 <td>{fwd.internal_port}</td>
                                                 <td>{fwd.description.clone()}</td>
+                                                <td>{match fwd.source.as_str() {
+                                                    "upnp" => "UPnP",
+                                                    "natpmp" => "NAT-PMP",
+                                                    "pcp" => "PCP",
+                                                    _ => "Manual",
+                                                }}</td>
                                                 <td>
                                                     <ActionForm action=remove_action attr:style="display:inline">
                                                         <input type="hidden" name="id" value={id.to_string()} />
@@ -93,6 +104,28 @@ pub fn PortForwarding() -> impl IntoView {
 
                             <h2 class="section-header">"DMZ Host"</h2>
                             <p>"Current DMZ: " {if dmz_ip.is_empty() { "None".to_string() } else { dmz_ip }}</p>
+                        }.into_any()
+                    }
+                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
+                })}
+            </Suspense>
+
+            <h2 class="section-header">"UPnP / NAT-PMP"</h2>
+            <Suspense fallback=move || view! { <p>"Loading..."</p> }>
+                {move || upnp_data.get().map(|result| match result {
+                    Ok(enabled) => {
+                        let toggle_value = if enabled { "false" } else { "true" };
+                        let toggle_label = if enabled { "Disable UPnP" } else { "Enable UPnP" };
+                        let btn_class = if enabled { "btn btn-danger btn-sm" } else { "btn btn-primary btn-sm" };
+                        let upnp_action = ServerAction::<ToggleUpnp>::new();
+                        view! {
+                            <p>"Status: " <strong>{if enabled { "Enabled" } else { "Disabled" }}</strong></p>
+                            <p class="text-muted">"Allow trusted devices to create port forwards automatically via UPnP, NAT-PMP, and PCP. Requires agent restart after toggling."</p>
+                            <ActionForm action=upnp_action attr:style="display:inline">
+                                <input type="hidden" name="enabled" value={toggle_value} />
+                                <button type="submit" class={btn_class}>{toggle_label}</button>
+                            </ActionForm>
+                            <ErrorToast value=upnp_action.value() />
                         }.into_any()
                     }
                     Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
