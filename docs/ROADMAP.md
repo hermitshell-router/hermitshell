@@ -21,6 +21,7 @@
 | 15 | Backup/restore (v2 export, optional encrypted secrets) | 2026-02-24 |
 | 16 | Multi-AP management UI (inline SSID/radio config, per-AP clients) | 2026-02-25 |
 | 17 | mDNS proxy (group-based service discovery across isolated subnets) | 2026-02-26 |
+| 18 | UPnP IGD + NAT-PMP + PCP (automatic port mapping, trusted-only) | 2026-02-27 |
 
 ## Future Work
 
@@ -41,4 +42,4 @@
 
 - [ ] Per-device firewall rules (beyond group-based)
 - [ ] IPv6 pinhole rate limiting / geo-IP filtering (#30)
-- [ ] UPnP/NAT-PMP for automatic port forwarding
+- [x] UPnP/NAT-PMP for automatic port forwarding

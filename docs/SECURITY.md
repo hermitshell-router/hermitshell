@@ -320,6 +320,40 @@ This document tracks security compromises made during implementation, why they w
 
 ---
 
+## UPnP/NAT-PMP/PCP
+
+## 80. Trusted devices can create port forwards without admin approval
+
+**What:** Devices in the "trusted" group can create NAT port forwarding rules via UPnP IGD, NAT-PMP, or PCP without admin intervention. Mappings are limited to 20 per device, 128 total, and expire after a maximum of 24 hours.
+
+**Why:** UPnP/NAT-PMP protocols require automatic port mapping for gaming consoles, P2P clients, and VoIP applications to function behind NAT.
+
+**Risk:** A compromised trusted device can expose internal services to the WAN by creating port forwards to its own IP. Secure mode prevents mapping to other devices' IPs, but a compromised device can forward to itself.
+
+**Proper fix:** UPnP-UP (User Profile) authorization prompts per mapping request, allowing the admin to approve or deny each mapping individually.
+
+## 81. UPnP SSDP and SOAP have no authentication
+
+**What:** UPnP SSDP discovery and SOAP control endpoints have no authentication mechanism. Any device that can reach UDP 1900 or TCP 5000 can discover and control the gateway.
+
+**Why:** The UPnP protocol design predates modern security concerns. Authentication was never part of the spec.
+
+**Risk:** Mitigated by group filtering (only trusted devices receive SSDP responses and can use SOAP), secure mode (devices can only map to their own IP), and LAN-only binding (UPnP HTTP server listens on 10.0.0.1:5000 only).
+
+**Proper fix:** UPnP-UP (User Profile) adds authorization to UPnP. Not widely supported by clients.
+
+## 82. NAT-PMP/PCP use unauthenticated UDP
+
+**What:** NAT-PMP and PCP use unauthenticated UDP on port 5351. The source IP in UDP packets is trivially spoofable on a shared LAN segment.
+
+**Why:** Both protocols were designed for simplicity on trusted home networks. PCP added a MAP nonce for replay protection but no authentication.
+
+**Risk:** An attacker on the LAN could craft UDP packets with a trusted device's source IP and create port mappings attributed to that device. The per-device /32 isolation and nftables source validation mitigate this — spoofed packets from incorrect source IPs are dropped by the firewall before reaching the NAT-PMP listener.
+
+**Proper fix:** Cross-reference the UDP source IP against the device's ARP/NDP entry to verify the source MAC matches the expected device. This would catch IP spoofing even on the same L2 segment.
+
+---
+
 ## WiFi AP TLS
 
 ## 76. TOFU first connection is unauthenticated
