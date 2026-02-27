@@ -1,0 +1,4 @@
+# HermitShell network interface configuration
+# Edit these values then run: systemctl start hermitshell-agent
+WAN_IFACE=
+LAN_IFACE=
