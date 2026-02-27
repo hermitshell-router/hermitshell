@@ -95,7 +95,7 @@ pub fn validate_protocol(protocol: &str) -> Result<()> {
 }
 
 
-fn build_base_ruleset(wan_iface: &str, lan_iface: &str, _lan_ip: &str) -> String {
+fn build_base_ruleset(wan_iface: &str, lan_iface: &str, lan_ip: &str) -> String {
     format!(r#"#!/usr/sbin/nft -f
 flush ruleset
 
@@ -115,8 +115,8 @@ table inet filter {{
         iifname != "{wan_iface}" tcp dport 22 accept
         iifname {{ "{lan_iface}", "tailscale0", "wg0" }} tcp dport {{ 8080, 8443 }} accept
         iifname "{lan_iface}" udp dport 67 accept
-        iifname {{ "{lan_iface}", "wg0" }} tcp dport 53 accept
-        iifname {{ "{lan_iface}", "wg0" }} udp dport 53 accept
+        iifname {{ "{lan_iface}", "wg0" }} tcp dport {{ 53, 5354 }} accept
+        iifname {{ "{lan_iface}", "wg0" }} udp dport {{ 53, 5354 }} accept
         iifname "{lan_iface}" udp dport 5353 accept
         iifname "{lan_iface}" udp dport {{ 546, 547 }} accept
         iifname {{ "{lan_iface}", "tailscale0", "wg0" }} icmp type echo-request accept
@@ -173,8 +173,13 @@ table ip nat {{
         type nat hook prerouting priority -100;
         iifname "{lan_iface}" tcp dport 443 redirect to :8443
         iifname "{lan_iface}" tcp dport 80 redirect to :8080
-        iifname {{ "{lan_iface}", "wg0" }} udp dport 53 dnat to 127.0.0.1:5353
-        iifname {{ "{lan_iface}", "wg0" }} tcp dport 53 dnat to 127.0.0.1:5353
+        iifname {{ "{lan_iface}", "wg0" }} udp dport 53 dnat to {lan_ip}:5354
+        iifname {{ "{lan_iface}", "wg0" }} tcp dport 53 dnat to {lan_ip}:5354
+    }}
+    chain output {{
+        type nat hook output priority -100;
+        ip daddr {lan_ip} udp dport 53 dnat to {lan_ip}:5354
+        ip daddr {lan_ip} tcp dport 53 dnat to {lan_ip}:5354
     }}
     chain postrouting {{
         type nat hook postrouting priority 100;
