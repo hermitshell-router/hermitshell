@@ -64,11 +64,24 @@ jobs:
           tar -czf "${DIR}.tar.gz" "$DIR"
           sha256sum "${DIR}.tar.gz" > "${DIR}.tar.gz.sha256"
 
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+
+      - name: Stage blocky for cargo-deb
+        run: |
+          mkdir -p target/${{ matrix.target }}/release
+          cp blocky target/${{ matrix.target }}/release/
+
+      - name: Build .deb package
+        run: cargo deb -p hermitshell-agent --no-build --target ${{ matrix.target }}
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.arch }}
-          path: hermitshell-*.tar.gz*
+          path: |
+            hermitshell-*.tar.gz*
+            target/${{ matrix.target }}/debian/*.deb
 
   release:
     needs: build
@@ -84,6 +97,7 @@ jobs:
           files: |
             hermitshell-*.tar.gz
             hermitshell-*.tar.gz.sha256
+            *.deb
 
   docker:
     needs: build
