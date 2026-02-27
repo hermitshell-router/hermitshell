@@ -202,10 +202,7 @@ pub fn refresh_session(cookie: &str) -> Result<String, String> {
 pub fn get_tls_config() -> Result<(String, String), String> {
     let resp = ok_or_err(send(json!({"method": "get_tls_config"}))?)?;
     let cert = resp.tls_cert_pem.ok_or("no cert in response")?;
-    // Key is returned as a file path; read it from disk instead of JSON
-    let key_path = resp.tls_key_pem.ok_or("no key path in response")?;
-    let key = std::fs::read_to_string(&key_path)
-        .map_err(|e| format!("failed to read TLS key from {}: {}", key_path, e))?;
+    let key = resp.tls_key_pem.ok_or("no key in response")?;
     Ok((cert, key))
 }
 

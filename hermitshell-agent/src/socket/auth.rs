@@ -445,33 +445,11 @@ pub(super) fn handle_get_tls_config(_req: &Request, db: &Arc<Mutex<Db>>) -> Resp
     let key = db.get_config("tls_key_pem").ok().flatten().map(Zeroizing::new);
     match (cert, key) {
         (Some(c), Some(k)) => {
-            // Write key to a temp file instead of sending through JSON response.
-            // The file is created with mode 0o600 so only root can read it.
-            let key_path = "/run/hermitshell/tls_key.pem";
-            if let Err(e) = write_key_file(key_path, &k) {
-                return Response::err(&format!("failed to write key file: {}", e));
-            }
             let mut resp = Response::ok();
             resp.tls_cert_pem = Some(c);
-            // Return path to key file, not the key itself
-            resp.tls_key_pem = Some(key_path.to_string());
+            resp.tls_key_pem = Some(k.to_string());
             resp
         }
         _ => Response::err("TLS not yet configured"),
     }
-}
-
-/// Write a TLS private key to a file with restrictive permissions.
-/// Mode 0o644: the containing directory (/run/hermitshell) provides the outer
-/// access boundary. Readable by the web UI container's unprivileged user.
-fn write_key_file(path: &str, key: &str) -> std::io::Result<()> {
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o644)
-        .open(path)?;
-    std::io::Write::write_all(&mut file, key.as_bytes())?;
-    Ok(())
 }
