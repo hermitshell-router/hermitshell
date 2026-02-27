@@ -603,6 +603,9 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
             }
             // best-effort: IPv6 mirrors IPv4 but is not fatal
             let _ = nftables::add_device_forward_rule_v6(&ipv6, "quarantine");
+            // Remove existing MAC-IP rules first to avoid duplicates on DHCP renewal
+            let _ = nftables::remove_mac_ip_rule(&ipv4);
+            let _ = nftables::remove_mac_ip_rule(&ipv6);
             let _ = nftables::add_mac_ip_rule(&ipv4, &mac);
             let _ = nftables::add_mac_ip_rule_v6(&ipv6, &mac);
             let qos_enabled = {
@@ -682,6 +685,8 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
             if let Err(e) = nftables::add_device_forward_rule_v6(&ipv6, "quarantine") {
                 error!(ip = %ipv6, error = %e, "failed to add v6 forward rule");
             }
+            let _ = nftables::remove_mac_ip_rule(&ipv6);
+            let _ = nftables::add_mac_ip_rule_v6(&ipv6, &mac);
             Response::ok()
         }
         _ => Response::err("unknown method"),
