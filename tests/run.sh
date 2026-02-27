@@ -9,7 +9,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --mode) HERMIT_MODE="$2"; shift 2 ;;
         --distro) HERMIT_DISTRO="$2"; shift 2 ;;
-        *) echo "Usage: $0 [--mode docker|install|deb|direct] [--distro debian12|ubuntu2204|ubuntu2404]"; exit 1 ;;
+        *) echo "Usage: $0 [--mode docker|install|deb|direct] [--distro debian12|ubuntu2404]"; exit 1 ;;
     esac
 done
 export HERMIT_MODE
