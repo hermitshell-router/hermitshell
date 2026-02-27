@@ -716,6 +716,45 @@ async fn main() -> Result<()> {
         crate::portmap::PortMapRegistry::new(db.clone(), wan_iface.to_string(), lan_iface.to_string())
     );
 
+    // Spawn UPnP/NAT-PMP if enabled
+    {
+        let db_check = db.lock().unwrap();
+        let upnp_enabled = db_check.get_config_bool("upnp_enabled", false);
+        drop(db_check);
+
+        if upnp_enabled {
+            if let Err(e) = nftables::add_upnp_input_rules(&lan_iface) {
+                error!(error = %e, "failed to add UPnP nftables rules");
+            }
+
+            let db_upnp = db.clone();
+            let pm_upnp = portmap_registry.clone();
+            let wan_upnp = wan_iface.to_string();
+            let lan_upnp = lan_iface.to_string();
+            tokio::spawn(async move {
+                upnp::run(db_upnp, pm_upnp, wan_upnp, lan_upnp).await;
+            });
+
+            let db_natpmp = db.clone();
+            let pm_natpmp = portmap_registry.clone();
+            let wan_natpmp = wan_iface.to_string();
+            let lan_natpmp = lan_iface.to_string();
+            tokio::spawn(async move {
+                natpmp::run(db_natpmp, pm_natpmp, lan_natpmp, wan_natpmp).await;
+            });
+        }
+    }
+
+    // Lease expiry sweep (runs regardless of upnp_enabled — cleans up stale entries)
+    let pm_expiry = portmap_registry.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            pm_expiry.expire_leases();
+        }
+    });
+
     // Spawn socket server
     let db_clone = db.clone();
     let blocky_clone = blocky_mgr.clone();

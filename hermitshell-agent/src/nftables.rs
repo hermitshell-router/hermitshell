@@ -512,6 +512,46 @@ pub fn apply_port_forwards(
     Ok(())
 }
 
+/// Add nftables input rules to allow UPnP SSDP, HTTP, and NAT-PMP traffic on the LAN interface.
+pub fn add_upnp_input_rules(lan_iface: &str) -> Result<()> {
+    validate_iface(lan_iface)?;
+    let rules = format!(
+        "add rule inet filter input iifname \"{}\" udp dport 1900 accept comment \"upnp-ssdp\"\n\
+         add rule inet filter input iifname \"{}\" tcp dport 5000 accept comment \"upnp-http\"\n\
+         add rule inet filter input iifname \"{}\" udp dport 5351 accept comment \"upnp-natpmp\"",
+        lan_iface, lan_iface, lan_iface
+    );
+    let temp_path = "/tmp/hermitshell-upnp-input.nft";
+    std::fs::write(temp_path, &rules)?;
+    let status = Command::new("/usr/sbin/nft").args(["-f", temp_path]).status()?;
+    if !status.success() {
+        anyhow::bail!("failed to add UPnP input rules");
+    }
+    Ok(())
+}
+
+/// Remove UPnP/NAT-PMP input rules by searching for their comments.
+pub fn remove_upnp_input_rules() -> Result<()> {
+    for comment in &["upnp-ssdp", "upnp-http", "upnp-natpmp"] {
+        let output = Command::new("/usr/sbin/nft")
+            .args(["-a", "list", "chain", "inet", "filter", "input"])
+            .output()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            if line.contains(comment) {
+                if let Some(handle) = line.rsplit("# handle ").next() {
+                    if let Ok(h) = handle.trim().parse::<u64>() {
+                        let _ = Command::new("/usr/sbin/nft")
+                            .args(["delete", "rule", "inet", "filter", "input", "handle", &h.to_string()])
+                            .status();
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Add an IPv6 pinhole: allow inbound traffic to a specific global IPv6 address and port range.
 pub fn add_ipv6_pinhole(ipv6_global: &str, protocol: &str, port_start: u16, port_end: u16) -> Result<()> {
     validate_ipv6_global(ipv6_global)?;
