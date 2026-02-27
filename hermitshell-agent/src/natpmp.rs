@@ -40,8 +40,8 @@ fn create_socket(lan_iface: &str) -> anyhow::Result<tokio::net::UdpSocket> {
     Ok(tokio::net::UdpSocket::from_std(socket.into())?)
 }
 
-/// Get the WAN IPv4 address by parsing `ip -4 -o addr show <iface>`.
-fn get_wan_ipv4(iface: &str) -> Option<Ipv4Addr> {
+/// Query the WAN IPv4 address by parsing `ip -4 -o addr show <iface>`.
+fn query_wan_ipv4(iface: &str) -> Option<Ipv4Addr> {
     let output = std::process::Command::new("ip")
         .args(["-4", "-o", "addr", "show", iface])
         .output()
@@ -56,6 +56,21 @@ fn get_wan_ipv4(iface: &str) -> Option<Ipv4Addr> {
         }
     }
     None
+}
+
+/// Cached WAN IP lookup — refreshes via subprocess at most every 30 seconds.
+fn get_wan_ipv4(iface: &str) -> Option<Ipv4Addr> {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(Instant, Option<Ipv4Addr>)>> = Mutex::new(None);
+    let mut guard = CACHE.lock().unwrap();
+    if let Some((ts, ip)) = *guard {
+        if ts.elapsed().as_secs() < 30 {
+            return ip;
+        }
+    }
+    let ip = query_wan_ipv4(iface);
+    *guard = Some((Instant::now(), ip));
+    ip
 }
 
 /// Check whether `ip` belongs to a device in the "trusted" group.

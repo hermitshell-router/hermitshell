@@ -1,5 +1,6 @@
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -484,7 +485,22 @@ async fn wan_common_ifc_scpd() -> impl IntoResponse {
 // ---------------------------------------------------------------------------
 
 /// Get the WAN IP address by parsing `ip -4 -o addr show <iface>`.
+/// Cached for 30 seconds to avoid subprocess fork on every UPnP request.
 fn get_wan_ip(wan_iface: &str) -> Option<String> {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(Instant, Option<String>)>> = Mutex::new(None);
+    let mut guard = CACHE.lock().unwrap();
+    if let Some((ref ts, ref ip)) = *guard {
+        if ts.elapsed().as_secs() < 30 {
+            return ip.clone();
+        }
+    }
+    let ip = query_wan_ip(wan_iface);
+    *guard = Some((Instant::now(), ip.clone()));
+    ip
+}
+
+fn query_wan_ip(wan_iface: &str) -> Option<String> {
     let output = std::process::Command::new("ip")
         .args(["-4", "-o", "addr", "show", wan_iface])
         .output()
