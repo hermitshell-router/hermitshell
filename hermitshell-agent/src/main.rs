@@ -528,14 +528,14 @@ async fn main() -> Result<()> {
             if let (Some(ip), Some(sid)) = (&dev.ipv4, dev.subnet_id) {
                 if let Some(info) = subnet::compute_subnet(sid) {
                     // Re-add /32 device route
-                    let _ = nftables::add_device_route(ip, &lan_iface);
+                    let _ = nftables::add_device_route(ip, &lan_iface, &dev.mac);
                     // Re-add nftables counter
                     let _ = nftables::add_device_counter(ip);
                     // Re-add nftables forward rule
                     let _ = nftables::add_device_forward_rule(ip, &dev.device_group);
                     // Re-add IPv6 route, counter, forward rule
                     let ipv6 = info.device_ipv6_ula.to_string();
-                    let _ = nftables::add_device_route_v6(&ipv6, &lan_iface);
+                    let _ = nftables::add_device_route_v6(&ipv6, &lan_iface, &dev.mac);
                     let _ = nftables::add_device_counter_v6(&ipv6);
                     let _ = nftables::add_device_forward_rule_v6(&ipv6, &dev.device_group);
                     info!(mac = %dev.mac, ip = %ip, subnet_id = sid, group = %dev.device_group, "device restored");

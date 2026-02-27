@@ -346,21 +346,27 @@ pub fn remove_device_forward_rule_v6(ip: &str) -> Result<()> {
 }
 
 /// Add /32 host route to LAN interface for a device
-pub fn add_device_route(device_ip: &str, lan_iface: &str) -> Result<()> {
+pub fn add_device_route(device_ip: &str, lan_iface: &str, mac: &str) -> Result<()> {
     validate_ip(device_ip)?;
     validate_iface(lan_iface)?;
+    validate_mac(mac)?;
     let route = format!("{}/32", device_ip);
     let _ = Command::new("/usr/sbin/ip")
         .args(["route", "add", &route, "dev", lan_iface])
         .status();
-    debug!(route = %route, iface = lan_iface, "added device route");
+    // Bind IP→MAC permanently to prevent ARP cache poisoning
+    let _ = Command::new("/usr/sbin/ip")
+        .args(["neigh", "replace", device_ip, "lladdr", mac, "nud", "permanent", "dev", lan_iface])
+        .status();
+    debug!(route = %route, mac = mac, iface = lan_iface, "added device route + ARP binding");
     Ok(())
 }
 
 /// Add /128 host route and NDP proxy for a device on LAN interface
-pub fn add_device_route_v6(device_ipv6: &str, lan_iface: &str) -> Result<()> {
+pub fn add_device_route_v6(device_ipv6: &str, lan_iface: &str, mac: &str) -> Result<()> {
     validate_ipv6_ula(device_ipv6)?;
     validate_iface(lan_iface)?;
+    validate_mac(mac)?;
     let route = format!("{}/128", device_ipv6);
     let _ = Command::new("/usr/sbin/ip")
         .args(["-6", "route", "add", &route, "dev", lan_iface])
@@ -368,7 +374,11 @@ pub fn add_device_route_v6(device_ipv6: &str, lan_iface: &str) -> Result<()> {
     let _ = Command::new("/usr/sbin/ip")
         .args(["-6", "neigh", "add", "proxy", device_ipv6, "dev", lan_iface])
         .status();
-    debug!(route = %route, iface = lan_iface, "added device v6 route");
+    // Bind IPv6→MAC permanently
+    let _ = Command::new("/usr/sbin/ip")
+        .args(["-6", "neigh", "replace", device_ipv6, "lladdr", mac, "nud", "permanent", "dev", lan_iface])
+        .status();
+    debug!(route = %route, mac = mac, iface = lan_iface, "added device v6 route + NDP binding");
     Ok(())
 }
 

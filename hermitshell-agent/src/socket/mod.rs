@@ -583,10 +583,10 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
             let ipv4 = info.device_ipv4.to_string();
             let ipv6 = info.device_ipv6_ula.to_string();
             info!(mac = %mac, ipv4 = %ipv4, ipv6 = %ipv6, "DHCP provision");
-            if let Err(e) = nftables::add_device_route(&ipv4, lan_iface) {
+            if let Err(e) = nftables::add_device_route(&ipv4, lan_iface, &mac) {
                 error!(ip = %ipv4, error = %e, "failed to add device route");
             }
-            if let Err(e) = nftables::add_device_route_v6(&ipv6, lan_iface) {
+            if let Err(e) = nftables::add_device_route_v6(&ipv6, lan_iface, &mac) {
                 error!(ip = %ipv6, error = %e, "failed to add device v6 route");
             }
             if let Err(e) = nftables::add_device_counter(&ipv4) {
@@ -667,7 +667,7 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
             };
             let ipv6 = info.device_ipv6_ula.to_string();
             info!(mac = %mac, ipv6 = %ipv6, "DHCPv6 provision");
-            if let Err(e) = nftables::add_device_route_v6(&ipv6, lan_iface) {
+            if let Err(e) = nftables::add_device_route_v6(&ipv6, lan_iface, &mac) {
                 error!(ip = %ipv6, error = %e, "failed to add device v6 route");
             }
             if let Err(e) = nftables::add_device_counter_v6(&ipv6) {
