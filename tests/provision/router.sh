@@ -3,14 +3,17 @@ set -e
 
 apt-get update
 
-# On Ubuntu: install ifupdown, disable Netplan
+# On Ubuntu: install ifupdown, stop Netplan from managing non-Vagrant interfaces
 if grep -q '^ID=ubuntu' /etc/os-release; then
     apt-get install -y ifupdown
+    # Remove Netplan configs so it won't manage interfaces on next boot.
+    # Do NOT run 'netplan apply' — that kills eth0 (Vagrant management).
     rm -f /etc/netplan/*.yaml
-    netplan apply 2>/dev/null || true
+    # Disable networkd renderer (Netplan's backend) for non-eth0 interfaces
+    systemctl disable systemd-networkd-wait-online.service 2>/dev/null || true
 fi
 
-apt-get install -y nftables docker.io socat conntrack curl dnsutils wireguard-tools
+apt-get install -y nftables docker.io socat conntrack curl dnsutils wireguard-tools binutils
 usermod -aG docker vagrant
 
 # eth1 = WAN (gets IP from wan-vm via DHCP)
