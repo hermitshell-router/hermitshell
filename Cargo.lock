@@ -1307,6 +1307,7 @@ dependencies = [
  "anyhow",
  "argon2",
  "async-trait",
+ "axum",
  "base64",
  "cotton-ssdp",
  "hermitshell-common",

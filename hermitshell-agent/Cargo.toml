@@ -41,6 +41,7 @@ simple-dns = "0.9"
 cotton-ssdp = "0.1"
 quick-xml = { version = "0.37", features = ["serialize"] }
 uuid = { version = "1", features = ["v4"] }
+axum = "0.8"
 
 [lints]
 workspace = true

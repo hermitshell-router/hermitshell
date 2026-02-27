@@ -15,6 +15,7 @@ mod socket;
 mod tls;
 mod tls_client;
 mod update;
+mod upnp;
 mod runzero;
 mod wifi;
 mod wireguard;
