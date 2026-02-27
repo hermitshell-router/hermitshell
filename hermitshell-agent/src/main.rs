@@ -445,6 +445,7 @@ async fn main() -> Result<()> {
                 (0x0A000000, 8, 16_777_213)
             });
     nftables::init_device_range(device_ipv4_base, device_prefix_len, device_max_subnet_id);
+    nftables::init_gateway_ip(&lan_ip);
     info!(device_range = %device_range_cidr, max_devices = device_max_subnet_id + 1, "device IP range");
 
     // Ensure LAN interface has the base IPv4 address

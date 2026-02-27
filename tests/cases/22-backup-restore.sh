@@ -57,9 +57,10 @@ echo '{"method":"set_config","key":"log_retention_days","value":"7"}' | socat - 
 fwd_pre=$(echo '{"method":"list_port_forwards"}' | socat - UNIX-CONNECT:$SOCK)
 echo "PRE_IMPORT_7777:$(echo "$fwd_pre" | grep -c '7777')"
 
-# 5. Import saved snapshot to restore
+# 5. Import saved snapshot to restore (-t 5: wait up to 5s for response after sending)
 import_payload=$(python3 -c "import sys,json; d=open('/tmp/test-export.json').read(); print(json.dumps({'method':'import_config','value':d}))" 2>/dev/null)
-echo "$import_payload" | socat - UNIX-CONNECT:$SOCK
+import_resp=$(echo "$import_payload" | socat -t 5 - UNIX-CONNECT:$SOCK)
+echo "$import_resp"
 
 # 6. Verify restored
 fwd_post=$(echo '{"method":"list_port_forwards"}' | socat - UNIX-CONNECT:$SOCK)
@@ -174,9 +175,10 @@ fwd_id=$(echo '{"method":"list_port_forwards"}' | socat - UNIX-CONNECT:$SOCK | g
 [ -n "$fwd_id" ] && echo "{\"method\":\"remove_port_forward\",\"id\":$fwd_id}" | socat - UNIX-CONNECT:$SOCK > /dev/null
 echo '{"method":"set_config","key":"analyzer_enabled","value":"true"}' | socat - UNIX-CONNECT:$SOCK > /dev/null
 
-# 5. Import
+# 5. Import (-t 5: wait up to 5s for response after sending)
 import_payload=$(python3 -c "import sys,json; d=open('/tmp/test-v2-export.json').read(); print(json.dumps({'method':'import_config','value':d}))" 2>/dev/null)
-echo "$import_payload" | socat - UNIX-CONNECT:$SOCK
+import_resp=$(echo "$import_payload" | socat -t 5 - UNIX-CONNECT:$SOCK)
+echo "$import_resp"
 
 # 6. Verify
 fwd_post=$(echo '{"method":"list_port_forwards"}' | socat - UNIX-CONNECT:$SOCK)
@@ -221,17 +223,17 @@ echo "ENC:$(echo "$config_json" | python3 -c "import sys,json; d=json.load(sys.s
 
 # Try import without passphrase (should fail)
 import_payload=$(python3 -c "import sys,json; d=open('/tmp/test-enc-export.json').read(); print(json.dumps({'method':'import_config','value':d}))" 2>/dev/null)
-fail_resp=$(echo "$import_payload" | socat - UNIX-CONNECT:$SOCK)
+fail_resp=$(echo "$import_payload" | socat -t 5 - UNIX-CONNECT:$SOCK)
 echo "NO_PASS:$(echo "$fail_resp" | grep -c 'passphrase required')"
 
 # Import with wrong passphrase (should fail)
 import_payload=$(python3 -c "import sys,json; d=open('/tmp/test-enc-export.json').read(); print(json.dumps({'method':'import_config','value':d,'passphrase':'wrongpass'}))" 2>/dev/null)
-fail_resp2=$(echo "$import_payload" | socat - UNIX-CONNECT:$SOCK)
+fail_resp2=$(echo "$import_payload" | socat -t 5 - UNIX-CONNECT:$SOCK)
 echo "WRONG_PASS:$(echo "$fail_resp2" | grep -c 'decryption failed')"
 
-# Import with correct passphrase (should succeed)
+# Import with correct passphrase (should succeed; -t 5: wait for response)
 import_payload=$(python3 -c "import sys,json; d=open('/tmp/test-enc-export.json').read(); print(json.dumps({'method':'import_config','value':d,'passphrase':'mypass'}))" 2>/dev/null)
-ok_resp=$(echo "$import_payload" | socat - UNIX-CONNECT:$SOCK)
+ok_resp=$(echo "$import_payload" | socat -t 5 - UNIX-CONNECT:$SOCK)
 echo "$ok_resp"
 
 rm -f /tmp/test-enc-export.json

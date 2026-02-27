@@ -25,11 +25,11 @@ deploy_stop_all() {
     if [ "$HERMIT_MODE" = "docker" ]; then
         vm_sudo router "docker stop hermitshell-aio 2>/dev/null; docker rm -f hermitshell-aio 2>/dev/null; true"
         # Also stop any leftover native processes
-        vm_sudo router "systemctl stop hermitshell-agent 2>/dev/null; killall hermitshell-age hermitshell-dhc blocky 2>/dev/null; true"
+        vm_sudo router "systemctl stop hermitshell-agent 2>/dev/null; pkill -f hermitshell-agent 2>/dev/null; pkill -f hermitshell-dhcp 2>/dev/null; pkill -f blocky 2>/dev/null; true"
         # Stop old web-UI container too
         vm_sudo router "docker stop hermitshell 2>/dev/null; docker rm -f hermitshell 2>/dev/null; true"
     else
-        vm_sudo router "systemctl stop hermitshell-agent 2>/dev/null; systemctl stop hermitshell-ui 2>/dev/null; killall hermitshell-age hermitshell-dhc blocky 2>/dev/null; true"
+        vm_sudo router "systemctl stop hermitshell-agent 2>/dev/null; systemctl stop hermitshell-ui 2>/dev/null; pkill -f hermitshell-agent 2>/dev/null; pkill -f hermitshell-dhcp 2>/dev/null; pkill -f blocky 2>/dev/null; true"
         vm_sudo router "docker stop hermitshell 2>/dev/null; docker rm -f hermitshell 2>/dev/null; true"
         vm_sudo router "docker stop hermitshell-aio 2>/dev/null; docker rm -f hermitshell-aio 2>/dev/null; true"
     fi
@@ -75,7 +75,7 @@ deploy_stop_agent() {
             vm_sudo router "docker stop hermitshell-aio"
             ;;
         install|direct|deb)
-            vm_sudo router "systemctl stop hermitshell-agent 2>/dev/null; killall hermitshell-age hermitshell-dhc blocky 2>/dev/null; true"
+            vm_sudo router "systemctl stop hermitshell-agent 2>/dev/null; pkill -f hermitshell-agent 2>/dev/null; pkill -f hermitshell-dhcp 2>/dev/null; pkill -f blocky 2>/dev/null; true"
             ;;
     esac
 }
@@ -113,7 +113,7 @@ deploy_agent_dead() {
             [ "$state" != "true" ]
             ;;
         install|direct|deb)
-            ! vm_exec router "pgrep -x hermitshell-age" 2>/dev/null | grep -q '[0-9]'
+            ! vm_exec router "pgrep -f hermitshell-agent" 2>/dev/null | grep -q '[0-9]'
             ;;
     esac
 }

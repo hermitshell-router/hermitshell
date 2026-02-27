@@ -2,6 +2,10 @@ use super::*;
 use zeroize::Zeroizing;
 
 /// Validate a PEM-encoded CA certificate string. Returns error message on failure.
+pub(super) fn validate_ca_cert_pem_str(pem: &str) -> Result<(), String> {
+    validate_ca_cert_pem(pem)
+}
+
 fn validate_ca_cert_pem(pem: &str) -> Result<(), String> {
     let mut reader = std::io::BufReader::new(pem.as_bytes());
     let certs: Vec<_> = rustls_pemfile::certs(&mut reader).collect();

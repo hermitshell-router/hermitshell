@@ -37,6 +37,9 @@ pub(super) fn handle_add_port_forward(req: &Request, db: &Arc<Mutex<Db>>, portma
     if let Err(e) = nftables::validate_ip(internal_ip) {
         return Response::err(&e.to_string());
     }
+    if nftables::is_gateway_ip(internal_ip) {
+        return Response::err("port forward cannot target the gateway address");
+    }
     {
         let db = db.lock().unwrap();
         // Check for overlapping external port ranges on same protocol
@@ -102,6 +105,9 @@ pub(super) fn handle_set_dmz(req: &Request, db: &Arc<Mutex<Db>>, portmap: &crate
     if !ip.is_empty() {
         if let Err(e) = nftables::validate_ip(ip) {
             return Response::err(&e.to_string());
+        }
+        if nftables::is_gateway_ip(ip) {
+            return Response::err("DMZ cannot target the gateway address");
         }
     }
     {

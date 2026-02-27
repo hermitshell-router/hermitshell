@@ -167,10 +167,16 @@ fn main() -> Result<()> {
 
         let data = &buf[..len];
 
-        let msg = match Message::decode(&mut dhcproto::decoder::Decoder::new(&data)) {
-            Ok(m) => m,
-            Err(e) => {
+        let msg = match std::panic::catch_unwind(|| {
+            Message::decode(&mut dhcproto::decoder::Decoder::new(data))
+        }) {
+            Ok(Ok(m)) => m,
+            Ok(Err(e)) => {
                 warn!(error = %e, "DHCP decode error");
+                continue;
+            }
+            Err(_) => {
+                warn!(len = len, "DHCP decode panic from malformed packet");
                 continue;
             }
         };
@@ -542,10 +548,16 @@ fn run_dhcpv6_server(lan_iface: &str) -> Result<()> {
 
         let data = &buf[..len];
 
-        let msg = match Message6::decode(&mut dhcproto::decoder::Decoder::new(data)) {
-            Ok(m) => m,
-            Err(e) => {
+        let msg = match std::panic::catch_unwind(|| {
+            Message6::decode(&mut dhcproto::decoder::Decoder::new(data))
+        }) {
+            Ok(Ok(m)) => m,
+            Ok(Err(e)) => {
                 warn!(error = %e, "DHCPv6 decode error");
+                continue;
+            }
+            Err(_) => {
+                warn!(len = len, "DHCPv6 decode panic from malformed packet");
                 continue;
             }
         };

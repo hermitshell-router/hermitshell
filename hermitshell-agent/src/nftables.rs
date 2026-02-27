@@ -10,9 +10,22 @@ const VALID_GROUPS: &[&str] = &["quarantine", "trusted", "iot", "guest", "server
 /// Device IPv4 range: (base_u32, prefix_len, max_subnet_id). Set once at startup.
 static DEVICE_RANGE: OnceLock<(u32, u8, i64)> = OnceLock::new();
 
+/// Gateway (LAN) IP. Set once at startup.
+static GATEWAY_IP: OnceLock<String> = OnceLock::new();
+
 /// Initialize the device IP range for validation and allocation. Call once at startup.
 pub fn init_device_range(base: u32, prefix_len: u8, max_subnet_id: i64) {
     DEVICE_RANGE.set((base, prefix_len, max_subnet_id)).ok();
+}
+
+/// Store the gateway IP so port forwards can be validated against it.
+pub fn init_gateway_ip(ip: &str) {
+    GATEWAY_IP.set(ip.to_string()).ok();
+}
+
+/// Check whether an IP is the router's own gateway address.
+pub fn is_gateway_ip(ip: &str) -> bool {
+    GATEWAY_IP.get().map(|gw| gw == ip).unwrap_or(false)
 }
 
 /// Return (ipv4_base, max_subnet_id) for use with `compute_subnet()` and `allocate_subnet_id()`.
@@ -113,7 +126,7 @@ table inet filter {{
         ct state established,related accept
         iifname "lo" accept
         iifname != "{wan_iface}" tcp dport 22 accept
-        iifname {{ "{lan_iface}", "tailscale0", "wg0" }} tcp dport {{ 8080, 8443 }} accept
+        iifname {{ "{lan_iface}", "tailscale0" }} tcp dport {{ 8080, 8443 }} accept
         iifname "{lan_iface}" udp dport 67 accept
         iifname {{ "{lan_iface}", "wg0" }} tcp dport {{ 53, 5354 }} accept
         iifname {{ "{lan_iface}", "wg0" }} udp dport {{ 53, 5354 }} accept
@@ -544,13 +557,13 @@ pub fn apply_port_forwards(
         }
     }
 
-    // DNS redirect rules (always present)
+    // DNS redirect rules (always present — must match build_base_ruleset)
     prerouting_rules.push_str(&format!(
-        "        iifname \"{}\" udp dport 53 dnat to {}:53\n",
+        "        iifname {{ \"{}\", \"wg0\" }} udp dport 53 dnat to {}:5354\n",
         lan_iface, lan_ip
     ));
     prerouting_rules.push_str(&format!(
-        "        iifname \"{}\" tcp dport 53 dnat to {}:53\n",
+        "        iifname {{ \"{}\", \"wg0\" }} tcp dport 53 dnat to {}:5354\n",
         lan_iface, lan_ip
     ));
 

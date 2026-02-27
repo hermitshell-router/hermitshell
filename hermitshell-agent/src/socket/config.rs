@@ -269,8 +269,17 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
                 _ => return Response::err(&format!("invalid port forward protocol: {}", protocol)),
             }
             let internal_ip = f.get("internal_ip").and_then(|v| v.as_str()).unwrap_or("");
-            if !internal_ip.is_empty() && nftables::validate_ip(internal_ip).is_err() {
-                return Response::err(&format!("invalid port forward IP: {}", internal_ip));
+            if !internal_ip.is_empty() {
+                if nftables::validate_ip(internal_ip).is_err() {
+                    return Response::err(&format!("invalid port forward IP: {}", internal_ip));
+                }
+                if nftables::is_gateway_ip(internal_ip) {
+                    return Response::err("port forward cannot target the gateway address");
+                }
+            }
+            let desc = f.get("description").and_then(|v| v.as_str()).unwrap_or("");
+            if desc.len() > 256 {
+                return Response::err("port forward description too long (max 256 characters)");
             }
         }
     }
@@ -280,6 +289,19 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
             let protocol = p.get("protocol").and_then(|v| v.as_str()).unwrap_or("");
             if !protocol.is_empty() && nftables::validate_protocol(protocol).is_err() {
                 return Response::err(&format!("invalid pinhole protocol: {}", protocol));
+            }
+        }
+    }
+    // Validation pass: config keys
+    if let Some(config) = parsed.get("config").and_then(|v| v.as_object()) {
+        if let Some(wan) = config.get("wan_iface").and_then(|v| v.as_str()) {
+            if nftables::validate_iface(wan).is_err() {
+                return Response::err(&format!("invalid WAN interface: {}", wan));
+            }
+        }
+        if let Some(lan) = config.get("lan_iface").and_then(|v| v.as_str()) {
+            if nftables::validate_iface(lan).is_err() {
+                return Response::err(&format!("invalid LAN interface: {}", lan));
             }
         }
     }
@@ -295,10 +317,14 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
             if !mac.is_empty() {
                 let _ = db.set_device_group(mac, group);
                 if let Some(hostname) = dev.get("hostname").and_then(|v| v.as_str()) {
-                    let _ = db.set_device_hostname(mac, hostname);
+                    let clean = sanitize_hostname(hostname);
+                    if !clean.is_empty() {
+                        let _ = db.set_device_hostname(mac, &clean);
+                    }
                 }
                 if let Some(nickname) = dev.get("nickname").and_then(|v| v.as_str()) {
-                    let _ = db.set_device_nickname(mac, nickname);
+                    let clean: String = nickname.chars().filter(|c| !c.is_control()).collect();
+                    let _ = db.set_device_nickname(mac, &clean);
                 }
                 device_count += 1;
             }
@@ -378,6 +404,26 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
                 continue;
             }
 
+            // Type-specific URL validation (matches handle_wifi_add_provider)
+            match provider_type {
+                "eap_standalone" => {
+                    if url.parse::<std::net::IpAddr>().is_err() {
+                        warn!(url = %url, "import_config: skipping eap_standalone provider with invalid IP");
+                        continue;
+                    }
+                }
+                "unifi" => {
+                    match reqwest::Url::parse(url) {
+                        Ok(parsed) if parsed.scheme() == "https" => {}
+                        _ => {
+                            warn!(url = %url, "import_config: skipping unifi provider with invalid URL");
+                            continue;
+                        }
+                    }
+                }
+                _ => {}
+            }
+
             let username = p.get("username").and_then(|v| v.as_str()).unwrap_or("admin");
             let site = p.get("site").and_then(|v| v.as_str());
 
@@ -397,10 +443,14 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
             let _ = db.remove_wifi_provider(id);
             let _ = db.insert_wifi_provider(id, provider_type, name, url, username, &password_enc, site, api_key_enc.as_deref());
 
-            // Import CA cert if present
+            // Import CA cert if present (validate PEM before storing)
             let ca_cert = p.get("ca_cert_pem").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
             if let Some(pem) = ca_cert {
-                let _ = db.set_wifi_provider_ca_cert(id, Some(pem));
+                if wifi::validate_ca_cert_pem_str(pem).is_ok() {
+                    let _ = db.set_wifi_provider_ca_cert(id, Some(pem));
+                } else {
+                    warn!(provider = %id, "import_config: skipping invalid CA cert PEM");
+                }
             }
         }
     }
@@ -461,7 +511,9 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
 
                 let ca_cert = ap.get("ca_cert_pem").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
                 if let Some(pem) = ca_cert {
-                    let _ = db.set_wifi_provider_ca_cert(&provider_id, Some(pem));
+                    if wifi::validate_ca_cert_pem_str(pem).is_ok() {
+                        let _ = db.set_wifi_provider_ca_cert(&provider_id, Some(pem));
+                    }
                 }
             }
         }

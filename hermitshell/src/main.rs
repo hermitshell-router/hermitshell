@@ -97,6 +97,33 @@ async fn security_headers_middleware(
     response
 }
 
+/// Allowed Host header values to prevent DNS rebinding attacks.
+/// Requests with Host headers not matching these patterns are rejected.
+fn is_allowed_host(host: &str) -> bool {
+    // Strip port if present (e.g. "10.0.0.1:8443" → "10.0.0.1")
+    let hostname = host.split(':').next().unwrap_or(host);
+
+    // Always allow IP addresses (browser already connected to them directly)
+    if hostname.parse::<std::net::IpAddr>().is_ok() {
+        return true;
+    }
+
+    // Allow known local hostnames
+    matches!(hostname, "localhost" | "hermitshell.local")
+}
+
+async fn host_validation_middleware(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if let Some(host) = req.headers().get(axum::http::header::HOST).and_then(|v| v.to_str().ok()) {
+        if !is_allowed_host(host) {
+            return (axum::http::StatusCode::FORBIDDEN, "Invalid Host header").into_response();
+        }
+    }
+    next.run(req).await
+}
+
 async fn csrf_middleware(
     req: axum::extract::Request,
     next: axum::middleware::Next,
@@ -286,6 +313,7 @@ async fn main() {
             rate_limit_middleware,
         ))
         .layer(axum::middleware::from_fn(csrf_middleware))
+        .layer(axum::middleware::from_fn(host_validation_middleware))
         .layer(axum::middleware::from_fn(security_headers_middleware))
         .with_state(leptos_options);
 

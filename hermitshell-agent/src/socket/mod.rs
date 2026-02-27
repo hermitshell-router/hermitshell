@@ -49,6 +49,8 @@ const USER_ASSIGNABLE_GROUPS: &[&str] = &["quarantine", "trusted", "iot", "guest
 const SESSION_IDLE_TIMEOUT_SECS: u64 = 1800;     // 30 minutes
 const SESSION_ABSOLUTE_TIMEOUT_SECS: u64 = 28800; // 8 hours
 
+/// Global login rate limit: (failure_count, last_failure_time).
+/// Per-source rate limiting for HTTP clients is handled in the web UI middleware.
 type LoginRateLimit = Arc<Mutex<(u32, Option<std::time::Instant>)>>;
 type PasswordLock = Arc<Mutex<()>>;
 
@@ -61,12 +63,13 @@ pub type BandwidthRealtimeMap = Arc<Mutex<std::collections::HashMap<String, (i64
 /// Check if login is currently rate-limited. Returns error message if blocked.
 fn check_login_rate_limit(rate_limit: &LoginRateLimit) -> Option<String> {
     let state = rate_limit.lock().unwrap();
-    let (failures, last_failure) = &*state;
+    let (failures, last) = &*state;
     if *failures == 0 {
         return None;
     }
-    let Some(last) = last_failure else {
-        return None;
+    let last = match last {
+        Some(t) => t,
+        None => return None,
     };
     let shift = std::cmp::min(*failures - 1, 63);
     let backoff_secs = std::cmp::min(1u64 << shift, 60);
