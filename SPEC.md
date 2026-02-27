@@ -204,7 +204,7 @@ docker compose up -d
 | **hermitshell-agent** | Host | Applies configs, reads counters, streams events, DNS logging, RA sender, DHCPv6-PD client |
 | **hermitshell-dhcp** | Host | Custom DHCPv4 server (/32 + option 121 routes) and DHCPv6 stateful server (/128 ULA) |
 | **systemd-networkd** | Host | Interface management (addresses, routing) |
-| **Blocky** | Host | DNS resolver with DoT upstream, DNSSEC, ad blocking, dual-stack (10.0.0.1:53 + [fd00::1]:53) |
+| **Blocky** | Host | DNS resolver with DoT upstream, DNSSEC, ad blocking, dual-stack (LAN_IP:5354, nftables redirects port 53) |
 | **nftables** | Host (kernel) | Dual-stack firewall, NAT, per-device traffic counters, RA Guard, NDP allow |
 | **conntrack** | Host (kernel) | Connection tracking for flow logs |
 | **vnstat** | Host | Interface-level bandwidth statistics |
@@ -455,12 +455,10 @@ hermitshell:
   ports:
     - "8080:8080"
   volumes:
-    - /data/hermitshell/db:/app/data
-    - /data/hermitshell/config:/app/config:ro
+    - /var/lib/hermitshell:/var/lib/hermitshell:ro
     - /run/hermitshell/agent.sock:/run/hermitshell/agent.sock  # Unix socket to agent
   environment:
-    - DATABASE_PATH=/app/data/hermitshell.db
-    - CONFIG_PATH=/app/config/hermitshell.toml
+    - DATABASE_PATH=/var/lib/hermitshell/hermitshell.db
 ```
 
 ### 3.3 Container ↔ Agent Communication
@@ -717,7 +715,7 @@ Blocky provides built-in ad and tracker blocking via DNS blocklists:
 2. **Custom blocklists** - Users can add their own deny/allow lists via configuration
 3. **External DNS** - Users who prefer Pi-hole/AdGuard can use `provider = "external"` to bypass Blocky entirely
 
-Ad blocking works on both IPv4 and IPv6 since Blocky listens on both 10.0.0.1:53 and [fd00::1]:53.
+Ad blocking works on both IPv4 and IPv6. Blocky listens on an unprivileged high port (5354) and nftables DNAT rules redirect port 53 traffic from LAN/WireGuard clients.
 
 ```yaml
 # /etc/hermitshell/blocky.yml (ad blocking section)
@@ -744,7 +742,7 @@ blocking:
 
 ### 5.1 Main Configuration File
 
-`/data/hermitshell/config/hermitshell.toml`:
+`/var/lib/hermitshell/hermitshell.toml`:
 
 ```toml
 [general]
@@ -833,53 +831,57 @@ dns_logging = true  # nflog-based DNS query capture
     └── hermitshell      # Copied to /etc/sudoers.d/
 ```
 
-**Sudoers whitelist (/etc/sudoers.d/hermitshell):**
-```sudoers
-# HermitShell agent - minimal privilege set
-# DO NOT use ALL or wildcards
-
-# nftables
-hermitshell-agent ALL=(ALL) NOPASSWD: /usr/sbin/nft -f /etc/hermitshell/rules.nft
-hermitshell-agent ALL=(ALL) NOPASSWD: /usr/sbin/nft list counters
-
-# systemd-networkd (interface + DHCP management)
-hermitshell-agent ALL=(ALL) NOPASSWD: /bin/systemctl reload systemd-networkd
-hermitshell-agent ALL=(ALL) NOPASSWD: /bin/networkctl reload
-
-# Blocky DNS
-hermitshell-agent ALL=(ALL) NOPASSWD: /bin/systemctl reload blocky
-hermitshell-agent ALL=(ALL) NOPASSWD: /bin/systemctl restart blocky
-
-# Monitoring
-hermitshell-agent ALL=(ALL) NOPASSWD: /usr/sbin/conntrack -E -o xml
-hermitshell-agent ALL=(ALL) NOPASSWD: /usr/bin/vnstat --json *
-
-# System
-hermitshell-agent ALL=(ALL) NOPASSWD: /sbin/sysctl -w *
-```
-
-**Systemd unit (/lib/systemd/system/hermitshell-agent.service):**
+**Systemd unit (/etc/systemd/system/hermitshell-agent.service):**
 ```ini
 [Unit]
-Description=HermitShell Network Agent
-After=network-online.target nftables.service systemd-networkd.service blocky.service
+Description=HermitShell Router Agent
+After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=hermitshell-agent
-Group=hermitshell-agent
-ExecStart=/usr/local/bin/hermitshell-agent
-Restart=always
+ExecStart=/opt/hermitshell/hermitshell-agent
+Restart=on-failure
 RestartSec=5
-# For nflog access
-AmbientCapabilities=CAP_NET_ADMIN
+
+# Filesystem isolation
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/hermitshell /run/hermitshell
+PrivateTmp=yes
+PrivateDevices=yes
+
+# Capability restriction (NET_ADMIN for nftables/routes, NET_RAW for raw sockets, NET_BIND_SERVICE for low ports)
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+
+# Privilege escalation prevention
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+
+# Memory protection
+MemoryDenyWriteExecute=yes
+
+# Syscall filtering
+SystemCallFilter=~@mount @reboot @swap @debug @module @cpu-emulation
+RestrictRealtime=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET
+
+# Process isolation
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectProc=invisible
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-Note: We don't add systemd sandboxing (ProtectSystem, etc.) to the agent because it legitimately needs to run privileged commands via sudo. The sudoers whitelist is the security boundary. `CAP_NET_ADMIN` is needed to read nflog for DNS query logging.
+The agent runs as root but is heavily sandboxed via systemd directives. A parser exploit gains code execution but cannot read home directories, write outside `/var/lib/hermitshell`, load kernel modules, mount filesystems, reboot, or gain new privileges. Kernel tunables (e.g. conntrack accounting) are configured via `/etc/sysctl.d/hermitshell.conf` at boot rather than at runtime.
 
 **Agent responsibilities:**
 - Generate and apply dual-stack nftables rulesets (including device group verdict maps `device_groups_v4` + `device_groups_v6`)
@@ -2080,7 +2082,7 @@ curl -sSL https://install.hermitshell.dev | bash -s -- --yes
 curl -sSL https://install.hermitshell.dev | bash -s -- \
     --wan eth0 \
     --lan eth1 \
-    --data-dir /data/hermitshell
+    --data-dir /var/lib/hermitshell
 
 # Upgrade existing installation
 curl -sSL https://install.hermitshell.dev | bash -s -- --upgrade
@@ -2133,15 +2135,19 @@ echo "Access at http://$(hostname -I | awk '{print $1}'):8080"
 ├── scripts/                # Helper scripts
 └── sudoers.d/hermitshell   # Copied to /etc/sudoers.d/
 
-/data/hermitshell/
-├── config/hermitshell.toml
-├── db/hermitshell.db
-├── blocky.yml
-├── leases/*.leases
-└── backups/
+/var/lib/hermitshell/
+├── hermitshell.db
+├── hermitshell-backup.db
+├── blocky/
+│   ├── config.yml
+│   ├── custom-blocklist.txt
+│   └── logs/
+└── leases/
 
-/usr/local/bin/hermitshell-agent
-/lib/systemd/system/hermitshell-agent.service
+/opt/hermitshell/hermitshell-agent
+/etc/systemd/system/hermitshell-agent.service
+/usr/lib/sysusers.d/hermitshell.conf
+/etc/sysctl.d/hermitshell.conf
 ```
 
 ### 9.5 Default Credentials
@@ -2760,23 +2766,22 @@ This section addresses architectural concerns learned from studying production L
 #### Boot-Order Dependencies (from koduinternet-cpe)
 
 ```ini
-# /lib/systemd/system/hermitshell-agent.service
+# /etc/systemd/system/hermitshell-agent.service
 [Unit]
-Description=HermitShell Network Agent
-After=network-online.target systemd-networkd.service blocky.service nftables.service
+Description=HermitShell Router Agent
+After=network-online.target
 Wants=network-online.target
-Requires=systemd-networkd.service
 
 [Service]
 Type=simple
-User=hermitshell-agent
-Group=hermitshell-agent
-ExecStart=/usr/local/bin/hermitshell-agent
-Restart=always
+ExecStart=/opt/hermitshell/hermitshell-agent
+Restart=on-failure
 RestartSec=5
-
-# Don't start until network is really up
-ExecStartPre=/usr/lib/systemd/systemd-networkd-wait-online --any
+# Full systemd sandboxing (see Section 6 for details)
+ProtectSystem=strict
+ReadWritePaths=/var/lib/hermitshell /run/hermitshell
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
 
 [Install]
 WantedBy=multi-user.target
