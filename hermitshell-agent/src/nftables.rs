@@ -334,9 +334,6 @@ pub fn remove_device_forward_rule(ip: &str) -> Result<()> {
         .args(["-D", "-s", ip])
         .status();
 
-    // Also remove MAC-IP validation rule
-    let _ = remove_mac_ip_rule(ip);
-
     Ok(())
 }
 
@@ -347,9 +344,6 @@ pub fn remove_device_forward_rule_v6(ip: &str) -> Result<()> {
     let _ = Command::new("/usr/sbin/nft")
         .args(["delete", "element", "inet", "filter", "device_groups_v6", &element])
         .status();
-
-    // Also remove MAC-IP validation rule
-    let _ = remove_mac_ip_rule(ip);
 
     Ok(())
 }
@@ -402,7 +396,7 @@ pub fn add_mac_ip_rule(device_ip: &str, mac: &str) -> Result<()> {
             "ip", "saddr", device_ip,
             "ether", "saddr", "!=", mac,
             "counter", "drop",
-            "comment", &format!("\"{}\"", comment),
+            "comment", &comment,
         ])
         .status()?;
     if status.success() {
@@ -424,7 +418,7 @@ pub fn add_mac_ip_rule_v6(device_ipv6: &str, mac: &str) -> Result<()> {
             "ip6", "saddr", device_ipv6,
             "ether", "saddr", "!=", mac,
             "counter", "drop",
-            "comment", &format!("\"{}\"", comment),
+            "comment", &comment,
         ])
         .status()?;
     if status.success() {

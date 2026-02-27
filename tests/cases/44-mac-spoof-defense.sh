@@ -1,6 +1,7 @@
 #!/bin/bash
 source "$(dirname "$0")/../lib/helpers.sh"
 
+require_agent
 require_nftables
 require_lan_ip
 
@@ -9,6 +10,12 @@ require_lan_ip
 # Get LAN device MAC and IP
 lan_mac=$(vm_exec lan "ip link show eth1 | grep -oP 'link/ether \K[0-9a-f:]+'" || echo "")
 device_ip=$(vm_exec lan "ip -4 addr show eth1 | grep inet | awk '{print \$2}' | cut -d/ -f1")
+
+# Wait for agent startup to finish restoring MAC-IP rules
+_mac_ip_ready() {
+    vm_nft "list chain inet filter mac_ip_validate" 2>/dev/null | grep -q "$device_ip"
+}
+wait_for 10 "MAC-IP rules restored" _mac_ip_ready
 
 # Verify router has a permanent neighbor entry for the LAN device
 neigh=$(vm_sudo router "ip neigh show $device_ip dev eth2")
@@ -38,7 +45,7 @@ assert_match "$device_info" '"dhcp_fingerprint":"[0-9]' "Device has non-empty DH
 # --- Phase 3b: DHCP fingerprint change detection ---
 
 # Store a fake old fingerprint to create a mismatch
-vm_sudo router "echo '{\"method\":\"set_config\",\"key\":\"dhcp_fp_'$lan_mac'\",\"value\":\"99,98,97\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock" >/dev/null
+vm_exec router "echo '{\"method\":\"set_config\",\"key\":\"dhcp_fp_$lan_mac\",\"value\":\"99,98,97\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock" >/dev/null
 
 # Trigger analysis cycle
 vm_exec router "echo '{\"method\":\"run_analysis\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock" >/dev/null
