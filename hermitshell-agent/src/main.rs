@@ -695,7 +695,7 @@ async fn main() -> Result<()> {
         let mut mgr = blocky::BlockyManager::new(
             dns_strings,
             blocky_listen,
-            "/data/hermitshell/blocky".to_string(),
+            "/var/lib/hermitshell/blocky".to_string(),
             blocky_bin,
         );
         if let Err(e) = mgr.start() {

@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, error, warn};
 
-const LOG_DIR: &str = "/data/hermitshell/blocky/logs";
+const LOG_DIR: &str = "/var/lib/hermitshell/blocky/logs";
 const SCAN_INTERVAL_SECS: u64 = 30;
 
 /// Extract the device IP from a Blocky csv-client log filename.
