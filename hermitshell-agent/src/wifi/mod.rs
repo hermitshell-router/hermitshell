@@ -59,8 +59,8 @@ pub async fn connect(
     username: &str,
     password: &str,
     ca_cert_pem: Option<&str>,
-    _site: Option<&str>,
-    _api_key: Option<&str>,
+    site: Option<&str>,
+    api_key: Option<&str>,
 ) -> Result<(Box<dyn WifiProvider>, Option<String>)> {
     match provider_type {
         "eap_standalone" => {
@@ -69,7 +69,11 @@ pub async fn connect(
             Ok((Box::new(session), tofu_pem))
         }
         "unifi" => {
-            anyhow::bail!("unifi provider not yet implemented");
+            let site = site.unwrap_or("default");
+            let (session, tofu_pem) =
+                unifi::UnifiSession::connect(url, username, password, ca_cert_pem, site, api_key)
+                    .await?;
+            Ok((Box::new(session), tofu_pem))
         }
         _ => anyhow::bail!("unknown wifi provider: {}", provider_type),
     }
