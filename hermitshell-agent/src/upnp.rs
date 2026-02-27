@@ -30,14 +30,12 @@ const ST_WANIP: &str = "urn:schemas-upnp-org:service:WANIPConnection:1";
 // SSDP helpers
 // ---------------------------------------------------------------------------
 
-/// Resolve an IPv4 address to a MAC address by scanning the device list.
-fn ip_to_mac(db: &Db, ip: &Ipv4Addr) -> Option<String> {
-    let ip_str = ip.to_string();
-    let devices = db.list_devices().ok()?;
-    devices
-        .iter()
-        .find(|d| d.ipv4.as_deref() == Some(&ip_str))
-        .map(|d| d.mac.clone())
+/// Escape a string for safe inclusion in XML text content.
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 /// Check whether `ip` belongs to a device in the "trusted" group.
@@ -696,7 +694,7 @@ fn handle_get_generic_entry(state: &AppState, body: &str) -> Response {
         fwd.protocol.to_ascii_uppercase(),
         fwd.internal_port,
         fwd.internal_ip,
-        fwd.description,
+        xml_escape(&fwd.description),
         remaining,
     );
     soap_ok("GetGenericPortMappingEntry", &body_xml)
@@ -729,7 +727,7 @@ fn handle_get_specific_entry(state: &AppState, body: &str) -> Response {
          <NewEnabled>1</NewEnabled>\n\
          <NewPortMappingDescription>{}</NewPortMappingDescription>\n\
          <NewLeaseDuration>{}</NewLeaseDuration>",
-        fwd.internal_port, fwd.internal_ip, fwd.description, remaining,
+        fwd.internal_port, fwd.internal_ip, xml_escape(&fwd.description), remaining,
     );
     soap_ok("GetSpecificPortMappingEntry", &body_xml)
 }

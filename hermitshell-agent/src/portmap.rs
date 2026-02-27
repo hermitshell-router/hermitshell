@@ -137,6 +137,15 @@ impl PortMapRegistry {
     /// - Lease clamping (0 -> 3600, otherwise 120..86400)
     /// - Conflict detection with renewal support
     pub fn add_mapping(&self, req: &MappingRequest) -> Result<MappingResponse, MappingError> {
+        // 0. Validate protocol and internal IP before acquiring lock
+        if !matches!(req.protocol.as_str(), "tcp" | "udp" | "both") {
+            return Err(MappingError::Internal(
+                "protocol must be tcp, udp, or both".into(),
+            ));
+        }
+        nftables::validate_ip(&req.internal_ip)
+            .map_err(|e| MappingError::Internal(e.to_string()))?;
+
         let db = self.db.lock().unwrap();
 
         // 1. Check trust
