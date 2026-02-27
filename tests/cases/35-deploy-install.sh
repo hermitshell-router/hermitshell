@@ -36,10 +36,10 @@ assert_success "Blocky binary at /opt/hermitshell/" \
     vm_exec router "test -x /opt/hermitshell/blocky"
 
 # Data directories exist
-assert_success "DB directory exists" \
-    vm_exec router "test -d /data/hermitshell/db"
+assert_success "Data directory exists" \
+    vm_exec router "test -d /var/lib/hermitshell"
 assert_success "Blocky data directory exists" \
-    vm_exec router "test -d /data/hermitshell/blocky"
+    vm_exec router "test -d /var/lib/hermitshell/blocky"
 
 # Web UI responds (running as native systemd service, not Docker)
 # Use port 8443 directly — nftables 443->8443 redirect only applies to LAN-sourced traffic

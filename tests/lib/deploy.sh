@@ -46,7 +46,7 @@ deploy_start() {
                 --network host \
                 -e WAN_IFACE=eth1 \
                 -e LAN_IFACE=eth2 \
-                -v /data/hermitshell:/data/hermitshell \
+                -v /var/lib/hermitshell:/var/lib/hermitshell \
                 -v /run/hermitshell:/run/hermitshell \
                 -v /var/lib/dhcp:/var/lib/dhcp:ro \
                 hermitshell:latest"

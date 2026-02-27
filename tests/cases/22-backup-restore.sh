@@ -113,13 +113,13 @@ assert_match "$result" "hermitshell-backup.db" "backup returns path"
 
 # Verify backup file exists with restricted permissions
 assert_success "Backup file exists" \
-    vm_exec router "sudo test -f /data/hermitshell/hermitshell-backup.db"
+    vm_exec router "sudo test -f /var/lib/hermitshell/hermitshell-backup.db"
 
-perms=$(vm_exec router "sudo stat -c '%a' /data/hermitshell/hermitshell-backup.db")
+perms=$(vm_exec router "sudo stat -c '%a' /var/lib/hermitshell/hermitshell-backup.db")
 assert_match "$perms" "600" "Backup file has 0600 permissions"
 
 # Verify backup is a valid SQLite database (check magic bytes)
-backup_magic=$(vm_exec router "sudo head -c 15 /data/hermitshell/hermitshell-backup.db" 2>/dev/null || echo "")
+backup_magic=$(vm_exec router "sudo head -c 15 /var/lib/hermitshell/hermitshell-backup.db" 2>/dev/null || echo "")
 assert_contains "$backup_magic" "SQLite format" "Backup file is a valid SQLite database"
 
 # =====================================================

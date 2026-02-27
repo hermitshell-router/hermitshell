@@ -35,7 +35,7 @@ blocky_status=$(vm_exec router "curl -s http://127.0.0.1:4000/api/blocking/statu
 assert_contains "$blocky_status" "enabled" "Blocky API reports blocking enabled"
 
 # Verify the custom blocklist file exists with our test domain
-blocklist=$(vm_exec router "cat /data/hermitshell/blocky/custom-blocklist.txt" 2>/dev/null || echo "")
+blocklist=$(vm_exec router "cat /var/lib/hermitshell/blocky/custom-blocklist.txt" 2>/dev/null || echo "")
 assert_contains "$blocklist" "ads.test.hermitshell" "Custom blocklist file has test domain"
 
 # Toggle ad blocking off via API

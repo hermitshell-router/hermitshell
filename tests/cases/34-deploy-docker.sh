@@ -37,7 +37,7 @@ nft_ok=$(vm_exec router "docker exec hermitshell-aio nft list tables 2>&1")
 assert_contains "$nft_ok" "inet filter" "Container can access nftables"
 
 # Data volume is mounted and DB exists
-db_check=$(vm_exec router "docker exec hermitshell-aio ls /data/hermitshell/db/" 2>/dev/null)
+db_check=$(vm_exec router "docker exec hermitshell-aio ls /var/lib/hermitshell/" 2>/dev/null)
 assert_contains "$db_check" "hermitshell" "Data volume mounted with DB"
 
 # Socket accessible from host via bind mount

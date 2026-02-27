@@ -27,7 +27,7 @@ fi
 echo "PASS: extracted provider_id=$PROVIDER_ID"
 
 # --- verify password is encrypted (not plaintext) ---
-stored_pass=$(vm_exec router "python3 -c \"import sqlite3; r = sqlite3.connect('/data/hermitshell/db/hermitshell.db').execute('SELECT password_enc FROM wifi_providers WHERE id=\\\"$PROVIDER_ID\\\"').fetchone(); print(r[0] if r else '')\"")
+stored_pass=$(vm_exec router "python3 -c \"import sqlite3; r = sqlite3.connect('/var/lib/hermitshell/hermitshell.db').execute('SELECT password_enc FROM wifi_providers WHERE id=\\\"$PROVIDER_ID\\\"').fetchone(); print(r[0] if r else '')\"")
 if [ "$stored_pass" = "testpass123" ]; then
     fail "password stored as plaintext"
 fi
@@ -169,7 +169,7 @@ result=$(vm_exec router "echo '{\"method\":\"wifi_set_provider_ca_cert\",\"provi
 assert_match "$result" '"ok":false' "wifi_set_provider_ca_cert rejects missing provider"
 
 # --- TOFU: verify ca_cert_pem starts empty for new provider ---
-result=$(vm_exec router "python3 -c \"import sqlite3; r = sqlite3.connect('/data/hermitshell/db/hermitshell.db').execute('SELECT ca_cert_pem FROM wifi_providers WHERE id=\\\"$PROVIDER_ID\\\"').fetchone(); print(r[0] if r and r[0] else 'NONE')\"")
+result=$(vm_exec router "python3 -c \"import sqlite3; r = sqlite3.connect('/var/lib/hermitshell/hermitshell.db').execute('SELECT ca_cert_pem FROM wifi_providers WHERE id=\\\"$PROVIDER_ID\\\"').fetchone(); print(r[0] if r and r[0] else 'NONE')\"")
 assert_match "$result" 'NONE' "new provider has no ca_cert_pem (TOFU not yet triggered)"
 
 # --- TOFU: simulate TOFU by setting ca_cert_pem via API ---

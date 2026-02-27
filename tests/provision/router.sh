@@ -74,12 +74,11 @@ ip route del default via 192.168.121.1 dev eth0 2>/dev/null || true
 ip route add default via 192.168.100.2 dev eth1 2>/dev/null || true
 
 # Create directories for agent
-mkdir -p /data/hermitshell/db
-mkdir -p /data/hermitshell/blocky
+mkdir -p /var/lib/hermitshell/blocky
 mkdir -p /run/hermitshell
 
 # Custom blocklist for test domains
-echo "0.0.0.0 ads.test.hermitshell" > /data/hermitshell/blocky/custom-blocklist.txt
+echo "0.0.0.0 ads.test.hermitshell" > /var/lib/hermitshell/blocky/custom-blocklist.txt
 
 # Run hermitshell-agent as daemon (nohup prevents SIGHUP on session close)
 if [ -f /opt/hermitshell/hermitshell-agent ]; then

@@ -50,10 +50,10 @@ conffiles=$(vm_exec router "dpkg-query -W -f='\${Conffiles}' hermitshell 2>/dev/
 assert_contains "$conffiles" "/etc/default/hermitshell" "/etc/default/hermitshell is a conffile"
 
 # Data directories exist
-assert_success "DB directory exists" \
-    vm_exec router "test -d /data/hermitshell/db"
+assert_success "Data directory exists" \
+    vm_exec router "test -d /var/lib/hermitshell"
 assert_success "Blocky data directory exists" \
-    vm_exec router "test -d /data/hermitshell/blocky"
+    vm_exec router "test -d /var/lib/hermitshell/blocky"
 
 # hermitshell user exists
 user_check=$(vm_exec router "id hermitshell 2>&1")
