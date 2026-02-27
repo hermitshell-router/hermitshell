@@ -197,15 +197,17 @@ fn main() -> Result<()> {
         let response = match msg_type {
             MessageType::Discover => {
                 if let Some(last) = discover_times.get(&mac) {
-                    if last.elapsed().as_secs() < 10 {
+                    if last.elapsed().as_secs() < 3 {
                         warn!(mac = %mac, "DHCPDISCOVER rate-limited");
                         continue;
                     }
                 }
-                discover_times.put(mac.clone(), Instant::now());
                 info!(mac = %mac, "DHCPDISCOVER");
                 match handle_discover(&mut agent, &msg, &mac) {
-                    Ok(resp) => resp,
+                    Ok(resp) => {
+                        discover_times.put(mac.clone(), Instant::now());
+                        resp
+                    }
                     Err(e) => {
                         error!(mac = %mac, error = %e, "error handling DISCOVER");
                         continue;
@@ -222,6 +224,36 @@ fn main() -> Result<()> {
                         continue;
                     }
                 }
+            }
+            MessageType::Decline => {
+                warn!(mac = %mac, "DHCPDECLINE — client detected address conflict");
+                // Note: In our /32 point-to-point model, address conflicts indicate
+                // a serious issue (duplicate MAC or rogue DHCP). Log for investigation.
+                continue;
+            }
+            MessageType::Release => {
+                info!(mac = %mac, "DHCPRELEASE");
+                // In our model, addresses are MAC-bound and persistent.
+                // We don't need to free them — just log.
+                continue;
+            }
+            MessageType::Inform => {
+                info!(mac = %mac, "DHCPINFORM");
+                // Respond with config options (DNS, routes) but no lease
+                let mut resp = Message::default();
+                resp.set_opcode(Opcode::BootReply);
+                resp.set_xid(msg.xid());
+                resp.set_flags(msg.flags());
+                resp.set_ciaddr(msg.ciaddr());
+                resp.set_giaddr(msg.giaddr());
+                resp.set_chaddr(msg.chaddr());
+                resp.opts_mut()
+                    .insert(DhcpOption::MessageType(MessageType::Ack));
+                resp.opts_mut()
+                    .insert(DhcpOption::ServerIdentifier(server_ip()));
+                resp.opts_mut()
+                    .insert(DhcpOption::DomainNameServer(vec![server_ip()]));
+                resp
             }
             other => {
                 debug!(mac = %mac, msg_type = ?other, "DHCP message ignored");
@@ -363,6 +395,14 @@ fn handle_discover(agent: &mut AgentConn, request: &Message, mac: &str) -> Resul
 
 /// Handle DHCPREQUEST (v4): verify requested IP, respond with DHCPACK, fire-and-forget provision.
 fn handle_request(agent: &mut AgentConn, request: &Message, mac: &str) -> Result<Option<Message>> {
+    // H11: Check Option 54 (Server Identifier) — silently ignore if for another server
+    if let Some(DhcpOption::ServerIdentifier(sid)) = request.opts().get(dhcproto::v4::OptionCode::ServerIdentifier) {
+        if *sid != server_ip() {
+            debug!(mac = %mac, server_id = %sid, "DHCPREQUEST for another server, ignoring");
+            return Ok(None);
+        }
+    }
+
     // Look up device via IPC (same as discover — returns existing assignment)
     let hostname = match request.opts().get(dhcproto::v4::OptionCode::Hostname) {
         Some(DhcpOption::Hostname(h)) => {
@@ -425,6 +465,8 @@ fn handle_request(agent: &mut AgentConn, request: &Message, mac: &str) -> Result
         let mut nak = Message::default();
         nak.set_opcode(Opcode::BootReply);
         nak.set_xid(request.xid());
+        nak.set_flags(request.flags());
+        nak.set_giaddr(request.giaddr());
         nak.set_chaddr(request.chaddr());
         nak.opts_mut()
             .insert(DhcpOption::MessageType(MessageType::Nak));
