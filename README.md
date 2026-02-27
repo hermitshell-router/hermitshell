@@ -2,7 +2,7 @@
 
 Open-source router platform. No cloud, no controller, runs on commodity hardware.
 
-Per-device network isolation, DNS ad blocking, WireGuard VPN, WiFi AP management, behavioral analysis, and a web UI — all self-hosted on a Linux box with two NICs. See [docs/ROADMAP.md](docs/ROADMAP.md) for the full feature list, [docs/COMPARISON.md](docs/COMPARISON.md) for how HermitShell compares to OpenWrt/OPNsense/Firewalla/Ubiquiti, and [docs/HARDWARE.md](docs/HARDWARE.md) for hardware requirements.
+Per-device network isolation, DNS ad blocking, WireGuard VPN, WiFi AP management, behavioral analysis, and a web UI — all self-hosted on a Linux box with two NICs. See [docs/ROADMAP.md](docs/ROADMAP.md) for the full feature list, [docs/COMPARISON.md](docs/COMPARISON.md) for how HermitShell compares to alternatives, and [docs/HARDWARE.md](docs/HARDWARE.md) for hardware requirements.
 
 ## Architecture
 
