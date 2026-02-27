@@ -40,14 +40,6 @@ This document tracks security compromises made during implementation, why they w
 
 ## Rate Limiting and Resource Exhaustion
 
-## ~~86. DHCPv6 neighbor lookup subprocess fork exhaustion~~
-
-**Status: Fixed.** The DHCPv6 server caches `resolve_mac_from_neigh` results in an LRU cache (10,000 entries) keyed by source IPv6 address, reducing forks from once-per-packet to once-per-new-device. A global rate limit of 10 new lookups per second caps fork rate under flood conditions. Remaining risk: an attacker flooding from spoofed link-local addresses can still trigger 10 forks/sec indefinitely, and cache entries have no TTL (stale MACs persist until LRU-evicted).
-
-## ~~87. NAT-PMP and UPnP WAN IP subprocess fork exhaustion~~
-
-**Status: Fixed.** Both `natpmp.rs` and `upnp.rs` cache the WAN IPv4 address in a static `Mutex` with a 30-second TTL, reducing `ip -4 addr show` forks from once-per-request to once-per-30-seconds. WAN IP changes take up to 30 seconds to propagate, which is acceptable since changes are rare and clients retry.
-
 ---
 
 ## Untrusted Network Input
@@ -208,10 +200,6 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Add TLS syslog (RFC 5425) as an option. Validate that the syslog target is on a local network segment, or warn when targeting WAN addresses.
 
-## ~~55. TLS verification disabled for WiFi AP HTTPS connections~~
-
-**Status: Fixed.** TLS verification is now enforced for all WiFi AP connections. When a CA cert is present (user-uploaded or TOFU-pinned), the agent tries rustls first (modern TLS), then falls back to native-tls with verification enabled (legacy TLS). When no CA cert exists, TOFU (trust-on-first-use) grabs the AP's leaf cert on first connection via a bare TLS handshake, saves it as `ca_cert_pem`, and all subsequent connections verify against it. The first TOFU connection is blind (fundamental TOFU trade-off), but all subsequent connections reject cert changes. Users can override the pinned cert by uploading a CA cert or clear it to re-trigger TOFU.
-
 ## 56. AP password sent as MD5 hash, not plaintext TLS-protected
 
 **What:** The EAP720 login flow sends `MD5(password).toUpperCase()` over HTTPS. The MD5 hash is the effective credential — anyone who captures it can replay it to authenticate.
@@ -299,10 +287,6 @@ This document tracks security compromises made during implementation, why they w
 ---
 
 ## mDNS Proxy
-
-## ~~73. mDNS service registry has no size limits~~
-
-**Status: Fixed.** TTL clamped to 4500 seconds (per RFC 6762). Per-device limit of 50 records. Total registry limit of 10,000 records. Excess announcements are dropped with a warning log.
 
 ## 74. mDNS announcement attribution trusts IP-to-MAC mapping
 
