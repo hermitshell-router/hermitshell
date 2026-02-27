@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO="hermitshell/hermitshell"
 INSTALL_DIR="/opt/hermitshell"
-DATA_DIR="/data/hermitshell"
+DATA_DIR="/var/lib/hermitshell"
 RUN_DIR="/run/hermitshell"
 
 usage() {
@@ -137,11 +137,21 @@ do_install() {
               "$INSTALL_DIR"/hermitshell "$INSTALL_DIR"/blocky
 
     # Create data and runtime directories
-    mkdir -p "$DATA_DIR/db" "$DATA_DIR/blocky" "$RUN_DIR"
+    mkdir -p "$DATA_DIR/blocky" "$RUN_DIR"
 
     # Create hermitshell user for web UI (if not exists)
     if ! id hermitshell &>/dev/null; then
         useradd --system --no-create-home --shell /usr/sbin/nologin hermitshell
+    fi
+
+    # Install sysctl and sysusers drop-ins
+    if [ -f "$INSTALL_DIR/hermitshell.sysctl.conf" ]; then
+        cp "$INSTALL_DIR/hermitshell.sysctl.conf" /etc/sysctl.d/hermitshell.conf
+        sysctl -p /etc/sysctl.d/hermitshell.conf 2>/dev/null || true
+    fi
+    if [ -f "$INSTALL_DIR/hermitshell.sysusers.conf" ]; then
+        cp "$INSTALL_DIR/hermitshell.sysusers.conf" /usr/lib/sysusers.d/hermitshell.conf
+        systemd-sysusers 2>/dev/null || true
     fi
 
     # Install systemd services
@@ -164,11 +174,11 @@ Environment=WAN_IFACE=$wan
 Environment=LAN_IFACE=$lan
 ProtectHome=yes
 ProtectSystem=strict
-ReadWritePaths=$DATA_DIR $RUN_DIR /tmp
+ReadWritePaths=$DATA_DIR $RUN_DIR
 PrivateTmp=yes
 NoNewPrivileges=yes
 PrivateDevices=yes
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET
 RestrictNamespaces=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
@@ -179,6 +189,10 @@ ProtectKernelModules=yes
 ProtectKernelLogs=yes
 ProtectControlGroups=yes
 RestrictRealtime=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+SystemCallFilter=~@mount @reboot @swap @debug @module @cpu-emulation
+ProtectProc=invisible
 
 [Install]
 WantedBy=multi-user.target
