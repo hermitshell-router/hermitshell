@@ -1,4 +1,5 @@
 pub mod eap_standalone;
+pub mod unifi;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -17,38 +18,59 @@ pub struct ApStatus {
     pub uptime: Option<u64>,
 }
 
-/// A provider-independent session to a WiFi AP.
+/// A provider-independent session to a WiFi management endpoint.
+/// For direct APs (EAP720): one provider = one AP.
+/// For controllers (UniFi): one provider = N APs.
 #[async_trait]
-pub trait WifiSession: Send + Sync {
-    async fn get_status(&self) -> Result<ApStatus>;
-    async fn get_clients(&self) -> Result<Vec<WifiClient>>;
+pub trait WifiProvider: Send + Sync {
+    /// Physical APs managed by this provider.
+    async fn list_devices(&self) -> Result<Vec<hermitshell_common::WifiDeviceInfo>>;
+
+    /// Get an AP-scoped handle for per-device operations.
+    async fn device(&self, ap_mac: &str) -> Result<Box<dyn WifiDevice>>;
+
+    /// SSIDs managed by this provider (controller-wide for UniFi, per-AP for EAP720).
     async fn get_ssids(&self) -> Result<Vec<WifiSsidConfig>>;
     async fn set_ssid(&self, config: &WifiSsidConfig) -> Result<()>;
     async fn delete_ssid(&self, ssid_name: &str, band: &str) -> Result<()>;
-    async fn get_radios(&self) -> Result<Vec<WifiRadioConfig>>;
-    async fn set_radio(&self, config: &WifiRadioConfig) -> Result<()>;
+
+    /// Client management routed through the correct AP/controller.
     async fn kick_client(&self, mac: &str) -> Result<()>;
     async fn block_client(&self, mac: &str) -> Result<()>;
     async fn unblock_client(&self, mac: &str) -> Result<()>;
 }
 
-/// Creates a session for a given provider type.
-/// Returns `(session, tofu_cert_pem)` where tofu_cert_pem is `Some` if a TOFU
+/// Per-physical-AP operations (radio config, status, clients).
+#[async_trait]
+pub trait WifiDevice: Send + Sync {
+    async fn get_status(&self) -> Result<ApStatus>;
+    async fn get_clients(&self) -> Result<Vec<WifiClient>>;
+    async fn get_radios(&self) -> Result<Vec<WifiRadioConfig>>;
+    async fn set_radio(&self, config: &WifiRadioConfig) -> Result<()>;
+}
+
+/// Creates a provider session for a given provider type.
+/// Returns `(provider, tofu_cert_pem)` where tofu_cert_pem is `Some` if a TOFU
 /// certificate was captured (first connection without a CA cert).
 pub async fn connect(
-    provider: &str,
-    ip: &str,
+    provider_type: &str,
+    url: &str,
     username: &str,
     password: &str,
     ca_cert_pem: Option<&str>,
-) -> Result<(Box<dyn WifiSession>, Option<String>)> {
-    match provider {
+    site: Option<&str>,
+    api_key: Option<&str>,
+) -> Result<(Box<dyn WifiProvider>, Option<String>)> {
+    match provider_type {
         "eap_standalone" => {
             let (session, tofu_pem) =
-                eap_standalone::EapSession::login(ip, username, password, ca_cert_pem).await?;
+                eap_standalone::EapSession::login(url, username, password, ca_cert_pem).await?;
             Ok((Box::new(session), tofu_pem))
         }
-        _ => anyhow::bail!("unknown wifi provider: {}", provider),
+        "unifi" => {
+            anyhow::bail!("unifi provider not yet implemented");
+        }
+        _ => anyhow::bail!("unknown wifi provider: {}", provider_type),
     }
 }
 
