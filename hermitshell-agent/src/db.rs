@@ -338,6 +338,117 @@ impl Db {
             )?;
         }
 
+        if version < 8 {
+            // Create wifi_providers table
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS wifi_providers (
+                    id TEXT PRIMARY KEY,
+                    provider_type TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    username TEXT NOT NULL,
+                    password_enc TEXT NOT NULL,
+                    site TEXT,
+                    api_key_enc TEXT,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    status TEXT NOT NULL DEFAULT 'unknown',
+                    last_seen INTEGER,
+                    ca_cert_pem TEXT
+                );"
+            )?;
+
+            // Migrate existing wifi_aps to new schema:
+            // 1. Create a provider for each existing AP
+            // 2. Rebuild wifi_aps with provider_id FK
+            let has_old_table: bool = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='wifi_aps'",
+                [], |row| row.get::<_, i64>(0),
+            ).unwrap_or(0) > 0;
+
+            if has_old_table {
+                // Check if old schema has username column (old schema)
+                let has_username: bool = conn.query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('wifi_aps') WHERE name='username'",
+                    [], |row| row.get::<_, i64>(0),
+                ).unwrap_or(0) > 0;
+
+                if has_username {
+                    let mut stmt = conn.prepare(
+                        "SELECT mac, ip, name, provider, username, password_enc, model, firmware, enabled, last_seen, status, ca_cert_pem FROM wifi_aps"
+                    )?;
+                    let old_aps: Vec<(String, String, String, String, String, String, Option<String>, Option<String>, i64, Option<i64>, String, Option<String>)> = stmt.query_map([], |row| {
+                        Ok((
+                            row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?,
+                            row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?,
+                            row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?,
+                        ))
+                    })?.filter_map(|r| r.ok()).collect();
+
+                    conn.execute_batch("DROP TABLE IF EXISTS wifi_aps")?;
+                    conn.execute_batch(
+                        "CREATE TABLE wifi_aps (
+                            mac TEXT PRIMARY KEY,
+                            provider_id TEXT NOT NULL,
+                            ip TEXT,
+                            name TEXT,
+                            model TEXT,
+                            firmware TEXT,
+                            status TEXT NOT NULL DEFAULT 'unknown',
+                            last_seen INTEGER
+                        );"
+                    )?;
+
+                    for (mac, ip, name, provider_type, username, password_enc, model, firmware, enabled, last_seen, status, ca_cert_pem) in &old_aps {
+                        let provider_id = uuid::Uuid::new_v4().to_string();
+                        conn.execute(
+                            "INSERT INTO wifi_providers (id, provider_type, name, url, username, password_enc, enabled, last_seen, status, ca_cert_pem) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                            rusqlite::params![provider_id, provider_type, name, ip, username, password_enc, enabled, last_seen, status, ca_cert_pem],
+                        )?;
+                        conn.execute(
+                            "INSERT INTO wifi_aps (mac, provider_id, ip, name, model, firmware, status, last_seen) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                            rusqlite::params![mac, provider_id, ip, name, model, firmware, status, last_seen],
+                        )?;
+                    }
+                } else {
+                    // Already new schema — just ensure table exists
+                    conn.execute_batch("DROP TABLE IF EXISTS wifi_aps")?;
+                    conn.execute_batch(
+                        "CREATE TABLE wifi_aps (
+                            mac TEXT PRIMARY KEY,
+                            provider_id TEXT NOT NULL,
+                            ip TEXT,
+                            name TEXT,
+                            model TEXT,
+                            firmware TEXT,
+                            status TEXT NOT NULL DEFAULT 'unknown',
+                            last_seen INTEGER
+                        );"
+                    )?;
+                }
+            } else {
+                conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS wifi_aps (
+                        mac TEXT PRIMARY KEY,
+                        provider_id TEXT NOT NULL,
+                        ip TEXT,
+                        name TEXT,
+                        model TEXT,
+                        firmware TEXT,
+                        status TEXT NOT NULL DEFAULT 'unknown',
+                        last_seen INTEGER
+                    );"
+                )?;
+            }
+
+            conn.execute_batch("DROP TABLE IF EXISTS wifi_ssid_configs")?;
+
+            conn.execute(
+                "INSERT INTO config (key, value) VALUES ('schema_version', '8')
+                 ON CONFLICT(key) DO UPDATE SET value = '8'",
+                [],
+            )?;
+        }
+
         Ok(())
     }
 
@@ -1453,14 +1564,16 @@ impl Db {
         Ok(())
     }
 
-    // WiFi AP methods
+    // WiFi AP methods (new provider-based schema)
 
     pub fn list_wifi_aps(&self) -> Result<Vec<hermitshell_common::WifiAp>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ip, name, provider, model, firmware, enabled, last_seen, status, ca_cert_pem FROM wifi_aps"
+            "SELECT a.mac, COALESCE(a.ip, ''), COALESCE(a.name, ''), p.provider_type,
+                    a.model, a.firmware, p.enabled, a.last_seen, a.status,
+                    p.ca_cert_pem IS NOT NULL, a.provider_id
+             FROM wifi_aps a JOIN wifi_providers p ON a.provider_id = p.id"
         )?;
         let rows = stmt.query_map([], |row| {
-            let ca_cert_pem: Option<String> = row.get(9)?;
             Ok(hermitshell_common::WifiAp {
                 mac: row.get(0)?,
                 ip: row.get(1)?,
@@ -1471,104 +1584,11 @@ impl Db {
                 enabled: row.get::<_, i64>(6)? != 0,
                 last_seen: row.get(7)?,
                 status: row.get(8)?,
-                has_ca_cert: ca_cert_pem.is_some(),
+                has_ca_cert: row.get::<_, bool>(9).unwrap_or(false),
+                provider_id: row.get(10)?,
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
-    }
-
-    pub fn get_wifi_ap(&self, mac: &str) -> Result<Option<hermitshell_common::WifiAp>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT mac, ip, name, provider, model, firmware, enabled, last_seen, status, ca_cert_pem FROM wifi_aps WHERE mac = ?1"
-        )?;
-        let mut rows = stmt.query([mac])?;
-        if let Some(row) = rows.next()? {
-            let ca_cert_pem: Option<String> = row.get(9)?;
-            Ok(Some(hermitshell_common::WifiAp {
-                mac: row.get(0)?,
-                ip: row.get(1)?,
-                name: row.get(2)?,
-                provider: row.get(3)?,
-                model: row.get(4)?,
-                firmware: row.get(5)?,
-                enabled: row.get::<_, i64>(6)? != 0,
-                last_seen: row.get(7)?,
-                status: row.get(8)?,
-                has_ca_cert: ca_cert_pem.is_some(),
-            }))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn insert_wifi_ap(&self, mac: &str, ip: &str, name: &str, provider: &str, username: &str, password_enc: &str) -> Result<()> {
-        self.conn.execute(
-            "INSERT INTO wifi_aps (mac, ip, name, provider, username, password_enc) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            (mac, ip, name, provider, username, password_enc),
-        )?;
-        Ok(())
-    }
-
-    pub fn set_wifi_ap_enabled(&self, mac: &str, enabled: bool) -> Result<()> {
-        self.conn.execute(
-            "UPDATE wifi_aps SET enabled = ?1 WHERE mac = ?2",
-            (enabled as i32, mac),
-        )?;
-        Ok(())
-    }
-
-    pub fn remove_wifi_ap(&self, mac: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM wifi_ssid_configs WHERE ap_mac = ?1", [mac])?;
-        self.conn.execute("DELETE FROM wifi_aps WHERE mac = ?1", [mac])?;
-        Ok(())
-    }
-
-    pub fn update_wifi_ap_status(&self, mac: &str, status: &str, last_seen: i64) -> Result<()> {
-        self.conn.execute(
-            "UPDATE wifi_aps SET status = ?1, last_seen = ?2 WHERE mac = ?3",
-            (status, last_seen, mac),
-        )?;
-        Ok(())
-    }
-
-    pub fn update_wifi_ap_info(&self, mac: &str, model: Option<&str>, firmware: Option<&str>) -> Result<()> {
-        self.conn.execute(
-            "UPDATE wifi_aps SET model = ?1, firmware = ?2 WHERE mac = ?3",
-            (model, firmware, mac),
-        )?;
-        Ok(())
-    }
-
-    pub fn get_wifi_ap_credentials(&self, mac: &str) -> Result<Option<(String, String, String)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT ip, username, password_enc FROM wifi_aps WHERE mac = ?1"
-        )?;
-        let mut rows = stmt.query([mac])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some((row.get(0)?, row.get(1)?, row.get(2)?)))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn get_wifi_ap_ca_cert(&self, mac: &str) -> Result<Option<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT ca_cert_pem FROM wifi_aps WHERE mac = ?1"
-        )?;
-        let mut rows = stmt.query([mac])?;
-        if let Some(row) = rows.next()? {
-            Ok(row.get(0)?)
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn set_wifi_ap_ca_cert(&self, mac: &str, ca_cert_pem: Option<&str>) -> Result<()> {
-        self.conn.execute(
-            "UPDATE wifi_aps SET ca_cert_pem = ?1 WHERE mac = ?2",
-            rusqlite::params![ca_cert_pem, mac],
-        )?;
-        Ok(())
     }
 
     pub fn update_device_wifi(&self, mac: &str, ssid: Option<&str>, band: Option<&str>, rssi: Option<i32>, ap_mac: Option<&str>) -> Result<()> {
@@ -1582,19 +1602,194 @@ impl Db {
         Ok(())
     }
 
-    pub fn encrypt_wifi_passwords(&self, session_secret: &str) -> Result<()> {
-        let mut stmt = self.conn.prepare("SELECT mac, password_enc FROM wifi_aps")?;
-        let rows: Vec<(String, String)> = stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+    // WiFi Provider methods
+
+    pub fn list_wifi_providers(&self) -> Result<Vec<hermitshell_common::WifiProviderInfo>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT p.id, p.provider_type, p.name, p.url, p.enabled, p.status, p.last_seen, p.ca_cert_pem,
+                    (SELECT COUNT(*) FROM wifi_aps WHERE provider_id = p.id) as ap_count
+             FROM wifi_providers p"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let ca_cert: Option<String> = row.get(7)?;
+            Ok(hermitshell_common::WifiProviderInfo {
+                id: row.get(0)?,
+                provider_type: row.get(1)?,
+                name: row.get(2)?,
+                url: row.get(3)?,
+                enabled: row.get::<_, i64>(4)? != 0,
+                status: row.get(5)?,
+                last_seen: row.get(6)?,
+                ap_count: row.get::<_, u32>(8).unwrap_or(0),
+                has_ca_cert: ca_cert.is_some(),
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn get_wifi_provider(&self, id: &str) -> Result<Option<hermitshell_common::WifiProviderInfo>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT p.id, p.provider_type, p.name, p.url, p.enabled, p.status, p.last_seen, p.ca_cert_pem,
+                    (SELECT COUNT(*) FROM wifi_aps WHERE provider_id = p.id) as ap_count
+             FROM wifi_providers p WHERE p.id = ?1"
+        )?;
+        let mut rows = stmt.query([id])?;
+        if let Some(row) = rows.next()? {
+            let ca_cert: Option<String> = row.get(7)?;
+            Ok(Some(hermitshell_common::WifiProviderInfo {
+                id: row.get(0)?,
+                provider_type: row.get(1)?,
+                name: row.get(2)?,
+                url: row.get(3)?,
+                enabled: row.get::<_, i64>(4)? != 0,
+                status: row.get(5)?,
+                last_seen: row.get(6)?,
+                ap_count: row.get::<_, u32>(8).unwrap_or(0),
+                has_ca_cert: ca_cert.is_some(),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn insert_wifi_provider(&self, id: &str, provider_type: &str, name: &str, url: &str, username: &str, password_enc: &str, site: Option<&str>, api_key_enc: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO wifi_providers (id, provider_type, name, url, username, password_enc, site, api_key_enc) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![id, provider_type, name, url, username, password_enc, site, api_key_enc],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_wifi_provider(&self, id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM wifi_aps WHERE provider_id = ?1", [id])?;
+        self.conn.execute("DELETE FROM wifi_providers WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Returns (provider_type, url, username, password_enc, site, api_key_enc)
+    pub fn get_wifi_provider_credentials(&self, id: &str) -> Result<Option<(String, String, String, String, Option<String>, Option<String>)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT provider_type, url, username, password_enc, site, api_key_enc FROM wifi_providers WHERE id = ?1"
+        )?;
+        let mut rows = stmt.query([id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get_wifi_provider_ca_cert(&self, id: &str) -> Result<Option<String>> {
+        let mut stmt = self.conn.prepare("SELECT ca_cert_pem FROM wifi_providers WHERE id = ?1")?;
+        let mut rows = stmt.query([id])?;
+        if let Some(row) = rows.next()? {
+            Ok(row.get(0)?)
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn set_wifi_provider_ca_cert(&self, id: &str, ca_cert_pem: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE wifi_providers SET ca_cert_pem = ?1 WHERE id = ?2",
+            rusqlite::params![ca_cert_pem, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_wifi_provider_status(&self, id: &str, status: &str, last_seen: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE wifi_providers SET status = ?1, last_seen = ?2 WHERE id = ?3",
+            (status, last_seen, id),
+        )?;
+        Ok(())
+    }
+
+    pub fn sync_wifi_aps(&self, provider_id: &str, devices: &[hermitshell_common::WifiDeviceInfo]) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+
+        for dev in devices {
+            self.conn.execute(
+                "INSERT INTO wifi_aps (mac, provider_id, ip, name, model, firmware, status, last_seen)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 ON CONFLICT(mac) DO UPDATE SET
+                    ip = ?3, name = ?4, model = ?5, firmware = ?6, status = ?7, last_seen = ?8",
+                rusqlite::params![
+                    dev.mac, provider_id, dev.ip, dev.name,
+                    dev.model, dev.firmware, dev.status, now
+                ],
+            )?;
+        }
+
+        // Mark APs not in the device list as offline
+        let macs: Vec<&str> = devices.iter().map(|d| d.mac.as_str()).collect();
+        if macs.is_empty() {
+            self.conn.execute(
+                "UPDATE wifi_aps SET status = 'offline' WHERE provider_id = ?1",
+                [provider_id],
+            )?;
+        } else {
+            let placeholders: String = macs.iter().enumerate()
+                .map(|(i, _)| format!("?{}", i + 2))
+                .collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "UPDATE wifi_aps SET status = 'offline' WHERE provider_id = ?1 AND mac NOT IN ({})",
+                placeholders
+            );
+            let mut stmt = self.conn.prepare(&sql)?;
+            let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(provider_id.to_string())];
+            for mac in &macs {
+                params.push(Box::new(mac.to_string()));
+            }
+            stmt.execute(rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())))?;
+        }
+
+        Ok(())
+    }
+
+    pub fn get_wifi_ap_provider_id(&self, mac: &str) -> Result<Option<String>> {
+        let mut stmt = self.conn.prepare("SELECT provider_id FROM wifi_aps WHERE mac = ?1")?;
+        let mut rows = stmt.query([mac])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// For eap_standalone providers, insert the initial AP record when adding the provider.
+    pub fn insert_wifi_ap_for_provider(&self, mac: &str, provider_id: &str, ip: &str, name: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO wifi_aps (mac, provider_id, ip, name, status) VALUES (?1, ?2, ?3, ?4, 'unknown')",
+            rusqlite::params![mac, provider_id, ip, name],
+        )?;
+        Ok(())
+    }
+
+    pub fn encrypt_wifi_provider_passwords(&self, session_secret: &str) -> Result<()> {
+        let mut stmt = self.conn.prepare("SELECT id, password_enc, api_key_enc FROM wifi_providers")?;
+        let rows: Vec<(String, String, Option<String>)> = stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?.filter_map(|r| r.ok()).collect();
 
-        for (mac, password_enc) in rows {
+        for (id, password_enc, api_key_enc) in rows {
             if !crate::crypto::is_encrypted(&password_enc) {
                 let encrypted = crate::crypto::encrypt_password(&password_enc, session_secret)?;
                 self.conn.execute(
-                    "UPDATE wifi_aps SET password_enc = ?1 WHERE mac = ?2",
-                    (&encrypted, &mac),
+                    "UPDATE wifi_providers SET password_enc = ?1 WHERE id = ?2",
+                    (&encrypted, &id),
                 )?;
+            }
+            if let Some(ref api_key) = api_key_enc {
+                if !api_key.is_empty() && !crate::crypto::is_encrypted(api_key) {
+                    let encrypted = crate::crypto::encrypt_password(api_key, session_secret)?;
+                    self.conn.execute(
+                        "UPDATE wifi_providers SET api_key_enc = ?1 WHERE id = ?2",
+                        (&encrypted, &id),
+                    )?;
+                }
             }
         }
         Ok(())
