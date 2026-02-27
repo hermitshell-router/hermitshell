@@ -1,4 +1,5 @@
 use super::*;
+use zeroize::Zeroizing;
 
 /// Validate a PEM-encoded CA certificate string. Returns error message on failure.
 fn validate_ca_cert_pem(pem: &str) -> Result<(), String> {
@@ -79,9 +80,11 @@ pub(super) fn handle_wifi_add_provider(req: &Request, db: &Arc<Mutex<Db>>) -> Re
             }
         }
         "unifi" => {
-            // URL must be a valid URL
-            if !url.starts_with("https://") && !url.starts_with("http://") {
-                return Response::err("url must be a valid URL (https://...) for unifi");
+            // URL must be a valid https URL
+            match reqwest::Url::parse(url) {
+                Ok(parsed) if parsed.scheme() == "https" => {}
+                Ok(_) => return Response::err("url must use https:// for unifi"),
+                Err(_) => return Response::err("url must be a valid URL (https://...) for unifi"),
             }
             // Validate site if provided
             if let Some(ref site) = req.site {
@@ -248,38 +251,38 @@ async fn connect_to_provider(provider_id: &str, db: &Arc<Mutex<Db>>) -> Result<B
     };
 
     // Decrypt password
-    let password = {
+    let password: Zeroizing<String> = {
         let session_secret = {
             let db = db.lock().unwrap();
             db.get_config("session_secret").ok().flatten().unwrap_or_default()
         };
         if session_secret.is_empty() || !crate::crypto::is_encrypted(&password_enc) {
-            password_enc
+            Zeroizing::new(password_enc)
         } else {
             match crate::crypto::decrypt_password(&password_enc, &session_secret) {
-                Ok(p) => p,
+                Ok(p) => Zeroizing::new(p),
                 Err(e) => return Err(Response::err(&format!("decrypt failed: {}", e))),
             }
         }
     };
 
     // Decrypt API key if present
-    let api_key = api_key_enc.and_then(|enc| {
+    let api_key: Option<Zeroizing<String>> = api_key_enc.and_then(|enc| {
         if enc.is_empty() { return None; }
         let session_secret = {
             let db = db.lock().unwrap();
             db.get_config("session_secret").ok().flatten().unwrap_or_default()
         };
         if session_secret.is_empty() || !crate::crypto::is_encrypted(&enc) {
-            Some(enc)
+            Some(Zeroizing::new(enc))
         } else {
-            crate::crypto::decrypt_password(&enc, &session_secret).ok()
+            crate::crypto::decrypt_password(&enc, &session_secret).ok().map(Zeroizing::new)
         }
     });
 
     match crate::wifi::connect(
         &provider_type, &url, &username, &password,
-        ca_cert_pem.as_deref(), site.as_deref(), api_key.as_deref(),
+        ca_cert_pem.as_deref(), site.as_deref(), api_key.as_ref().map(|k| k.as_str()),
     ).await {
         Ok((provider, tofu_pem)) => {
             // Save TOFU cert if captured

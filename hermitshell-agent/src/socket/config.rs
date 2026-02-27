@@ -1,4 +1,5 @@
 use super::*;
+use zeroize::Zeroizing;
 
 pub(super) fn handle_get_config(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let Some(ref key) = req.key else { return Response::err("key required"); };
@@ -115,23 +116,23 @@ pub(super) fn handle_export_config(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
         for provider in &wifi_providers {
             if let Ok(Some((_ptype, _url, _username, password_enc, _site, api_key_enc))) = db.get_wifi_provider_credentials(&provider.id) {
                 if !password_enc.is_empty() {
-                    let plaintext = if crate::crypto::is_encrypted(&password_enc) {
+                    let plaintext = Zeroizing::new(if crate::crypto::is_encrypted(&password_enc) {
                         crate::crypto::decrypt_password(&password_enc, &session_secret)
                             .unwrap_or_else(|_| password_enc.clone())
                     } else {
                         password_enc
-                    };
-                    wifi_provider_passwords.insert(provider.id.clone(), serde_json::Value::String(plaintext));
+                    });
+                    wifi_provider_passwords.insert(provider.id.clone(), serde_json::Value::String((*plaintext).clone()));
                 }
                 if let Some(api_key) = api_key_enc {
                     if !api_key.is_empty() {
-                        let plaintext = if crate::crypto::is_encrypted(&api_key) {
+                        let plaintext = Zeroizing::new(if crate::crypto::is_encrypted(&api_key) {
                             crate::crypto::decrypt_password(&api_key, &session_secret)
                                 .unwrap_or_else(|_| api_key.clone())
                         } else {
                             api_key
-                        };
-                        wifi_provider_api_keys.insert(provider.id.clone(), serde_json::Value::String(plaintext));
+                        });
+                        wifi_provider_api_keys.insert(provider.id.clone(), serde_json::Value::String((*plaintext).clone()));
                     }
                 }
             }

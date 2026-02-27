@@ -388,7 +388,7 @@ impl Db {
                     conn.execute_batch(
                         "CREATE TABLE wifi_aps (
                             mac TEXT PRIMARY KEY,
-                            provider_id TEXT NOT NULL,
+                            provider_id TEXT NOT NULL REFERENCES wifi_providers(id),
                             ip TEXT,
                             name TEXT,
                             model TEXT,
@@ -415,7 +415,7 @@ impl Db {
                     conn.execute_batch(
                         "CREATE TABLE wifi_aps (
                             mac TEXT PRIMARY KEY,
-                            provider_id TEXT NOT NULL,
+                            provider_id TEXT NOT NULL REFERENCES wifi_providers(id),
                             ip TEXT,
                             name TEXT,
                             model TEXT,
@@ -429,7 +429,7 @@ impl Db {
                 conn.execute_batch(
                     "CREATE TABLE IF NOT EXISTS wifi_aps (
                         mac TEXT PRIMARY KEY,
-                        provider_id TEXT NOT NULL,
+                        provider_id TEXT NOT NULL REFERENCES wifi_providers(id),
                         ip TEXT,
                         name TEXT,
                         model TEXT,

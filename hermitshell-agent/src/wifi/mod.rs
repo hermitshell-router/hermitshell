@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 use tokio::time::{Duration, interval};
 use tracing::{info, warn};
+use zeroize::Zeroizing;
 
 use crate::db::Db;
 use hermitshell_common::{WifiClient, WifiRadioConfig, WifiSsidConfig};
@@ -105,16 +106,16 @@ pub async fn run(db: Arc<Mutex<Db>>) {
             };
 
             // Decrypt password
-            let password = {
+            let password: Zeroizing<String> = {
                 let session_secret = {
                     let db_lock = db.lock().unwrap();
                     db_lock.get_config("session_secret").ok().flatten().unwrap_or_default()
                 };
                 if session_secret.is_empty() || !crate::crypto::is_encrypted(&password_enc) {
-                    password_enc
+                    Zeroizing::new(password_enc)
                 } else {
                     match crate::crypto::decrypt_password(&password_enc, &session_secret) {
-                        Ok(p) => p,
+                        Ok(p) => Zeroizing::new(p),
                         Err(e) => {
                             warn!(provider = %provider_info.name, error = %e, "failed to decrypt provider password");
                             continue;
@@ -124,22 +125,22 @@ pub async fn run(db: Arc<Mutex<Db>>) {
             };
 
             // Decrypt API key if present
-            let api_key = api_key_enc.and_then(|enc| {
+            let api_key: Option<Zeroizing<String>> = api_key_enc.and_then(|enc| {
                 if enc.is_empty() { return None; }
                 let session_secret = {
                     let db_lock = db.lock().unwrap();
                     db_lock.get_config("session_secret").ok().flatten().unwrap_or_default()
                 };
                 if session_secret.is_empty() || !crate::crypto::is_encrypted(&enc) {
-                    Some(enc)
+                    Some(Zeroizing::new(enc))
                 } else {
-                    crate::crypto::decrypt_password(&enc, &session_secret).ok()
+                    crate::crypto::decrypt_password(&enc, &session_secret).ok().map(Zeroizing::new)
                 }
             });
 
             match connect(
                 &provider_type, &url, &username, &password,
-                ca_cert.as_deref(), site.as_deref(), api_key.as_deref(),
+                ca_cert.as_deref(), site.as_deref(), api_key.as_ref().map(|k| k.as_str()),
             ).await {
                 Ok((provider, tofu_pem)) => {
                     // Save TOFU-pinned cert
