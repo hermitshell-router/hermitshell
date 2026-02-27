@@ -4,7 +4,7 @@ use rusqlite::Connection;
 pub use hermitshell_common::{
     Alert, AuditEntry, BandwidthPoint, BandwidthRealtime, ConnectionLog, Device,
     DhcpReservation, DnsLogEntry, PortForward, TopDestination, WgPeer,
-    WifiAp, WifiClient, WifiRadioConfig, WifiSsidConfig,
+    WifiAp, WifiClient,
 };
 
 /// Practical bottlenecks before hitting address space limits:

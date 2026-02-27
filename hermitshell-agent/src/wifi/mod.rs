@@ -58,8 +58,8 @@ pub async fn connect(
     username: &str,
     password: &str,
     ca_cert_pem: Option<&str>,
-    site: Option<&str>,
-    api_key: Option<&str>,
+    _site: Option<&str>,
+    _api_key: Option<&str>,
 ) -> Result<(Box<dyn WifiProvider>, Option<String>)> {
     match provider_type {
         "eap_standalone" => {
