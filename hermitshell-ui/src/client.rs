@@ -581,6 +581,17 @@ pub fn run_bandwidth_rollup() -> Result<String, String> {
     Ok(resp.config_value.unwrap_or_default())
 }
 
+pub fn apply_update() -> Result<String, String> {
+    let resp = ok_or_err(send(json!({"method": "apply_update"}))?)?;
+    resp.config_value.ok_or_else(|| "no version in response".into())
+}
+
+pub fn set_auto_update(enabled: bool) -> Result<(), String> {
+    let value = if enabled { "true" } else { "false" };
+    ok_or_err(send(json!({"method": "set_config", "key": "auto_update_enabled", "value": value}))?)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

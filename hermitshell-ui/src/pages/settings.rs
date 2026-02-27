@@ -7,6 +7,7 @@ use crate::server_fns::{
     RemoveReservation, SetLogConfig, SetRunzeroConfig, SyncRunzero,
     SetQosConfig, SetQosTestUrl, RunSpeedTest,
     SetTlsCustomCert, SetTlsSelfSigned, SetTlsTailscale, SetTlsAcme,
+    ApplyUpdate, SetAutoUpdate,
 };
 
 #[component]
@@ -38,6 +39,10 @@ pub fn Settings() -> impl IntoView {
     let tls_status = Resource::new(
         || (),
         |_| async { client::get_tls_status() },
+    );
+    let update_info = Resource::new(
+        || (),
+        |_| async { client::check_update() },
     );
 
     view! {
@@ -119,16 +124,87 @@ pub fn Settings() -> impl IntoView {
                                 </div>
                             </div>
 
+                        }.into_any()
+                    }
+                    Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
+                })}
+            </Suspense>
+
+            <Suspense fallback=move || view! { <p>"Checking for updates..."</p> }>
+                {move || update_info.get().map(|result| match result {
+                    Ok(info) => {
+                        let current = info.get("current_version")
+                            .and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                        let latest = info.get("latest_version")
+                            .and_then(|v| v.as_str()).map(String::from);
+                        let check_enabled = info.get("enabled")
+                            .and_then(|v| v.as_bool()).unwrap_or(false);
+                        let auto_update = info.get("auto_update_enabled")
+                            .and_then(|v| v.as_bool()).unwrap_or(false);
+
+                        let has_update = latest.as_ref()
+                            .map(|l| *l != format!("v{}", current) && !l.is_empty())
+                            .unwrap_or(false);
+
+                        let update_action = ServerAction::<ApplyUpdate>::new();
+                        let update_action_error = Signal::derive(move || {
+                            update_action.value().get().map(|r| r.map(|_| ()))
+                        });
+                        let auto_update_action = ServerAction::<SetAutoUpdate>::new();
+
+                        view! {
                             <div class="settings-section">
-                                <h3>"About"</h3>
+                                <h3>"Software Update"</h3>
                                 <div class="settings-row">
-                                    <span class="settings-label">"Software"</span>
-                                    <span class="settings-value">"HermitShell"</span>
+                                    <span class="settings-label">"Current Version"</span>
+                                    <span class="settings-value">{format!("v{}", current)}</span>
                                 </div>
-                                <div class="settings-row">
-                                    <span class="settings-label">"Version"</span>
-                                    <span class="settings-value">"0.1.0"</span>
-                                </div>
+                                {if let Some(ref latest_ver) = latest {
+                                    view! {
+                                        <div class="settings-row">
+                                            <span class="settings-label">"Latest Version"</span>
+                                            <span class="settings-value">{latest_ver.clone()}</span>
+                                        </div>
+                                    }.into_any()
+                                } else {
+                                    view! { <span></span> }.into_any()
+                                }}
+                                {if !check_enabled {
+                                    view! {
+                                        <p class="hint">"Update checking is disabled."</p>
+                                    }.into_any()
+                                } else if has_update {
+                                    view! {
+                                        <div class="update-available">
+                                            <ActionForm action=update_action>
+                                                <button type="submit" class="btn btn-primary">"Update Now"</button>
+                                            </ActionForm>
+                                            <ErrorToast value=update_action_error />
+                                        </div>
+                                    }.into_any()
+                                } else {
+                                    view! {
+                                        <p class="hint">"You are running the latest version."</p>
+                                    }.into_any()
+                                }}
+                                {if check_enabled {
+                                    view! {
+                                        <div class="settings-row" style="margin-top:0.5rem">
+                                            <span class="settings-label">"Auto-update"</span>
+                                            <span class="settings-value">
+                                                <ActionForm action=auto_update_action attr:style="display:inline">
+                                                    <input type="hidden" name="enabled" value={if auto_update { "false" } else { "true" }} />
+                                                    <button type="submit" class="btn btn-sm">
+                                                        {if auto_update { "Disable" } else { "Enable" }}
+                                                    </button>
+                                                </ActionForm>
+                                                <ErrorToast value=auto_update_action.value() />
+                                            </span>
+                                        </div>
+                                    }.into_any()
+                                } else {
+                                    view! { <span></span> }.into_any()
+                                }}
                             </div>
                         }.into_any()
                     }

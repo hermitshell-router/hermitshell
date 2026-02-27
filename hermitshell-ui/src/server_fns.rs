@@ -423,3 +423,21 @@ pub async fn get_interfaces() -> Result<Vec<hermitshell_common::NetworkInterface
     crate::client::list_interfaces()
         .map_err(|e| ServerFnError::new(e))
 }
+
+#[server]
+pub async fn apply_update() -> Result<String, ServerFnError> {
+    let version = crate::client::apply_update()
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("apply_update", &version);
+    Ok(version)
+}
+
+#[server]
+pub async fn set_auto_update(enabled: String) -> Result<(), ServerFnError> {
+    let enabled = enabled == "true";
+    crate::client::set_auto_update(enabled)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("set_auto_update", &enabled.to_string());
+    leptos_axum::redirect("/settings");
+    Ok(())
+}
