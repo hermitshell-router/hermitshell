@@ -34,3 +34,15 @@ assert_match "$device_info" '"dhcp_fingerprint"' "Device has dhcp_fingerprint fi
 # The LAN VM (Ubuntu) should have a non-empty fingerprint after DHCP
 # Option 55 produces a comma-separated list of option codes
 assert_match "$device_info" '"dhcp_fingerprint":"[0-9]' "Device has non-empty DHCP fingerprint"
+
+# --- Phase 3b: DHCP fingerprint change detection ---
+
+# Store a fake old fingerprint to create a mismatch
+vm_sudo router "echo '{\"method\":\"set_config\",\"key\":\"dhcp_fp_'$lan_mac'\",\"value\":\"99,98,97\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock" >/dev/null
+
+# Trigger analysis cycle
+vm_exec router "echo '{\"method\":\"run_analysis\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock" >/dev/null
+
+# Check alerts for dhcp_fingerprint_change
+alerts=$(vm_exec router "echo '{\"method\":\"list_alerts\",\"rule\":\"dhcp_fingerprint_change\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock")
+assert_match "$alerts" "dhcp_fingerprint_change" "Fingerprint change alert fired"

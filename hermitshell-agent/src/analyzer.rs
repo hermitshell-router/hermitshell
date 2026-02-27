@@ -48,6 +48,9 @@ pub fn run_analysis_cycle(db: &Arc<Mutex<Db>>, log_tx: &UnboundedSender<LogEvent
         if is_rule_enabled(&db_guard, "bandwidth_spike") {
             check_bandwidth_spike(&db_guard, &dev.mac, ip, log_tx);
         }
+        if is_rule_enabled(&db_guard, "dhcp_fingerprint_change") {
+            check_dhcp_fingerprint_change(&db_guard, &dev.mac, ip, log_tx);
+        }
     }
 
     for dev in &devices {
@@ -250,6 +253,39 @@ fn check_bandwidth_spike(db: &Db, mac: &str, ip: &str, log_tx: &UnboundedSender<
         |current, avg| format!("Device uploaded {} bytes in the last hour (baseline: {})", current, avg),
         |current, avg| serde_json::json!({"current_bytes": current, "baseline_avg_bytes": avg}),
     );
+}
+
+fn check_dhcp_fingerprint_change(db: &Db, mac: &str, _ip: &str, log_tx: &UnboundedSender<LogEvent>) {
+    let dev = match db.get_device(mac) {
+        Ok(Some(d)) => d,
+        _ => return,
+    };
+
+    let Some(ref current_fp) = dev.dhcp_fingerprint else { return };
+    if current_fp.is_empty() { return; }
+
+    let baseline_key = format!("dhcp_fp_{}", mac);
+    match db.get_config(&baseline_key) {
+        Ok(Some(ref stored_fp)) if !stored_fp.is_empty() => {
+            if stored_fp != current_fp {
+                let details = serde_json::json!({
+                    "previous_fingerprint": stored_fp,
+                    "current_fingerprint": current_fp,
+                });
+                fire_alert(
+                    db, mac, "dhcp_fingerprint_change", "high",
+                    &format!("DHCP fingerprint changed — possible MAC spoofing (was: {}, now: {})", stored_fp, current_fp),
+                    Some(&details.to_string()),
+                    log_tx,
+                );
+                let _ = db.set_config(&baseline_key, current_fp);
+            }
+        }
+        Ok(Some(_)) | Ok(None) => {
+            let _ = db.set_config(&baseline_key, current_fp);
+        }
+        Err(_) => {}
+    }
 }
 
 fn mean_stddev(values: &[f64]) -> (f64, f64) {
