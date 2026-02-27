@@ -41,11 +41,16 @@ pub fn validate_group(group: &str) -> Result<()> {
     Ok(())
 }
 
-/// Validate a MAC address: exactly "XX:XX:XX:XX:XX:XX" with lowercase hex.
+/// Validate a MAC address: exactly "XX:XX:XX:XX:XX:XX" with hex digits.
 pub fn validate_mac(mac: &str) -> Result<()> {
     let parts: Vec<&str> = mac.split(':').collect();
     if parts.len() != 6 || !parts.iter().all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit())) {
         anyhow::bail!("invalid MAC address: {}", mac);
+    }
+    let first_byte = u8::from_str_radix(parts[0], 16)
+        .map_err(|_| anyhow::anyhow!("invalid MAC address: {}", mac))?;
+    if first_byte & 0x01 != 0 {
+        anyhow::bail!("multicast MAC address not allowed: {}", mac);
     }
     Ok(())
 }
@@ -115,7 +120,8 @@ table inet filter {{
         iifname "{lan_iface}" udp dport 5353 accept
         iifname "{lan_iface}" udp dport {{ 546, 547 }} accept
         iifname {{ "{lan_iface}", "tailscale0", "wg0" }} icmp type echo-request accept
-        icmpv6 type {{ nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert }} accept
+        icmpv6 type {{ nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert, nd-router-solicit }} accept
+        icmpv6 type {{ destination-unreachable, packet-too-big, time-exceeded, parameter-problem }} accept
         iifname {{ "{lan_iface}", "tailscale0", "wg0" }} icmpv6 type echo-request accept
     }}
     chain forward {{
@@ -124,6 +130,9 @@ table inet filter {{
         ip saddr vmap @device_groups_v4
         ip6 saddr vmap @device_groups_v6
         icmpv6 type {{ nd-neighbor-solicit, nd-neighbor-advert }} accept
+        icmpv6 type {{ destination-unreachable, packet-too-big, time-exceeded, parameter-problem }} accept
+        icmpv6 type {{ echo-request, echo-reply }} limit rate 10/second accept
+        ct state new jump port_fwd
         ip6 saddr fe80::/10 icmpv6 type nd-router-advert drop
     }}
     chain output {{
@@ -597,12 +606,6 @@ pub fn apply_port_forwards(
     if !status.success() {
         anyhow::bail!("failed to apply port forwarding rules");
     }
-
-    // Add jump to port_fwd from forward chain (idempotent)
-    let _ = Command::new("/usr/sbin/nft")
-        .args(["add", "rule", "inet", "filter", "forward",
-               "ct", "state", "new", "jump", "port_fwd"])
-        .status();
 
     Ok(())
 }
