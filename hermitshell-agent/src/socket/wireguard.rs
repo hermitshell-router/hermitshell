@@ -161,7 +161,10 @@ pub(super) fn handle_add_wg_peer(req: &Request, db: &Arc<Mutex<Db>>) -> Response
     }
     let server_pubkey = db.get_config("wg_private_key")
         .ok().flatten()
-        .and_then(|k| crate::wireguard::pubkey_from_private(&k).ok())
+        .and_then(|k| {
+            let k = zeroize::Zeroizing::new(k);
+            crate::wireguard::pubkey_from_private(&k).ok()
+        })
         .unwrap_or_default();
     let listen_port: u16 = db.get_config("wg_listen_port")
         .ok().flatten()

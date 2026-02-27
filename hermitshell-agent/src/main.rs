@@ -651,6 +651,7 @@ async fn main() -> Result<()> {
         let wg_enabled = db_guard.get_config_bool("wg_enabled", false);
         if wg_enabled {
             if let Some(private_key) = db_guard.get_config("wg_private_key").ok().flatten() {
+                let private_key = zeroize::Zeroizing::new(private_key);
                 let listen_port: u16 = db_guard.get_config("wg_listen_port")
                     .ok().flatten()
                     .and_then(|v| v.parse().ok())

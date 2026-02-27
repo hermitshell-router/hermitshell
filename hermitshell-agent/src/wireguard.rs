@@ -5,7 +5,7 @@ use tracing::{debug, info};
 /// Validate WireGuard public key: base64-encoded, exactly 44 characters, decodes to 32 bytes.
 fn validate_pubkey(key: &str) -> Result<()> {
     if key.len() != 44 || !key.ends_with('=') {
-        anyhow::bail!("invalid WireGuard public key: {}", key);
+        anyhow::bail!("invalid WireGuard public key (length={}, expected 44)", key.len());
     }
     use base64::Engine;
     let decoded = base64::engine::general_purpose::STANDARD
@@ -110,7 +110,8 @@ pub fn add_peer(public_key: &str, device_ipv4: &str, device_ipv6_ula: &str) -> R
 
     let allowed_ips = format!("{}/32,{}/128", device_ipv4, device_ipv6_ula);
     let status = Command::new("/usr/bin/wg")
-        .args(["set", "wg0", "peer", public_key, "allowed-ips", &allowed_ips])
+        .args(["set", "wg0", "peer", public_key, "allowed-ips", &allowed_ips,
+               "persistent-keepalive", "25"])
         .status()?;
     if !status.success() {
         anyhow::bail!("failed to add WireGuard peer {}", public_key);
