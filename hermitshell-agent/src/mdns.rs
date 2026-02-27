@@ -505,15 +505,11 @@ fn handle_query(
         let qname = question.qname.to_string();
         debug!(from = %src_ip, name = %qname, "mDNS query");
 
-        // H5: QU bit determines unicast preference
-        let qu_bit = question.unicast_response;
-
-        // H5/H6: Default to multicast; unicast if QU bit set or legacy query
-        let dest = if is_legacy || qu_bit {
-            src
-        } else {
-            SocketAddr::new(MDNS_ADDR.into(), MDNS_PORT)
-        };
+        // Always unicast responses to the querier to preserve device isolation.
+        // RFC 6762 §6.3 says multicast for QU=0 queries, but multicast leaks
+        // response packets to all LAN devices, undermining group-based isolation.
+        // Documented in SECURITY.md.
+        let dest = src;
 
         // L8: Meta-query support for _services._dns-sd._udp.local
         if qname == "_services._dns-sd._udp.local" {

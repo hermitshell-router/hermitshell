@@ -288,6 +288,16 @@ This document tracks security compromises made during implementation, why they w
 
 ## mDNS Proxy
 
+## 73. mDNS proxy responds via unicast only (RFC 6762 §6.3 deviation)
+
+**What:** The mDNS proxy always sends query responses via unicast to the querier, even when RFC 6762 Section 6.3 says responses to standard (non-QU) queries should be sent to the multicast group (224.0.0.251:5353).
+
+**Why:** HermitShell isolates devices into groups (trusted, iot, servers, guest, quarantine, blocked). The mDNS proxy applies group-based filtering to response *content* — a guest device's query will never include trusted-only services. However, multicast responses are delivered by the kernel to *all* devices on the LAN interface regardless of group. Even though the payload is filtered, a passive listener could observe the multicast packet and learn that a query was answered, what service types exist, and for whom. This leaks metadata across isolation boundaries.
+
+**Risk:** Queriers do not benefit from seeing other devices' cached responses (the standard rationale for multicast responses), since the proxy filters per-group anyway. The only loss is that RFC-conformant mDNS clients cannot passively populate their caches from overheard multicast responses — they must send their own queries.
+
+**Proper fix:** None needed — this is an intentional privacy/isolation decision, not a compromise.
+
 ## 74. mDNS announcement attribution trusts IP-to-MAC mapping
 
 **What:** `handle_announcement` resolves the UDP source IP to a device MAC via the DB, then stores service records under that MAC. The attribution relies on the source IP being correct.
