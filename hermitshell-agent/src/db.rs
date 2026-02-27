@@ -583,6 +583,87 @@ impl Db {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
+    /// Insert a port forward with source, expires_at, and requesting_ip fields.
+    pub fn add_port_forward_ext(
+        &self, protocol: &str, ext_start: u16, ext_end: u16,
+        internal_ip: &str, internal_port: u16, description: &str,
+        source: &str, expires_at: Option<i64>, requesting_ip: &str,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO port_forwards (protocol, external_port_start, external_port_end, internal_ip, internal_port, description, source, expires_at, requesting_ip) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            rusqlite::params![protocol, ext_start, ext_end, internal_ip, internal_port, description, source, expires_at, requesting_ip],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Delete all automatic (non-manual) port forwards, returning the count deleted.
+    pub fn delete_automatic_port_forwards(&self) -> Result<usize> {
+        let deleted = self.conn.execute(
+            "DELETE FROM port_forwards WHERE source != 'manual'",
+            [],
+        )?;
+        Ok(deleted)
+    }
+
+    /// Delete expired port forwards (where expires_at <= now_unix), returning the count deleted.
+    pub fn delete_expired_port_forwards(&self, now_unix: i64) -> Result<usize> {
+        let deleted = self.conn.execute(
+            "DELETE FROM port_forwards WHERE expires_at IS NOT NULL AND expires_at <= ?1",
+            [now_unix],
+        )?;
+        Ok(deleted)
+    }
+
+    /// Count automatic (non-manual) port forwards for a specific requesting IP.
+    pub fn count_port_forwards_by_ip(&self, ip: &str) -> Result<i64> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM port_forwards WHERE requesting_ip = ?1 AND source != 'manual'",
+            [ip],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
+    /// Count all automatic (non-manual) port forwards.
+    pub fn count_automatic_port_forwards(&self) -> Result<i64> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM port_forwards WHERE source != 'manual'",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
+    /// Find a port forward matching the given protocol and external port.
+    /// Handles "both" protocol overlap: a "both" forward matches tcp/udp queries and vice versa.
+    pub fn find_port_forward(&self, protocol: &str, ext_port: u16) -> Result<Option<PortForward>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, protocol, external_port_start, external_port_end, internal_ip, internal_port, enabled, description, source, expires_at, requesting_ip
+             FROM port_forwards
+             WHERE (protocol = ?1 OR protocol = 'both' OR ?1 = 'both')
+               AND external_port_start <= ?2
+               AND external_port_end >= ?2"
+        )?;
+        let mut rows = stmt.query(rusqlite::params![protocol, ext_port])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(PortForward {
+                id: row.get(0)?,
+                protocol: row.get(1)?,
+                external_port_start: row.get(2)?,
+                external_port_end: row.get(3)?,
+                internal_ip: row.get(4)?,
+                internal_port: row.get(5)?,
+                enabled: row.get::<_, i64>(6)? != 0,
+                description: row.get(7)?,
+                source: row.get::<_, String>(8).unwrap_or_else(|_| "manual".into()),
+                expires_at: row.get(9)?,
+                requesting_ip: row.get(10)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
     // DHCP reservation methods
 
     pub fn list_dhcp_reservations(&self) -> Result<Vec<DhcpReservation>> {

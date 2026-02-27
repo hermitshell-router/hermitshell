@@ -8,6 +8,7 @@ mod log_export;
 mod mdns;
 mod nftables;
 mod pd;
+mod portmap;
 mod qos;
 mod ra;
 mod socket;
