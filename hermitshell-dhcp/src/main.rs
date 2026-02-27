@@ -620,6 +620,18 @@ fn run_dhcpv6_server(lan_iface: &str) -> Result<()> {
                 }
             }
             MessageType6::Request => {
+                // H13: MUST have matching Server Identifier
+                match msg.opts().get(OptionCode6::ServerId) {
+                    Some(DhcpOption6::ServerId(sid)) if sid.as_slice() == SERVER_DUID => {}
+                    Some(_) => {
+                        debug!(mac = %mac, "DHCPv6 REQUEST for another server, ignoring");
+                        continue;
+                    }
+                    None => {
+                        debug!(mac = %mac, "DHCPv6 REQUEST missing Server ID, ignoring");
+                        continue;
+                    }
+                }
                 info!(mac = %mac, "DHCPv6 REQUEST");
                 match handle_request6(&mut agent, &msg, &mac, &client_id, client_iaid) {
                     Ok(resp) => resp,
@@ -629,15 +641,64 @@ fn run_dhcpv6_server(lan_iface: &str) -> Result<()> {
                     }
                 }
             }
-            MessageType6::Renew | MessageType6::Rebind => {
-                info!(mac = %mac, msg_type = ?msg.msg_type(), "DHCPv6 RENEW/REBIND");
-                match handle_request6(&mut agent, &msg, &mac, &client_id, client_iaid) {
-                    Ok(resp) => resp,
-                    Err(e) => {
-                        error!(mac = %mac, error = %e, "error handling DHCPv6 RENEW/REBIND");
+            MessageType6::Renew => {
+                // H14: MUST have matching Server Identifier
+                match msg.opts().get(OptionCode6::ServerId) {
+                    Some(DhcpOption6::ServerId(sid)) if sid.as_slice() == SERVER_DUID => {}
+                    Some(_) => {
+                        debug!(mac = %mac, "DHCPv6 RENEW for another server, ignoring");
+                        continue;
+                    }
+                    None => {
+                        debug!(mac = %mac, "DHCPv6 RENEW missing Server ID, ignoring");
                         continue;
                     }
                 }
+                info!(mac = %mac, "DHCPv6 RENEW");
+                match handle_request6(&mut agent, &msg, &mac, &client_id, client_iaid) {
+                    Ok(resp) => resp,
+                    Err(e) => {
+                        error!(mac = %mac, error = %e, "error handling DHCPv6 RENEW");
+                        continue;
+                    }
+                }
+            }
+            MessageType6::Rebind => {
+                // M11: MUST NOT have Server Identifier
+                if msg.opts().get(OptionCode6::ServerId).is_some() {
+                    debug!(mac = %mac, "DHCPv6 REBIND with Server ID, discarding");
+                    continue;
+                }
+                info!(mac = %mac, "DHCPv6 REBIND");
+                match handle_request6(&mut agent, &msg, &mac, &client_id, client_iaid) {
+                    Ok(resp) => resp,
+                    Err(e) => {
+                        error!(mac = %mac, error = %e, "error handling DHCPv6 REBIND");
+                        continue;
+                    }
+                }
+            }
+            MessageType6::Release => {
+                info!(mac = %mac, "DHCPv6 RELEASE");
+                let mut resp = Message6::new_with_id(MessageType6::Reply, msg.xid());
+                resp.opts_mut().insert(DhcpOption6::ClientId(client_id.clone()));
+                resp.opts_mut().insert(DhcpOption6::ServerId(SERVER_DUID.to_vec()));
+                resp.opts_mut().insert(DhcpOption6::StatusCode(StatusCode {
+                    status: Status::Success,
+                    msg: "released".to_string(),
+                }));
+                resp
+            }
+            MessageType6::Decline => {
+                warn!(mac = %mac, "DHCPv6 DECLINE — client detected duplicate address");
+                let mut resp = Message6::new_with_id(MessageType6::Reply, msg.xid());
+                resp.opts_mut().insert(DhcpOption6::ClientId(client_id.clone()));
+                resp.opts_mut().insert(DhcpOption6::ServerId(SERVER_DUID.to_vec()));
+                resp.opts_mut().insert(DhcpOption6::StatusCode(StatusCode {
+                    status: Status::Success,
+                    msg: "acknowledged".to_string(),
+                }));
+                resp
             }
             other => {
                 debug!(mac = %mac, msg_type = ?other, "DHCPv6 message ignored");
@@ -725,7 +786,7 @@ fn build_v6_response(
     ia_opts.insert(DhcpOption6::IAAddr(IAAddr {
         addr: device_ipv6,
         preferred_life: LEASE_TIME,
-        valid_life: LEASE_TIME,
+        valid_life: LEASE_TIME * 2,
         opts: v6::DhcpOptions::new(),
     }));
 
