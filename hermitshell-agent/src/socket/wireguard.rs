@@ -16,9 +16,10 @@ pub(super) fn handle_get_wireguard(_req: &Request, db: &Arc<Mutex<Db>>) -> Respo
         .ok().flatten()
         .and_then(|v| v.parse().ok())
         .unwrap_or(51820);
+    let (dev_base, dev_max) = nftables::device_range();
     let peers = db.list_wg_peers().unwrap_or_default();
     let peer_infos: Vec<WgPeerInfo> = peers.iter().filter_map(|p| {
-        let info = subnet::compute_subnet(p.subnet_id)?;
+        let info = subnet::compute_subnet(p.subnet_id, dev_base, dev_max)?;
         Some(WgPeerInfo {
             public_key: p.public_key.clone(),
             name: p.name.clone(),
@@ -43,6 +44,7 @@ pub(super) fn handle_set_wireguard_enabled(req: &Request, db: &Arc<Mutex<Db>>) -
         return Response::err("enabled required");
     };
     let db = db.lock().unwrap();
+    let (dev_base, dev_max) = nftables::device_range();
     if enabled {
         let private_key = match db.get_config("wg_private_key").ok().flatten() {
             Some(key) => Zeroizing::new(key),
@@ -61,7 +63,9 @@ pub(super) fn handle_set_wireguard_enabled(req: &Request, db: &Arc<Mutex<Db>>) -
             .ok().flatten()
             .and_then(|v| v.parse().ok())
             .unwrap_or(51820);
-        if let Err(e) = crate::wireguard::create_interface(&private_key, listen_port) {
+        let lan_ip = db.get_config("lan_ip").ok().flatten().unwrap_or_else(|| "10.0.0.1".into());
+        let lan_ip_v6 = db.get_config("lan_ip_v6").ok().flatten().unwrap_or_else(|| "fd00::1".into());
+        if let Err(e) = crate::wireguard::create_interface(&private_key, listen_port, &lan_ip, &lan_ip_v6) {
             return Response::err(&format!("failed to create wg0: {}", e));
         }
         if let Err(e) = crate::wireguard::open_listen_port(listen_port) {
@@ -72,7 +76,7 @@ pub(super) fn handle_set_wireguard_enabled(req: &Request, db: &Arc<Mutex<Db>>) -
         let peers = db.list_wg_peers().unwrap_or_default();
         for peer in &peers {
             if !peer.enabled { continue; }
-            if let Some(info) = subnet::compute_subnet(peer.subnet_id) {
+            if let Some(info) = subnet::compute_subnet(peer.subnet_id, dev_base, dev_max) {
                 let ipv4 = info.device_ipv4.to_string();
                 let ipv6 = info.device_ipv6_ula.to_string();
                 let _ = crate::wireguard::add_peer(&peer.public_key, &ipv4, &ipv6);
@@ -90,7 +94,7 @@ pub(super) fn handle_set_wireguard_enabled(req: &Request, db: &Arc<Mutex<Db>>) -
         // best-effort throughout: partial cleanup is acceptable on disable.
         let peers = db.list_wg_peers().unwrap_or_default();
         for peer in &peers {
-            if let Some(info) = subnet::compute_subnet(peer.subnet_id) {
+            if let Some(info) = subnet::compute_subnet(peer.subnet_id, dev_base, dev_max) {
                 let ipv4 = info.device_ipv4.to_string();
                 let ipv6 = info.device_ipv6_ula.to_string();
                 let _ = nftables::remove_device_forward_rule(&ipv4);
@@ -129,11 +133,12 @@ pub(super) fn handle_add_wg_peer(req: &Request, db: &Arc<Mutex<Db>>) -> Response
     if let Ok(Some(_)) = db.get_wg_peer(public_key) {
         return Response::err("peer already exists");
     }
-    let subnet_id = match db.allocate_subnet_id() {
+    let (dev_base, dev_max) = nftables::device_range();
+    let subnet_id = match db.allocate_subnet_id(dev_max + 1) {
         Ok(s) => s,
         Err(e) => return Response::err(&format!("subnet allocation failed: {}", e)),
     };
-    let Some(info) = subnet::compute_subnet(subnet_id) else {
+    let Some(info) = subnet::compute_subnet(subnet_id, dev_base, dev_max) else {
         return Response::err("subnet address space exhausted");
     };
     let ipv4 = info.device_ipv4.to_string();
@@ -185,7 +190,8 @@ pub(super) fn handle_remove_wg_peer(req: &Request, db: &Arc<Mutex<Db>>) -> Respo
         Err(e) => return Response::err(&e.to_string()),
     };
     // best-effort cleanup: peer/rules may already be gone
-    if let Some(info) = subnet::compute_subnet(peer.subnet_id) {
+    let (dev_base, dev_max) = nftables::device_range();
+    if let Some(info) = subnet::compute_subnet(peer.subnet_id, dev_base, dev_max) {
         let ipv4 = info.device_ipv4.to_string();
         let ipv6 = info.device_ipv6_ula.to_string();
         let _ = nftables::remove_device_forward_rule(&ipv4);
@@ -214,7 +220,8 @@ pub(super) fn handle_set_wg_peer_group(req: &Request, db: &Arc<Mutex<Db>>) -> Re
         Ok(None) => return Response::err("peer not found"),
         Err(e) => return Response::err(&e.to_string()),
     };
-    let Some(info) = subnet::compute_subnet(peer.subnet_id) else {
+    let (dev_base, dev_max) = nftables::device_range();
+    let Some(info) = subnet::compute_subnet(peer.subnet_id, dev_base, dev_max) else {
         return Response::err("invalid subnet_id");
     };
     let ipv4 = info.device_ipv4.to_string();

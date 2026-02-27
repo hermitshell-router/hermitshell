@@ -518,28 +518,39 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
                 let _ = db.set_device_dhcp_fingerprint(&mac, fp);
             }
             let reserved_sid = db.get_dhcp_reservation(&mac).ok().flatten().map(|r| r.subnet_id);
+            let (dev_base, dev_max) = nftables::device_range();
             match db.get_device(&mac) {
                 Ok(Some(dev)) if dev.subnet_id.is_some() => {
-                    let sid = reserved_sid.unwrap_or_else(|| dev.subnet_id.unwrap());
-                    let Some(info) = subnet::compute_subnet(sid) else {
-                        return Response::err("subnet_id out of range");
+                    let current_sid = dev.subnet_id.unwrap();
+                    // If a reservation overrides the subnet_id, compute the new IP
+                    let (sid, ipv4, ipv6) = if let Some(rsid) = reserved_sid {
+                        if rsid != current_sid {
+                            let Some(info) = subnet::compute_subnet(rsid, dev_base, dev_max) else {
+                                return Response::err("reserved subnet_id out of range");
+                            };
+                            (rsid, info.device_ipv4.to_string(), info.device_ipv6_ula.to_string())
+                        } else {
+                            (current_sid, dev.ipv4.unwrap_or_default(), dev.ipv6_ula.unwrap_or_default())
+                        }
+                    } else {
+                        (current_sid, dev.ipv4.unwrap_or_default(), dev.ipv6_ula.unwrap_or_default())
                     };
                     let mut resp = Response::ok();
                     resp.subnet_id = Some(sid);
-                    resp.device_ipv4 = Some(info.device_ipv4.to_string());
-                    resp.device_ipv6_ula = Some(info.device_ipv6_ula.to_string());
+                    resp.device_ipv4 = Some(ipv4);
+                    resp.device_ipv6_ula = Some(ipv6);
                     resp.is_new = Some(false);
                     resp
                 }
                 Ok(_) => {
                     let sid = match reserved_sid {
                         Some(sid) => sid,
-                        None => match db.allocate_subnet_id() {
+                        None => match db.allocate_subnet_id(dev_max + 1) {
                             Ok(s) => s,
                             Err(e) => return Response::err(&e.to_string()),
                         },
                     };
-                    let Some(info) = subnet::compute_subnet(sid) else {
+                    let Some(info) = subnet::compute_subnet(sid, dev_base, dev_max) else {
                         return Response::err("subnet address space exhausted");
                     };
                     let ipv4 = info.device_ipv4.to_string();
@@ -555,11 +566,8 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
                             if device.device_group == "quarantine" {
                                 if let Some(suggested) = devices::suggest_group(device.runzero_device_type.as_deref()) {
                                     let _ = db.set_device_group(&mac, suggested);
-                                    if let Some(info) = subnet::compute_subnet(sid) {
-                                        let dev_ip = info.device_ipv4.to_string();
-                                        let _ = nftables::remove_device_forward_rule(&dev_ip);
-                                        let _ = nftables::add_device_forward_rule(&dev_ip, suggested);
-                                    }
+                                    let _ = nftables::remove_device_forward_rule(&ipv4);
+                                    let _ = nftables::add_device_forward_rule(&ipv4, suggested);
                                 }
                             }
                         }
@@ -578,14 +586,21 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
             let Some(mac) = req.mac else {
                 return Response::err("mac required");
             };
-            let Some(sid) = req.subnet_id else {
-                return Response::err("subnet_id required");
+            let (ipv4, ipv6) = {
+                let db = db.lock().unwrap();
+                match db.get_device(&mac) {
+                    Ok(Some(dev)) => {
+                        let ipv4 = match dev.ipv4 {
+                            Some(ip) => ip,
+                            None => return Response::err("device has no IPv4 address"),
+                        };
+                        let ipv6 = dev.ipv6_ula.unwrap_or_default();
+                        (ipv4, ipv6)
+                    }
+                    Ok(None) => return Response::err("device not found"),
+                    Err(e) => return Response::err(&e.to_string()),
+                }
             };
-            let Some(info) = subnet::compute_subnet(sid) else {
-                return Response::err("invalid subnet_id");
-            };
-            let ipv4 = info.device_ipv4.to_string();
-            let ipv6 = info.device_ipv6_ula.to_string();
             info!(mac = %mac, ipv4 = %ipv4, ipv6 = %ipv6, "DHCP provision");
             if let Err(e) = nftables::add_device_route(&ipv4, lan_iface, &mac) {
                 error!(ip = %ipv4, error = %e, "failed to add device route");
@@ -631,22 +646,20 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
             match db.get_device(&mac) {
                 Ok(Some(dev)) if dev.subnet_id.is_some() => {
                     let sid = dev.subnet_id.unwrap();
-                    let Some(info) = subnet::compute_subnet(sid) else {
-                        return Response::err("subnet_id out of range");
-                    };
                     let mut resp = Response::ok();
                     resp.subnet_id = Some(sid);
-                    resp.device_ipv4 = Some(info.device_ipv4.to_string());
-                    resp.device_ipv6_ula = Some(info.device_ipv6_ula.to_string());
+                    resp.device_ipv4 = dev.ipv4;
+                    resp.device_ipv6_ula = dev.ipv6_ula;
                     resp.is_new = Some(false);
                     resp
                 }
                 Ok(_) => {
-                    let sid = match db.allocate_subnet_id() {
+                    let (dev_base, dev_max) = nftables::device_range();
+                    let sid = match db.allocate_subnet_id(dev_max + 1) {
                         Ok(s) => s,
                         Err(e) => return Response::err(&e.to_string()),
                     };
-                    let Some(info) = subnet::compute_subnet(sid) else {
+                    let Some(info) = subnet::compute_subnet(sid, dev_base, dev_max) else {
                         return Response::err("subnet address space exhausted");
                     };
                     let ipv4 = info.device_ipv4.to_string();
@@ -668,13 +681,17 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
             let Some(mac) = req.mac else {
                 return Response::err("mac required");
             };
-            let Some(sid) = req.subnet_id else {
-                return Response::err("subnet_id required");
+            let ipv6 = {
+                let db = db.lock().unwrap();
+                match db.get_device(&mac) {
+                    Ok(Some(dev)) => match dev.ipv6_ula {
+                        Some(ip) => ip,
+                        None => return Response::err("device has no IPv6 ULA address"),
+                    },
+                    Ok(None) => return Response::err("device not found"),
+                    Err(e) => return Response::err(&e.to_string()),
+                }
             };
-            let Some(info) = subnet::compute_subnet(sid) else {
-                return Response::err("invalid subnet_id");
-            };
-            let ipv6 = info.device_ipv6_ula.to_string();
             info!(mac = %mac, ipv6 = %ipv6, "DHCPv6 provision");
             if let Err(e) = nftables::add_device_route_v6(&ipv6, lan_iface, &mac) {
                 error!(ip = %ipv6, error = %e, "failed to add device v6 route");

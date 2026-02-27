@@ -2,16 +2,33 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::process::Command;
+use std::sync::OnceLock;
 use tracing::{debug, info};
 
 const VALID_GROUPS: &[&str] = &["quarantine", "trusted", "iot", "guest", "servers", "blocked"];
 
-/// Validate that an IP string is a valid IPv4 address within 10.0.0.0/8.
+/// Device IPv4 range: (base_u32, prefix_len, max_subnet_id). Set once at startup.
+static DEVICE_RANGE: OnceLock<(u32, u8, i64)> = OnceLock::new();
+
+/// Initialize the device IP range for validation and allocation. Call once at startup.
+pub fn init_device_range(base: u32, prefix_len: u8, max_subnet_id: i64) {
+    DEVICE_RANGE.set((base, prefix_len, max_subnet_id)).ok();
+}
+
+/// Return (ipv4_base, max_subnet_id) for use with `compute_subnet()` and `allocate_subnet_id()`.
+pub fn device_range() -> (u32, i64) {
+    let (base, _, max_sid) = DEVICE_RANGE.get().copied().unwrap_or((0x0A000000, 8, 16_777_213));
+    (base, max_sid)
+}
+
+/// Validate that an IP string is within the configured device range.
 pub fn validate_ip(ip: &str) -> Result<()> {
     let addr: Ipv4Addr = ip.parse().map_err(|_| anyhow::anyhow!("invalid IP: {}", ip))?;
-    let octets = addr.octets();
-    if octets[0] != 10 {
-        anyhow::bail!("IP {} not in 10.0.0.0/8 range", ip);
+    let (base, prefix_len, _) = DEVICE_RANGE.get().copied().unwrap_or((0x0A000000, 8, 16_777_213));
+    let mask = if prefix_len == 0 { 0 } else { !((1u32 << (32 - prefix_len)) - 1) };
+    let addr_u32 = u32::from(addr);
+    if addr_u32 & mask != base {
+        anyhow::bail!("IP {} not in configured device range", ip);
     }
     Ok(())
 }
@@ -73,7 +90,7 @@ pub fn validate_protocol(protocol: &str) -> Result<()> {
 }
 
 
-fn build_base_ruleset(wan_iface: &str, lan_iface: &str) -> String {
+fn build_base_ruleset(wan_iface: &str, lan_iface: &str, lan_ip: &str) -> String {
     format!(r#"#!/usr/sbin/nft -f
 flush ruleset
 
@@ -147,8 +164,8 @@ table ip nat {{
         type nat hook prerouting priority -100;
         iifname "{lan_iface}" tcp dport 443 redirect to :8443
         iifname "{lan_iface}" tcp dport 80 redirect to :8080
-        iifname "{lan_iface}" udp dport 53 dnat to 10.0.0.1:53
-        iifname "{lan_iface}" tcp dport 53 dnat to 10.0.0.1:53
+        iifname "{lan_iface}" udp dport 53 dnat to {lan_ip}:53
+        iifname "{lan_iface}" tcp dport 53 dnat to {lan_ip}:53
     }}
     chain postrouting {{
         type nat hook postrouting priority 100;
@@ -202,10 +219,10 @@ fn execute_nft_script(rules: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn apply_base_rules(wan_iface: &str, lan_iface: &str) -> Result<()> {
+pub fn apply_base_rules(wan_iface: &str, lan_iface: &str, lan_ip: &str) -> Result<()> {
     validate_iface(wan_iface)?;
     validate_iface(lan_iface)?;
-    let rules = build_base_ruleset(wan_iface, lan_iface);
+    let rules = build_base_ruleset(wan_iface, lan_iface, lan_ip);
     execute_nft_script(&rules)?;
     info!("applied nftables rules");
     Ok(())
@@ -464,6 +481,7 @@ pub fn apply_port_forwards(
     lan_iface: &str,
     forwards: &[crate::db::PortForward],
     dmz_ip: Option<&str>,
+    lan_ip: &str,
 ) -> Result<()> {
     validate_iface(wan_iface)?;
     validate_iface(lan_iface)?;
@@ -514,12 +532,12 @@ pub fn apply_port_forwards(
 
     // DNS redirect rules (always present)
     prerouting_rules.push_str(&format!(
-        "        iifname \"{}\" udp dport 53 dnat to 10.0.0.1:53\n",
-        lan_iface
+        "        iifname \"{}\" udp dport 53 dnat to {}:53\n",
+        lan_iface, lan_ip
     ));
     prerouting_rules.push_str(&format!(
-        "        iifname \"{}\" tcp dport 53 dnat to 10.0.0.1:53\n",
-        lan_iface
+        "        iifname \"{}\" tcp dport 53 dnat to {}:53\n",
+        lan_iface, lan_ip
     ));
 
     // Build forward allow rules for port forwards
@@ -702,12 +720,13 @@ mod tests {
 
     #[test]
     fn test_build_base_ruleset_contains_chains() {
-        let rules = build_base_ruleset("eth1", "eth2");
+        let rules = build_base_ruleset("eth1", "eth2", "10.0.0.1");
         assert!(rules.contains("chain input"));
         assert!(rules.contains("chain forward"));
         assert!(rules.contains("chain output"));
         assert!(rules.contains("eth1"));
         assert!(rules.contains("eth2"));
+        assert!(rules.contains("dnat to 10.0.0.1:53"));
     }
 
     #[test]

@@ -286,7 +286,8 @@ pub(super) fn handle_set_tls_mode(req: &Request, db: &Arc<Mutex<Db>>) -> Respons
         "self_signed" => {
             let db = db.lock().unwrap();
             // Regenerate a fresh self-signed cert when switching back
-            let sans = vec!["hermitshell.local".to_string(), "10.0.0.1".to_string()];
+            let lan_ip = db.get_config("lan_ip").ok().flatten().unwrap_or_else(|| "10.0.0.1".into());
+            let sans = vec!["hermitshell.local".to_string(), lan_ip];
             match rcgen::generate_simple_self_signed(sans) {
                 Ok(cert) => {
                     let _ = db.set_config("tls_cert_pem", &cert.cert.pem());

@@ -12,7 +12,6 @@ use hermitshell_common::MdnsService;
 
 const MDNS_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
 const MDNS_PORT: u16 = 5353;
-const LAN_ADDR: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 1);
 const EXPIRY_SWEEP_SECS: u64 = 60;
 /// Maximum TTL for mDNS records (75 minutes, per RFC 6762 recommendation).
 const MAX_TTL_SECS: u32 = 4500;
@@ -235,7 +234,7 @@ fn ip_to_mac(db: &Db, ip: &Ipv4Addr) -> Option<String> {
 }
 
 /// Create a UDP socket bound to 0.0.0.0:5353 with multicast membership on the LAN interface.
-fn create_mdns_socket(lan_iface: &str) -> anyhow::Result<UdpSocket> {
+fn create_mdns_socket(lan_iface: &str, lan_ip: Ipv4Addr) -> anyhow::Result<UdpSocket> {
     use socket2::{Domain, Protocol, Socket, Type};
 
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
@@ -247,8 +246,8 @@ fn create_mdns_socket(lan_iface: &str) -> anyhow::Result<UdpSocket> {
     let addr: SocketAddr = format!("0.0.0.0:{}", MDNS_PORT).parse()?;
     socket.bind(&addr.into())?;
 
-    // Join multicast group on 10.0.0.1 (the LAN gateway address)
-    socket.join_multicast_v4(&MDNS_ADDR, &LAN_ADDR)?;
+    // Join multicast group on the LAN gateway address
+    socket.join_multicast_v4(&MDNS_ADDR, &lan_ip)?;
 
     // Bind socket to the LAN interface (safe wrapper around SO_BINDTODEVICE)
     socket.bind_device(Some(lan_iface.as_bytes()))?;
@@ -578,8 +577,9 @@ fn handle_query(
 
 /// Main mDNS proxy loop. Listens for multicast mDNS traffic on the LAN interface,
 /// records service announcements, and proxies queries across isolated subnets.
-pub async fn run(db: Arc<Mutex<Db>>, lan_iface: String, registry: SharedRegistry) {
-    let socket = match create_mdns_socket(&lan_iface) {
+pub async fn run(db: Arc<Mutex<Db>>, lan_iface: String, registry: SharedRegistry, lan_ip_str: String) {
+    let lan_ip: Ipv4Addr = lan_ip_str.parse().unwrap_or(Ipv4Addr::new(10, 0, 0, 1));
+    let socket = match create_mdns_socket(&lan_iface, lan_ip) {
         Ok(s) => s,
         Err(e) => {
             error!(error = %e, "failed to create mDNS socket");
@@ -618,7 +618,7 @@ pub async fn run(db: Arc<Mutex<Db>>, lan_iface: String, registry: SharedRegistry
 
         // Ignore packets from the router itself
         if let SocketAddr::V4(addr) = src {
-            if *addr.ip() == LAN_ADDR {
+            if *addr.ip() == lan_ip {
                 continue;
             }
         }

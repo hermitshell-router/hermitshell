@@ -7,13 +7,11 @@ pub use hermitshell_common::{
     WifiAp, WifiClient, WifiRadioConfig, WifiSsidConfig,
 };
 
-/// Hard limit from 10.0.0.0/8 address space: 16,580,355 /32 addresses.
-/// Practical bottlenecks before hitting this:
+/// Practical bottlenecks before hitting address space limits:
 /// - Counter polling: main loop dumps full nft sets per device every 10s.
 ///   Fix: single dump parsed once, or nft get element for individual lookups.
 /// - Restart restore: list_assigned_devices is a full table scan, each device
 ///   re-adds a /32 route + verdict map element + counter set element.
-const MAX_DEVICES: i64 = 16_580_355;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS devices (
@@ -37,6 +35,9 @@ CREATE TABLE IF NOT EXISTS config (
 
 INSERT OR IGNORE INTO config (key, value) VALUES ('next_subnet_id', '0');
 INSERT OR IGNORE INTO config (key, value) VALUES ('ad_blocking_enabled', 'true');
+INSERT OR IGNORE INTO config (key, value) VALUES ('lan_ip', '10.0.0.1');
+INSERT OR IGNORE INTO config (key, value) VALUES ('lan_ip_v6', 'fd00::1');
+INSERT OR IGNORE INTO config (key, value) VALUES ('device_ipv4_base', '10.0.0.0/8');
 
 CREATE TABLE IF NOT EXISTS wg_peers (
     public_key TEXT PRIMARY KEY,
@@ -369,15 +370,15 @@ impl Db {
     }
 
     /// Allocate next subnet_id atomically: read current value, increment, return old value.
-    /// Refuses to allocate beyond MAX_DEVICES to prevent resource exhaustion.
-    pub fn allocate_subnet_id(&self) -> Result<i64> {
+    /// `max_devices` is derived from the configured device IP range capacity.
+    pub fn allocate_subnet_id(&self, max_devices: i64) -> Result<i64> {
         let id: i64 = self.conn.query_row(
             "SELECT value FROM config WHERE key = 'next_subnet_id'",
             [],
             |row| row.get::<_, String>(0),
         )?.parse()?;
-        if id >= MAX_DEVICES {
-            anyhow::bail!("device limit reached ({} max)", MAX_DEVICES);
+        if id >= max_devices {
+            anyhow::bail!("device limit reached ({} max)", max_devices);
         }
         self.conn.execute(
             "UPDATE config SET value = ?1 WHERE key = 'next_subnet_id'",

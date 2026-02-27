@@ -29,9 +29,9 @@ pub struct ConntrackEvent {
 /// Parse a single conntrack event line into a ConntrackEvent.
 ///
 /// Filters out:
-/// - Events where src_ip does not start with "10.0." (non-LAN traffic)
-/// - Events where dst_ip is "10.0.0.1" (router itself)
-pub fn parse_event(line: &str) -> Option<ConntrackEvent> {
+/// - Events where src_ip does not start with "10." (non-LAN traffic)
+/// - Events where dst_ip is the router itself
+pub fn parse_event(line: &str, lan_ip: &str) -> Option<ConntrackEvent> {
     // Detect event type: [NEW] or [DESTROY]
     let event_type = if line.contains("[NEW]") {
         EventType::New
@@ -65,13 +65,13 @@ pub fn parse_event(line: &str) -> Option<ConntrackEvent> {
         (0, 0)
     };
 
-    // Filter: only LAN devices (10.0.x.x)
-    if !src_ip.starts_with("10.0.") {
+    // Filter: only LAN devices (within configured device range)
+    if crate::nftables::validate_ip(&src_ip).is_err() {
         return None;
     }
 
     // Filter: ignore traffic to router itself
-    if dst_ip == "10.0.0.1" {
+    if dst_ip == lan_ip {
         return None;
     }
 
@@ -162,6 +162,7 @@ pub fn enable_accounting() {
 pub fn start(
     db: Arc<Mutex<Db>>,
     tx: UnboundedSender<LogEvent>,
+    lan_ip: String,
 ) -> Option<Child> {
     let mut child = match Command::new("conntrack")
         .args(["-E", "-e", "NEW,DESTROY", "-o", "timestamp"])
@@ -190,7 +191,7 @@ pub fn start(
                 }
             };
 
-            if let Some(ev) = parse_event(&line) {
+            if let Some(ev) = parse_event(&line, &lan_ip) {
                 let db_guard = db.lock().unwrap();
                 match ev.event_type {
                     EventType::New => {
@@ -248,7 +249,7 @@ mod tests {
     #[test]
     fn parse_new_tcp_event() {
         let line = "[1706000000.000000] [NEW] tcp      6 120 SYN_SENT src=10.0.1.2 dst=93.184.216.34 sport=54321 dport=443 [UNREPLIED] src=93.184.216.34 dst=10.0.1.2 sport=443 dport=54321";
-        let ev = parse_event(line).expect("should parse NEW tcp event");
+        let ev = parse_event(line, "10.0.0.1").expect("should parse NEW tcp event");
         assert_eq!(ev.event_type, EventType::New);
         assert_eq!(ev.protocol, "tcp");
         assert_eq!(ev.src_ip, "10.0.1.2");
@@ -262,7 +263,7 @@ mod tests {
     #[test]
     fn parse_destroy_with_bytes() {
         let line = "[1706000010.000000] [DESTROY] tcp      6 src=10.0.1.2 dst=93.184.216.34 sport=54321 dport=443 packets=10 bytes=1500 src=93.184.216.34 dst=10.0.1.2 sport=443 dport=54321 packets=8 bytes=12000";
-        let ev = parse_event(line).expect("should parse DESTROY event");
+        let ev = parse_event(line, "10.0.0.1").expect("should parse DESTROY event");
         assert_eq!(ev.event_type, EventType::Destroy);
         assert_eq!(ev.protocol, "tcp");
         assert_eq!(ev.src_ip, "10.0.1.2");
@@ -276,19 +277,19 @@ mod tests {
     #[test]
     fn non_lan_source_filtered() {
         let line = "[1706000000.000000] [NEW] tcp      6 120 SYN_SENT src=192.168.1.5 dst=93.184.216.34 sport=12345 dport=80 [UNREPLIED] src=93.184.216.34 dst=192.168.1.5 sport=80 dport=12345";
-        assert!(parse_event(line).is_none(), "non-LAN source should be filtered");
+        assert!(parse_event(line, "10.0.0.1").is_none(), "non-LAN source should be filtered");
     }
 
     #[test]
     fn router_destination_filtered() {
         let line = "[1706000000.000000] [NEW] tcp      6 120 SYN_SENT src=10.0.1.2 dst=10.0.0.1 sport=12345 dport=53 [UNREPLIED] src=10.0.0.1 dst=10.0.1.2 sport=53 dport=12345";
-        assert!(parse_event(line).is_none(), "traffic to router should be filtered");
+        assert!(parse_event(line, "10.0.0.1").is_none(), "traffic to router should be filtered");
     }
 
     #[test]
     fn parse_udp_event() {
         let line = "[1706000000.000000] [NEW] udp      17 30 src=10.0.2.1 dst=1.1.1.1 sport=5000 dport=53 [UNREPLIED] src=1.1.1.1 dst=10.0.2.1 sport=53 dport=5000";
-        let ev = parse_event(line).expect("should parse UDP event");
+        let ev = parse_event(line, "10.0.0.1").expect("should parse UDP event");
         assert_eq!(ev.protocol, "udp");
         assert_eq!(ev.src_ip, "10.0.2.1");
         assert_eq!(ev.dst_ip, "1.1.1.1");
@@ -299,6 +300,6 @@ mod tests {
     #[test]
     fn unknown_event_type_returns_none() {
         let line = "[1706000000.000000] [UPDATE] tcp      6 120 src=10.0.1.2 dst=8.8.8.8 sport=1234 dport=443";
-        assert!(parse_event(line).is_none(), "UPDATE events should be ignored");
+        assert!(parse_event(line, "10.0.0.1").is_none(), "UPDATE events should be ignored");
     }
 }

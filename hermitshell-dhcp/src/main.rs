@@ -16,8 +16,17 @@ use std::time::Instant;
 use hermitshell_common::sanitize_hostname;
 use tracing::{debug, error, info, warn};
 
-const SERVER_IP: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 1);
-const SERVER_IPV6_ULA: Ipv6Addr = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1);
+// Server IPs are read from CLI args (passed by the agent)
+static SERVER_IP: std::sync::OnceLock<Ipv4Addr> = std::sync::OnceLock::new();
+static SERVER_IPV6_ULA: std::sync::OnceLock<Ipv6Addr> = std::sync::OnceLock::new();
+
+fn server_ip() -> Ipv4Addr {
+    *SERVER_IP.get().expect("SERVER_IP not initialized")
+}
+
+fn server_ipv6_ula() -> Ipv6Addr {
+    *SERVER_IPV6_ULA.get().expect("SERVER_IPV6_ULA not initialized")
+}
 const LEASE_TIME: u32 = 3600; // 1 hour
 const AGENT_SOCKET: &str = "/run/hermitshell/dhcp.sock";
 
@@ -97,7 +106,16 @@ fn main() -> Result<()> {
 
     let lan_iface = std::env::args()
         .nth(1)
-        .context("usage: hermitshell-dhcp <lan_iface>")?;
+        .context("usage: hermitshell-dhcp <lan_iface> <ipv4> <ipv6>")?;
+    let server_ip_str = std::env::args()
+        .nth(2)
+        .unwrap_or_else(|| "10.0.0.1".into());
+    let server_ipv6_str = std::env::args()
+        .nth(3)
+        .unwrap_or_else(|| "fd00::1".into());
+    let _ = SERVER_IP.set(server_ip_str.parse().context("invalid gateway IPv4")?);
+    let _ = SERVER_IPV6_ULA.set(server_ipv6_str.parse().context("invalid gateway IPv6")?);
+    info!(gateway_ipv4 = %server_ip_str, gateway_ipv6 = %server_ipv6_str, "DHCP gateway addresses");
 
     // Wait up to 10s for agent socket
     for i in 0..20 {
@@ -259,19 +277,19 @@ fn build_response(request: &Message, msg_type: MessageType, yiaddr: Ipv4Addr) ->
     resp.set_xid(request.xid());
     resp.set_flags(request.flags());
     resp.set_yiaddr(yiaddr);
-    resp.set_siaddr(SERVER_IP);
+    resp.set_siaddr(server_ip());
     resp.set_giaddr(request.giaddr());
     resp.set_chaddr(request.chaddr());
     resp.opts_mut()
         .insert(DhcpOption::MessageType(msg_type));
     resp.opts_mut()
-        .insert(DhcpOption::ServerIdentifier(SERVER_IP));
+        .insert(DhcpOption::ServerIdentifier(server_ip()));
     resp.opts_mut()
         .insert(DhcpOption::AddressLeaseTime(LEASE_TIME));
     resp.opts_mut()
         .insert(DhcpOption::SubnetMask(Ipv4Addr::new(255, 255, 255, 255)));
     resp.opts_mut()
-        .insert(DhcpOption::Router(vec![SERVER_IP]));
+        .insert(DhcpOption::Router(vec![server_ip()]));
     resp
 }
 
@@ -330,14 +348,14 @@ fn handle_discover(agent: &mut AgentConn, request: &Message, mac: &str) -> Resul
     let mut msg = build_response(request, MessageType::Offer, device_ip);
 
     msg.opts_mut()
-        .insert(DhcpOption::DomainNameServer(vec![SERVER_IP]));
+        .insert(DhcpOption::DomainNameServer(vec![server_ip()]));
 
     // Option 121: classless static routes for /32 point-to-point addressing
     msg.opts_mut().insert(DhcpOption::ClasslessStaticRoute(vec![
-        // On-link route to gateway: 10.0.0.1/32 via 0.0.0.0
-        (Ipv4Net::new(SERVER_IP, 32).unwrap(), Ipv4Addr::UNSPECIFIED),
-        // Default route: 0.0.0.0/0 via 10.0.0.1
-        (Ipv4Net::new(Ipv4Addr::UNSPECIFIED, 0).unwrap(), SERVER_IP),
+        // On-link route to gateway via 0.0.0.0 (directly connected)
+        (Ipv4Net::new(server_ip(), 32).unwrap(), Ipv4Addr::UNSPECIFIED),
+        // Default route via gateway
+        (Ipv4Net::new(Ipv4Addr::UNSPECIFIED, 0).unwrap(), server_ip()),
     ]));
 
     Ok(msg)
@@ -411,21 +429,21 @@ fn handle_request(agent: &mut AgentConn, request: &Message, mac: &str) -> Result
         nak.opts_mut()
             .insert(DhcpOption::MessageType(MessageType::Nak));
         nak.opts_mut()
-            .insert(DhcpOption::ServerIdentifier(SERVER_IP));
+            .insert(DhcpOption::ServerIdentifier(server_ip()));
         return Ok(Some(nak));
     }
 
     let mut msg = build_response(request, MessageType::Ack, assigned_ip);
 
     msg.opts_mut()
-        .insert(DhcpOption::DomainNameServer(vec![SERVER_IP]));
+        .insert(DhcpOption::DomainNameServer(vec![server_ip()]));
 
     // Option 121: classless static routes for /32 point-to-point addressing
     msg.opts_mut().insert(DhcpOption::ClasslessStaticRoute(vec![
-        // On-link route to gateway: 10.0.0.1/32 via 0.0.0.0
-        (Ipv4Net::new(SERVER_IP, 32).unwrap(), Ipv4Addr::UNSPECIFIED),
-        // Default route: 0.0.0.0/0 via 10.0.0.1
-        (Ipv4Net::new(Ipv4Addr::UNSPECIFIED, 0).unwrap(), SERVER_IP),
+        // On-link route to gateway via 0.0.0.0 (directly connected)
+        (Ipv4Net::new(server_ip(), 32).unwrap(), Ipv4Addr::UNSPECIFIED),
+        // Default route via gateway
+        (Ipv4Net::new(Ipv4Addr::UNSPECIFIED, 0).unwrap(), server_ip()),
     ]));
 
     info!(
@@ -658,9 +676,9 @@ fn build_v6_response(
         opts: ia_opts,
     }));
 
-    // DNS Recursive Name Server (option 23): fd00::1
+    // DNS Recursive Name Server (option 23)
     resp.opts_mut()
-        .insert(DhcpOption6::DomainNameServers(vec![SERVER_IPV6_ULA]));
+        .insert(DhcpOption6::DomainNameServers(vec![server_ipv6_ula()]));
 
     // Status code: Success
     resp.opts_mut()

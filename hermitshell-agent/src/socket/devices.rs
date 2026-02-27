@@ -67,14 +67,10 @@ pub(super) fn handle_set_device_group(req: &Request, db: &Arc<Mutex<Db>>) -> Res
         Ok(None) => return Response::err("device not found"),
         Err(e) => return Response::err(&e.to_string()),
     };
-    let Some(subnet_id) = device.subnet_id else {
-        return Response::err("device has no subnet assignment");
+    let Some(ref ipv4) = device.ipv4 else {
+        return Response::err("device has no IPv4 address");
     };
-    let Some(info) = subnet::compute_subnet(subnet_id) else {
-        return Response::err("invalid subnet_id");
-    };
-    let ipv4 = info.device_ipv4.to_string();
-    let ipv6 = info.device_ipv6_ula.to_string();
+    let ipv6 = device.ipv6_ula.clone().unwrap_or_default();
     if let Err(e) = nftables::remove_device_forward_rule(&ipv4) {
         return Response::err(&format!("failed to remove old rule: {}", e));
     }
@@ -208,7 +204,8 @@ pub(super) fn handle_set_dhcp_reservation(req: &Request, db: &Arc<Mutex<Db>>) ->
             }
         }
     };
-    if subnet::compute_subnet(subnet_id).is_none() {
+    let (dev_base, dev_max) = nftables::device_range();
+    if subnet::compute_subnet(subnet_id, dev_base, dev_max).is_none() {
         return Response::err("subnet_id out of range");
     }
     if let Err(e) = db.set_dhcp_reservation(mac, subnet_id) {

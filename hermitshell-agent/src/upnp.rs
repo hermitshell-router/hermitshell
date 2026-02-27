@@ -17,7 +17,6 @@ use crate::db::Db;
 const SSDP_ADDR: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
 const SSDP_PORT: u16 = 1900;
 const HTTP_PORT: u16 = 5000;
-const LAN_ADDR: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 1);
 const NOTIFY_INTERVAL_SECS: u64 = 900;
 
 // UPnP search target URNs we respond to.
@@ -51,7 +50,7 @@ fn is_trusted(db: &Db, ip: &Ipv4Addr) -> bool {
 }
 
 /// Create a UDP socket bound to 0.0.0.0:1900 with multicast membership on the LAN interface.
-fn create_ssdp_socket(lan_iface: &str) -> anyhow::Result<std::net::UdpSocket> {
+fn create_ssdp_socket(lan_iface: &str, lan_ip: Ipv4Addr) -> anyhow::Result<std::net::UdpSocket> {
     use socket2::{Domain, Protocol, Socket, Type};
 
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
@@ -63,18 +62,18 @@ fn create_ssdp_socket(lan_iface: &str) -> anyhow::Result<std::net::UdpSocket> {
     let addr: SocketAddr = format!("0.0.0.0:{}", SSDP_PORT).parse()?;
     socket.bind(&addr.into())?;
 
-    socket.join_multicast_v4(&SSDP_ADDR, &LAN_ADDR)?;
+    socket.join_multicast_v4(&SSDP_ADDR, &lan_ip)?;
     socket.bind_device(Some(lan_iface.as_bytes()))?;
 
     Ok(socket.into())
 }
 
 /// Build an SSDP M-SEARCH response for a given search target.
-fn ssdp_response(st: &str, uuid: &str) -> String {
+fn ssdp_response(st: &str, uuid: &str, lan_ip: &str) -> String {
     format!(
         "HTTP/1.1 200 OK\r\n\
          CACHE-CONTROL: max-age=1800\r\n\
-         LOCATION: http://10.0.0.1:{HTTP_PORT}/rootDesc.xml\r\n\
+         LOCATION: http://{lan_ip}:{HTTP_PORT}/rootDesc.xml\r\n\
          ST: {st}\r\n\
          USN: uuid:{uuid}::urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\
          SERVER: HermitShell/1.0 UPnP/1.1\r\n\
@@ -83,12 +82,12 @@ fn ssdp_response(st: &str, uuid: &str) -> String {
 }
 
 /// Build an SSDP NOTIFY alive message for a given notification type.
-fn ssdp_notify(nt: &str, uuid: &str) -> String {
+fn ssdp_notify(nt: &str, uuid: &str, lan_ip: &str) -> String {
     format!(
         "NOTIFY * HTTP/1.1\r\n\
          HOST: 239.255.255.250:1900\r\n\
          CACHE-CONTROL: max-age=1800\r\n\
-         LOCATION: http://10.0.0.1:{HTTP_PORT}/rootDesc.xml\r\n\
+         LOCATION: http://{lan_ip}:{HTTP_PORT}/rootDesc.xml\r\n\
          NT: {nt}\r\n\
          NTS: ssdp:alive\r\n\
          USN: uuid:{uuid}::urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\
@@ -114,8 +113,9 @@ fn parse_st(data: &str) -> Option<&str> {
 
 /// Main SSDP loop: listen for M-SEARCH, respond to trusted devices, and
 /// periodically send NOTIFY alive multicast.
-async fn run_ssdp(db: Arc<Mutex<Db>>, device_uuid: String, lan_iface: String) {
-    let socket = match create_ssdp_socket(&lan_iface) {
+async fn run_ssdp(db: Arc<Mutex<Db>>, device_uuid: String, lan_iface: String, lan_ip: Ipv4Addr) {
+    let lan_ip_str = lan_ip.to_string();
+    let socket = match create_ssdp_socket(&lan_iface, lan_ip) {
         Ok(s) => s,
         Err(e) => {
             error!(error = %e, "failed to create SSDP socket");
@@ -129,6 +129,7 @@ async fn run_ssdp(db: Arc<Mutex<Db>>, device_uuid: String, lan_iface: String) {
     // Spawn periodic NOTIFY sender
     let notify_socket = socket.clone();
     let notify_uuid = device_uuid.clone();
+    let notify_lan_ip = lan_ip_str.clone();
     tokio::spawn(async move {
         let mcast_dest: SocketAddr = SocketAddr::new(SSDP_ADDR.into(), SSDP_PORT);
         let mut interval =
@@ -136,7 +137,7 @@ async fn run_ssdp(db: Arc<Mutex<Db>>, device_uuid: String, lan_iface: String) {
         loop {
             interval.tick().await;
             for nt in &[ST_ROOT, ST_IGD, ST_WANIP] {
-                let msg = ssdp_notify(nt, &notify_uuid);
+                let msg = ssdp_notify(nt, &notify_uuid, &notify_lan_ip);
                 if let Err(e) = notify_socket.send_to(msg.as_bytes(), mcast_dest).await {
                     debug!(error = %e, "SSDP NOTIFY send failed");
                 }
@@ -158,7 +159,7 @@ async fn run_ssdp(db: Arc<Mutex<Db>>, device_uuid: String, lan_iface: String) {
 
         // Ignore packets from the router itself
         if let SocketAddr::V4(addr) = src {
-            if *addr.ip() == LAN_ADDR {
+            if *addr.ip() == lan_ip {
                 continue;
             }
         }
@@ -203,7 +204,7 @@ async fn run_ssdp(db: Arc<Mutex<Db>>, device_uuid: String, lan_iface: String) {
         };
 
         for rst in response_sts {
-            let resp = ssdp_response(rst, &device_uuid);
+            let resp = ssdp_response(rst, &device_uuid, &lan_ip_str);
             if let Err(e) = socket.send_to(resp.as_bytes(), src).await {
                 debug!(error = %e, dest = %src, "SSDP response send failed");
             }
@@ -773,6 +774,7 @@ async fn run_http_server(
     portmap: crate::portmap::SharedRegistry,
     wan_iface: String,
     device_uuid: String,
+    lan_ip: Ipv4Addr,
 ) {
     let state = AppState {
         db,
@@ -788,7 +790,7 @@ async fn run_http_server(
         .route("/ctl/WANIPConn", post(soap_handler))
         .with_state(state);
 
-    let bind_addr: SocketAddr = SocketAddr::new(LAN_ADDR.into(), HTTP_PORT);
+    let bind_addr: SocketAddr = SocketAddr::new(lan_ip.into(), HTTP_PORT);
     let listener = match tokio::net::TcpListener::bind(bind_addr).await {
         Ok(l) => l,
         Err(e) => {
@@ -818,7 +820,10 @@ pub async fn run(
     portmap: crate::portmap::SharedRegistry,
     wan_iface: String,
     lan_iface: String,
+    lan_ip_str: String,
 ) {
+    let lan_ip: Ipv4Addr = lan_ip_str.parse().unwrap_or(Ipv4Addr::new(10, 0, 0, 1));
+
     // Initialise boot time for uptime reporting
     BOOT_TIME.get_or_init(std::time::Instant::now);
 
@@ -839,9 +844,9 @@ pub async fn run(
     let db_ssdp = db.clone();
     let uuid_ssdp = device_uuid.clone();
     tokio::spawn(async move {
-        run_ssdp(db_ssdp, uuid_ssdp, lan_iface).await;
+        run_ssdp(db_ssdp, uuid_ssdp, lan_iface, lan_ip).await;
     });
 
     // Run HTTP/SOAP server (blocks)
-    run_http_server(db, portmap, wan_iface, device_uuid).await;
+    run_http_server(db, portmap, wan_iface, device_uuid, lan_ip).await;
 }

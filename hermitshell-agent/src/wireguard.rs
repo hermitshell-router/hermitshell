@@ -50,7 +50,7 @@ pub fn pubkey_from_private(private_key: &str) -> Result<String> {
 }
 
 /// Create and bring up the wg0 interface with the given private key and port.
-pub fn create_interface(private_key: &str, listen_port: u16) -> Result<()> {
+pub fn create_interface(private_key: &str, listen_port: u16, lan_ip: &str, lan_ip_v6: &str) -> Result<()> {
     // Create interface (ignore error if already exists)
     let _ = Command::new("/usr/sbin/ip")
         .args(["link", "add", "wg0", "type", "wireguard"])
@@ -69,13 +69,15 @@ pub fn create_interface(private_key: &str, listen_port: u16) -> Result<()> {
     }
 
     // Assign router IPv4 address (ignore: may already exist)
+    let wg_addr = format!("{}/32", lan_ip);
     let _ = Command::new("/usr/sbin/ip")
-        .args(["addr", "add", "10.0.0.1/32", "dev", "wg0"])
+        .args(["addr", "add", &wg_addr, "dev", "wg0"])
         .status();
 
     // Assign router IPv6 ULA address (ignore: may already exist)
+    let wg_addr_v6 = format!("{}/128", lan_ip_v6);
     let _ = Command::new("/usr/sbin/ip")
-        .args(["-6", "addr", "add", "fd00::1/128", "dev", "wg0"])
+        .args(["-6", "addr", "add", &wg_addr_v6, "dev", "wg0"])
         .status();
 
     // Bring up

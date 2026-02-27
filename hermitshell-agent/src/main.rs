@@ -81,8 +81,6 @@ fn read_upstream_dns(wan_iface: &str) -> Vec<Ipv4Addr> {
 const DB_PATH: &str = "/data/hermitshell/db/hermitshell.db";
 const SOCKET_PATH: &str = "/run/hermitshell/agent.sock";
 const POLL_INTERVAL_SECS: u64 = 10;
-const LAN_ADDR: &str = "10.0.0.1/32";
-const LAN_ADDR_V6: &str = "fd00::1/128";
 
 /// Send a JSON request to the agent socket and return the parsed response.
 fn socket_request(req: &serde_json::Value) -> Result<serde_json::Value, String> {
@@ -416,32 +414,65 @@ async fn main() -> Result<()> {
     }
     info!(wan = %wan_iface, lan = %lan_iface, "network interfaces");
 
+    // Read LAN IP from config (default: 10.0.0.1 / fd00::1)
+    let lan_ip = {
+        db::Db::open(DB_PATH)
+            .ok()
+            .and_then(|d| d.get_config("lan_ip").ok().flatten())
+    }
+    .unwrap_or_else(|| "10.0.0.1".into());
+    let lan_ip_v6 = {
+        db::Db::open(DB_PATH)
+            .ok()
+            .and_then(|d| d.get_config("lan_ip_v6").ok().flatten())
+    }
+    .unwrap_or_else(|| "fd00::1".into());
+    let lan_addr = format!("{}/32", lan_ip);
+    let lan_addr_v6 = format!("{}/128", lan_ip_v6);
+    info!(lan_ip = %lan_ip, lan_ip_v6 = %lan_ip_v6, "LAN gateway addresses");
+
+    // Read device IP range from config (default: 10.0.0.0/8)
+    let device_range_cidr = {
+        db::Db::open(DB_PATH)
+            .ok()
+            .and_then(|d| d.get_config("device_ipv4_base").ok().flatten())
+    }
+    .unwrap_or_else(|| "10.0.0.0/8".into());
+    let (device_ipv4_base, device_prefix_len, device_max_subnet_id) =
+        subnet::parse_device_range(&device_range_cidr)
+            .unwrap_or_else(|| {
+                warn!(cidr = %device_range_cidr, "invalid device_ipv4_base, falling back to 10.0.0.0/8");
+                (0x0A000000, 8, 16_777_213)
+            });
+    nftables::init_device_range(device_ipv4_base, device_prefix_len, device_max_subnet_id);
+    info!(device_range = %device_range_cidr, max_devices = device_max_subnet_id + 1, "device IP range");
+
     // Ensure LAN interface has the base IPv4 address
     let status = std::process::Command::new("/usr/sbin/ip")
-        .args(["addr", "add", LAN_ADDR, "dev", &lan_iface])
+        .args(["addr", "add", &lan_addr, "dev", &lan_iface])
         .status();
     match status {
         Ok(s) if s.success() || s.code() == Some(2) => {} // 2 = already exists
-        Ok(s) => warn!(addr = LAN_ADDR, iface = lan_iface, code = ?s.code(), "ip addr add exited unexpectedly"),
+        Ok(s) => warn!(addr = %lan_addr, iface = lan_iface, code = ?s.code(), "ip addr add exited unexpectedly"),
         Err(e) => warn!(error = %e, "failed to add LAN address"),
     }
 
     // Ensure LAN interface has the base IPv6 ULA address
     let _ = std::process::Command::new("/usr/sbin/ip")
-        .args(["-6", "addr", "add", LAN_ADDR_V6, "dev", &lan_iface])
+        .args(["-6", "addr", "add", &lan_addr_v6, "dev", &lan_iface])
         .status();
     // Verify the address is actually present (ip addr add exit code 2 is ambiguous)
     let has_ipv6_ula = std::process::Command::new("/usr/sbin/ip")
         .args(["-6", "addr", "show", "dev", &lan_iface])
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("fd00::1"))
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains(&lan_ip_v6))
         .unwrap_or(false);
     if !has_ipv6_ula {
         warn!("IPv6 ULA address not available on {}", lan_iface);
     }
 
     // Apply base nftables rules
-    nftables::apply_base_rules(&wan_iface, &lan_iface)?;
+    nftables::apply_base_rules(&wan_iface, &lan_iface, &lan_ip)?;
 
     // Open database
     let db = Arc::new(Mutex::new(db::Db::open(DB_PATH)?));
@@ -455,7 +486,7 @@ async fn main() -> Result<()> {
         if !has_cert || !has_key {
             let mut subject_alt_names = vec![
                 "hermitshell.local".to_string(),
-                "10.0.0.1".to_string(),
+                lan_ip.clone(),
             ];
             // Add system hostname
             if let Ok(hostname) = nix::unistd::gethostname() {
@@ -525,23 +556,23 @@ async fn main() -> Result<()> {
         let db_guard = db.lock().unwrap();
         let assigned = db_guard.list_assigned_devices()?;
         for dev in &assigned {
-            if let (Some(ip), Some(sid)) = (&dev.ipv4, dev.subnet_id) {
-                if let Some(info) = subnet::compute_subnet(sid) {
-                    // Re-add /32 device route
-                    let _ = nftables::add_device_route(ip, &lan_iface, &dev.mac);
-                    // Re-add nftables counter
-                    let _ = nftables::add_device_counter(ip);
-                    // Re-add nftables forward rule
-                    let _ = nftables::add_device_forward_rule(ip, &dev.device_group);
-                    // Re-add IPv6 route, counter, forward rule
-                    let ipv6 = info.device_ipv6_ula.to_string();
-                    let _ = nftables::add_device_route_v6(&ipv6, &lan_iface, &dev.mac);
-                    let _ = nftables::add_device_counter_v6(&ipv6);
-                    let _ = nftables::add_device_forward_rule_v6(&ipv6, &dev.device_group);
-                    let _ = nftables::add_mac_ip_rule(ip, &dev.mac);
-                    let _ = nftables::add_mac_ip_rule_v6(&ipv6, &dev.mac);
-                    info!(mac = %dev.mac, ip = %ip, subnet_id = sid, group = %dev.device_group, "device restored");
+            if let Some(ip) = &dev.ipv4 {
+                // Re-add /32 device route
+                let _ = nftables::add_device_route(ip, &lan_iface, &dev.mac);
+                // Re-add nftables counter
+                let _ = nftables::add_device_counter(ip);
+                // Re-add nftables forward rule
+                let _ = nftables::add_device_forward_rule(ip, &dev.device_group);
+                // Re-add IPv6 route, counter, forward rule
+                let ipv6 = dev.ipv6_ula.as_deref().unwrap_or_default();
+                if !ipv6.is_empty() {
+                    let _ = nftables::add_device_route_v6(ipv6, &lan_iface, &dev.mac);
+                    let _ = nftables::add_device_counter_v6(ipv6);
+                    let _ = nftables::add_device_forward_rule_v6(ipv6, &dev.device_group);
+                    let _ = nftables::add_mac_ip_rule_v6(ipv6, &dev.mac);
                 }
+                let _ = nftables::add_mac_ip_rule(ip, &dev.mac);
+                info!(mac = %dev.mac, ip = %ip, group = %dev.device_group, "device restored");
             }
         }
     }
@@ -583,7 +614,7 @@ async fn main() -> Result<()> {
         let dmz = db_guard.get_config("dmz_host_ip").ok().flatten().unwrap_or_default();
         let dmz_ref = if dmz.is_empty() { None } else { Some(dmz.as_str()) };
         if !forwards.is_empty() || dmz_ref.is_some() {
-            if let Err(e) = nftables::apply_port_forwards(&wan_iface, &lan_iface, &forwards, dmz_ref) {
+            if let Err(e) = nftables::apply_port_forwards(&wan_iface, &lan_iface, &forwards, dmz_ref, &lan_ip) {
                 error!(error = %e, "failed to restore port forwards");
             } else {
                 info!(count = forwards.len(), "port forwards restored");
@@ -624,14 +655,14 @@ async fn main() -> Result<()> {
                     .ok().flatten()
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(51820);
-                if let Err(e) = wireguard::create_interface(&private_key, listen_port) {
+                if let Err(e) = wireguard::create_interface(&private_key, listen_port, &lan_ip, &lan_ip_v6) {
                     error!(error = %e, "failed to restore wg0");
                 } else {
                     let _ = wireguard::open_listen_port(listen_port);
                     let peers = db_guard.list_wg_peers().unwrap_or_default();
                     for peer in &peers {
                         if !peer.enabled { continue; }
-                        if let Some(info) = subnet::compute_subnet(peer.subnet_id) {
+                        if let Some(info) = subnet::compute_subnet(peer.subnet_id, device_ipv4_base, device_max_subnet_id) {
                             let ipv4 = info.device_ipv4.to_string();
                             let ipv6 = info.device_ipv6_ula.to_string();
                             let _ = wireguard::add_peer(&peer.public_key, &ipv4, &ipv6);
@@ -654,9 +685,9 @@ async fn main() -> Result<()> {
     let blocky_mgr = {
         let dns_strings: Vec<String> = upstream_dns.iter().map(|ip| ip.to_string()).collect();
         let blocky_listen = if has_ipv6_ula {
-            "10.0.0.1:53,[fd00::1]:53".to_string()
+            format!("{}:53,[{}]:53", lan_ip, lan_ip_v6)
         } else {
-            "10.0.0.1:53".to_string()
+            format!("{}:53", lan_ip)
         };
         let blocky_bin = std::env::var("BLOCKY_BIN")
             .unwrap_or_else(|_| "/opt/hermitshell/blocky".into());
@@ -696,7 +727,7 @@ async fn main() -> Result<()> {
     // Start conntrack event listener
     conntrack::enable_accounting();
     let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<log_export::LogEvent>();
-    let _conntrack_child = conntrack::start(db.clone(), log_tx.clone());
+    let _conntrack_child = conntrack::start(db.clone(), log_tx.clone(), lan_ip.clone());
 
     let db_dns = db.clone();
     let log_tx_dns = log_tx.clone();
@@ -715,7 +746,7 @@ async fn main() -> Result<()> {
 
     // Create shared port-mapping registry (used by socket handlers and UPnP/NAT-PMP)
     let portmap_registry: crate::portmap::SharedRegistry = std::sync::Arc::new(
-        crate::portmap::PortMapRegistry::new(db.clone(), wan_iface.to_string(), lan_iface.to_string())
+        crate::portmap::PortMapRegistry::new(db.clone(), wan_iface.to_string(), lan_iface.to_string(), lan_ip.clone())
     );
 
     // Spawn UPnP/NAT-PMP if enabled
@@ -733,8 +764,9 @@ async fn main() -> Result<()> {
             let pm_upnp = portmap_registry.clone();
             let wan_upnp = wan_iface.to_string();
             let lan_upnp = lan_iface.to_string();
+            let lan_ip_upnp = lan_ip.clone();
             tokio::spawn(async move {
-                upnp::run(db_upnp, pm_upnp, wan_upnp, lan_upnp).await;
+                upnp::run(db_upnp, pm_upnp, wan_upnp, lan_upnp, lan_ip_upnp).await;
             });
 
             let db_natpmp = db.clone();
@@ -807,8 +839,9 @@ async fn main() -> Result<()> {
     let db_mdns = db.clone();
     let lan_mdns = lan_iface.to_string();
     let mdns_reg_for_task = mdns_registry.clone();
+    let lan_ip_mdns = lan_ip.clone();
     tokio::spawn(async move {
-        mdns::run(db_mdns, lan_mdns, mdns_reg_for_task).await;
+        mdns::run(db_mdns, lan_mdns, mdns_reg_for_task, lan_ip_mdns).await;
     });
 
     // Spawn update check loop (opt-in)
@@ -824,7 +857,7 @@ async fn main() -> Result<()> {
     let dhcp_bin = std::env::var("HERMITSHELL_DHCP_BIN")
         .unwrap_or_else(|_| "/opt/hermitshell/hermitshell-dhcp".into());
     std::process::Command::new(&dhcp_bin)
-        .arg(&lan_iface)
+        .args([&lan_iface, &lan_ip, &lan_ip_v6])
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .spawn()?;

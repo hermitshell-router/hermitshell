@@ -100,14 +100,16 @@ pub struct PortMapRegistry {
     db: Arc<Mutex<Db>>,
     wan_iface: String,
     lan_iface: String,
+    lan_ip: String,
 }
 
 impl PortMapRegistry {
-    pub fn new(db: Arc<Mutex<Db>>, wan_iface: String, lan_iface: String) -> Self {
+    pub fn new(db: Arc<Mutex<Db>>, wan_iface: String, lan_iface: String, lan_ip: String) -> Self {
         Self {
             db,
             wan_iface,
             lan_iface,
+            lan_ip,
         }
     }
 
@@ -254,7 +256,7 @@ impl PortMapRegistry {
         .map_err(|e| MappingError::Internal(e.to_string()))?;
 
         // 10. Reapply nftables
-        Self::apply_rules(&db, &self.wan_iface, &self.lan_iface)?;
+        Self::apply_rules(&db, &self.wan_iface, &self.lan_iface, &self.lan_ip)?;
 
         info!(
             protocol = %req.protocol,
@@ -292,7 +294,7 @@ impl PortMapRegistry {
             {
                 db.remove_port_forward(fwd.id)
                     .map_err(|e| MappingError::Internal(e.to_string()))?;
-                Self::apply_rules(&db, &self.wan_iface, &self.lan_iface)?;
+                Self::apply_rules(&db, &self.wan_iface, &self.lan_iface, &self.lan_ip)?;
                 info!(
                     protocol = %protocol,
                     external_port = ext_port,
@@ -332,7 +334,7 @@ impl PortMapRegistry {
         let deleted = db.delete_expired_port_forwards(now).unwrap_or(0);
         if deleted > 0 {
             info!(count = deleted, "expired port mappings removed");
-            let _ = Self::apply_rules(&db, &self.wan_iface, &self.lan_iface);
+            let _ = Self::apply_rules(&db, &self.wan_iface, &self.lan_iface, &self.lan_ip);
         }
         deleted
     }
@@ -344,18 +346,18 @@ impl PortMapRegistry {
         if deleted > 0 {
             info!(count = deleted, "automatic port mappings cleared");
         }
-        let _ = Self::apply_rules(&db, &self.wan_iface, &self.lan_iface);
+        let _ = Self::apply_rules(&db, &self.wan_iface, &self.lan_iface, &self.lan_ip);
     }
 
     /// Reapply nftables port forwarding rules from the current DB state.
     /// Public so socket handlers can call it after manual forward changes.
     pub fn reapply_rules(&self) {
         let db = self.db.lock().unwrap();
-        let _ = Self::apply_rules(&db, &self.wan_iface, &self.lan_iface);
+        let _ = Self::apply_rules(&db, &self.wan_iface, &self.lan_iface, &self.lan_ip);
     }
 
     /// Read enabled forwards + DMZ from DB, then call nftables::apply_port_forwards.
-    fn apply_rules(db: &Db, wan_iface: &str, lan_iface: &str) -> Result<(), MappingError> {
+    fn apply_rules(db: &Db, wan_iface: &str, lan_iface: &str, lan_ip: &str) -> Result<(), MappingError> {
         let forwards = db
             .list_enabled_port_forwards()
             .map_err(|e| MappingError::Internal(e.to_string()))?;
@@ -369,7 +371,7 @@ impl PortMapRegistry {
         } else {
             Some(dmz.as_str())
         };
-        nftables::apply_port_forwards(wan_iface, lan_iface, &forwards, dmz_ref)
+        nftables::apply_port_forwards(wan_iface, lan_iface, &forwards, dmz_ref, lan_ip)
             .map_err(|e| MappingError::Internal(e.to_string()))
     }
 }
