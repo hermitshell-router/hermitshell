@@ -31,8 +31,22 @@ pub enum LogEvent {
     },
 }
 
-/// Convert epoch seconds to ISO 8601 date-time string (UTC).
-fn epoch_to_iso8601(epoch_secs: u64) -> String {
+/// Escape characters required by RFC 5424 §6.3.3 for SD-PARAM values.
+fn escape_sd_param(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            ']' => escaped.push_str("\\]"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
+}
+
+/// Convert epoch seconds + microseconds to ISO 8601 date-time string (UTC).
+fn epoch_to_iso8601(epoch_secs: u64, micros: u32) -> String {
     let secs_per_day: u64 = 86400;
     let days = epoch_secs / secs_per_day;
     let time_of_day = epoch_secs % secs_per_day;
@@ -43,8 +57,8 @@ fn epoch_to_iso8601(epoch_secs: u64) -> String {
     // Convert days since epoch (1970-01-01) to Y-M-D
     let (year, month, day) = days_to_ymd(days);
     format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        year, month, day, hours, minutes, seconds
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}Z",
+        year, month, day, hours, minutes, seconds, micros
     )
 }
 
@@ -64,17 +78,18 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     (y, m, d)
 }
 
-fn now_epoch_secs() -> u64 {
-    std::time::SystemTime::now()
+fn now_timestamp() -> (u64, u32) {
+    let dur = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+        .unwrap_or_default();
+    (dur.as_secs(), dur.subsec_micros())
 }
 
 impl LogEvent {
     /// Serialize event to JSON for webhook batching.
     pub fn to_json(&self) -> serde_json::Value {
-        let ts = epoch_to_iso8601(now_epoch_secs());
+        let (secs, micros) = now_timestamp();
+        let ts = epoch_to_iso8601(secs, micros);
         match self {
             LogEvent::Connection {
                 device_ip,
@@ -133,7 +148,8 @@ impl LogEvent {
 
     /// Format as RFC 5424 syslog structured data message.
     pub fn to_syslog(&self, hostname: &str) -> String {
-        let ts = epoch_to_iso8601(now_epoch_secs());
+        let (secs, micros) = now_timestamp();
+        let ts = epoch_to_iso8601(secs, micros);
         match self {
             LogEvent::Connection {
                 device_ip,
@@ -145,8 +161,15 @@ impl LogEvent {
                 bytes_recv,
             } => {
                 format!(
-                    "<14>1 {} {} hermitshell-agent - connection [conn device_ip=\"{}\" dest_ip=\"{}\" dest_port=\"{}\" protocol=\"{}\" event=\"{}\" bytes_sent=\"{}\" bytes_recv=\"{}\"]",
-                    ts, hostname, device_ip, dest_ip, dest_port, protocol, event, bytes_sent, bytes_recv
+                    "<14>1 {} {} hermitshell-agent - connection [conn@hermitshell device_ip=\"{}\" dest_ip=\"{}\" dest_port=\"{}\" protocol=\"{}\" event=\"{}\" bytes_sent=\"{}\" bytes_recv=\"{}\"]",
+                    ts, hostname,
+                    escape_sd_param(device_ip),
+                    escape_sd_param(dest_ip),
+                    dest_port,
+                    escape_sd_param(protocol),
+                    escape_sd_param(event),
+                    bytes_sent,
+                    bytes_recv
                 )
             }
             LogEvent::DnsQuery {
@@ -155,8 +178,11 @@ impl LogEvent {
                 query_type,
             } => {
                 format!(
-                    "<14>1 {} {} hermitshell-agent - dns [query device_ip=\"{}\" domain=\"{}\" query_type=\"{}\"]",
-                    ts, hostname, device_ip, domain, query_type
+                    "<14>1 {} {} hermitshell-agent - dns [query@hermitshell device_ip=\"{}\" domain=\"{}\" query_type=\"{}\"]",
+                    ts, hostname,
+                    escape_sd_param(device_ip),
+                    escape_sd_param(domain),
+                    escape_sd_param(query_type)
                 )
             }
             LogEvent::Alert {
@@ -169,10 +195,16 @@ impl LogEvent {
                 let pri = match severity.as_str() {
                     "high" => 11,
                     "medium" => 12,
+                    "low" => 13,
                     _ => 14,
                 };
                 format!(
-                    "<{pri}>1 {ts} {hostname} hermitshell - - - alert device_mac=\"{device_mac}\" rule=\"{rule}\" severity=\"{severity}\" message=\"{message}\""
+                    "<{}>1 {} {} hermitshell-agent - alert [alert@hermitshell device_mac=\"{}\" rule=\"{}\" severity=\"{}\" message=\"{}\"]",
+                    pri, ts, hostname,
+                    escape_sd_param(device_mac),
+                    escape_sd_param(rule),
+                    escape_sd_param(severity),
+                    escape_sd_param(message)
                 )
             },
         }
@@ -220,7 +252,18 @@ async fn webhook_post(url: &str, payload: String, secret: &str) {
 }
 
 /// Get system hostname for syslog messages.
+/// Per RFC 5424 §6.2.4, FQDN is preferred over bare hostname.
 fn get_hostname() -> String {
+    // Try FQDN first
+    if let Ok(output) = std::process::Command::new("hostname").arg("--fqdn").output() {
+        if output.status.success() {
+            let fqdn = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !fqdn.is_empty() && fqdn.contains('.') {
+                return fqdn;
+            }
+        }
+    }
+    // Fall back to bare hostname
     std::fs::read_to_string("/etc/hostname")
         .unwrap_or_else(|_| "hermitshell".to_string())
         .trim()
@@ -362,11 +405,24 @@ fn emit_tracing(event: &LogEvent) {
     }
 }
 
+/// RFC 5426 §3.2: senders SHOULD restrict UDP syslog messages to 480 octets.
+const SYSLOG_UDP_MAX_BYTES: usize = 480;
+
 fn send_syslog(addr: &str, event: &LogEvent, hostname: &str) {
     let msg = event.to_syslog(hostname);
+    let bytes = msg.as_bytes();
+    let payload = if bytes.len() > SYSLOG_UDP_MAX_BYTES {
+        let mut truncate_at = SYSLOG_UDP_MAX_BYTES;
+        while truncate_at > 0 && !msg.is_char_boundary(truncate_at) {
+            truncate_at -= 1;
+        }
+        &bytes[..truncate_at]
+    } else {
+        bytes
+    };
     match UdpSocket::bind("0.0.0.0:0") {
         Ok(sock) => {
-            let _ = sock.send_to(msg.as_bytes(), addr);
+            let _ = sock.send_to(payload, addr);
         }
         Err(e) => {
             error!(error = %e, "failed to bind UDP socket for syslog");
@@ -398,19 +454,19 @@ mod tests {
 
     #[test]
     fn test_epoch_to_iso8601() {
-        // 2024-01-01T00:00:00Z = 1704067200
-        assert_eq!(epoch_to_iso8601(1704067200), "2024-01-01T00:00:00Z");
+        // 2024-01-01T00:00:00.000000Z = 1704067200
+        assert_eq!(epoch_to_iso8601(1704067200, 0), "2024-01-01T00:00:00.000000Z");
     }
 
     #[test]
     fn test_epoch_to_iso8601_with_time() {
-        // 2024-06-15T12:45:30Z = 1718455530
-        assert_eq!(epoch_to_iso8601(1718455530), "2024-06-15T12:45:30Z");
+        // 2024-06-15T12:45:30.123456Z = 1718455530
+        assert_eq!(epoch_to_iso8601(1718455530, 123456), "2024-06-15T12:45:30.123456Z");
     }
 
     #[test]
     fn test_epoch_zero() {
-        assert_eq!(epoch_to_iso8601(0), "1970-01-01T00:00:00Z");
+        assert_eq!(epoch_to_iso8601(0, 0), "1970-01-01T00:00:00.000000Z");
     }
 
     #[test]
@@ -471,6 +527,7 @@ mod tests {
         assert!(msg.starts_with("<14>1 "));
         assert!(msg.contains("router1"));
         assert!(msg.contains("hermitshell-agent"));
+        assert!(msg.contains("[conn@hermitshell "));
         assert!(msg.contains("device_ip=\"10.0.1.2\""));
     }
 
@@ -483,7 +540,65 @@ mod tests {
         };
         let msg = event.to_syslog("router1");
         assert!(msg.starts_with("<14>1 "));
+        assert!(msg.contains("[query@hermitshell "));
         assert!(msg.contains("domain=\"example.com\""));
+    }
+
+    #[test]
+    fn test_alert_event_to_syslog() {
+        let event = LogEvent::Alert {
+            device_mac: "aa:bb:cc:dd:ee:ff".to_string(),
+            rule: "port_scan".to_string(),
+            severity: "high".to_string(),
+            message: "Port scan detected".to_string(),
+            details: None,
+        };
+        let msg = event.to_syslog("router1");
+        assert!(msg.starts_with("<11>1 "));
+        assert!(msg.contains("hermitshell-agent"));
+        assert!(msg.contains("[alert@hermitshell "));
+        assert!(msg.contains("device_mac=\"aa:bb:cc:dd:ee:ff\""));
+    }
+
+    #[test]
+    fn test_alert_low_severity_maps_to_notice() {
+        let event = LogEvent::Alert {
+            device_mac: "aa:bb:cc:dd:ee:ff".to_string(),
+            rule: "test".to_string(),
+            severity: "low".to_string(),
+            message: "test".to_string(),
+            details: None,
+        };
+        let msg = event.to_syslog("router1");
+        assert!(msg.starts_with("<13>1 "), "low severity should map to pri 13 (user.notice)");
+    }
+
+    #[test]
+    fn test_escape_sd_param() {
+        assert_eq!(escape_sd_param("simple"), "simple");
+        assert_eq!(escape_sd_param(r#"has "quotes""#), r#"has \"quotes\""#);
+        assert_eq!(escape_sd_param(r"back\slash"), r"back\\slash");
+        assert_eq!(escape_sd_param("close]bracket"), r"close\]bracket");
+        assert_eq!(escape_sd_param(r#"all"\]three"#), r#"all\"\\\]three"#);
+    }
+
+    #[test]
+    fn test_syslog_escapes_domain() {
+        let event = LogEvent::DnsQuery {
+            device_ip: "10.0.1.2".to_string(),
+            domain: r#"evil".example.com"#.to_string(),
+            query_type: "A".to_string(),
+        };
+        let msg = event.to_syslog("router1");
+        assert!(msg.contains(r#"domain="evil\".example.com""#));
+    }
+
+    #[test]
+    fn test_timestamp_has_fractional_seconds() {
+        assert_eq!(
+            epoch_to_iso8601(1704067200, 500000),
+            "2024-01-01T00:00:00.500000Z"
+        );
     }
 
     #[test]
@@ -501,5 +616,32 @@ mod tests {
     fn test_days_to_ymd_end_of_year() {
         // 2023-12-31 is day 19722
         assert_eq!(days_to_ymd(19722), (2023, 12, 31));
+    }
+
+    #[test]
+    fn test_syslog_truncation_respects_utf8() {
+        // Build a syslog message that exceeds 480 bytes by using multi-byte chars
+        // in the domain field. Each '€' is 3 bytes in UTF-8.
+        let long_domain = "€".repeat(200); // 600 bytes of UTF-8
+        let event = LogEvent::DnsQuery {
+            device_ip: "10.0.1.2".to_string(),
+            domain: long_domain,
+            query_type: "A".to_string(),
+        };
+        let msg = event.to_syslog("router1");
+        assert!(msg.as_bytes().len() > SYSLOG_UDP_MAX_BYTES);
+
+        // Truncate like send_syslog does
+        let bytes = msg.as_bytes();
+        let mut truncate_at = SYSLOG_UDP_MAX_BYTES;
+        while truncate_at > 0 && !msg.is_char_boundary(truncate_at) {
+            truncate_at -= 1;
+        }
+        let truncated = &bytes[..truncate_at];
+
+        // Must be valid UTF-8
+        assert!(std::str::from_utf8(truncated).is_ok());
+        // Must not exceed limit
+        assert!(truncated.len() <= SYSLOG_UDP_MAX_BYTES);
     }
 }
