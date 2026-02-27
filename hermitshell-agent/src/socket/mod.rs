@@ -139,6 +139,9 @@ struct Request {
     period: Option<String>,
     device_mac: Option<String>,
     dhcp_fingerprint: Option<String>,
+    provider_id: Option<String>,
+    site: Option<String>,
+    api_key: Option<String>,
 }
 
 /// JSON response envelope. `ok` indicates success; `error` carries failure details.
@@ -201,6 +204,8 @@ struct Response {
     tls_status: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     wifi_aps: Option<Vec<crate::db::WifiAp>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wifi_providers: Option<Vec<hermitshell_common::WifiProviderInfo>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     wifi_clients: Option<Vec<crate::db::WifiClient>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -423,9 +428,10 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "ingest_dns_logs" => logs::handle_ingest_dns_logs(&req, db, log_tx),
         "run_analysis" => logs::handle_run_analysis(&req, db, log_tx),
         "wifi_list_aps" => wifi::handle_wifi_list_aps(&req, db),
-        "wifi_adopt_ap" => wifi::handle_wifi_adopt_ap(&req, db),
-        "wifi_remove_ap" => wifi::handle_wifi_remove_ap(&req, db),
-        "wifi_set_ap_ca_cert" => wifi::handle_wifi_set_ap_ca_cert(&req, db),
+        "wifi_list_providers" => wifi::handle_wifi_list_providers(&req, db),
+        "wifi_add_provider" => wifi::handle_wifi_add_provider(&req, db),
+        "wifi_remove_provider" => wifi::handle_wifi_remove_provider(&req, db),
+        "wifi_set_provider_ca_cert" => wifi::handle_wifi_set_provider_ca_cert(&req, db),
         "wifi_get_clients" => wifi::handle_wifi_get_clients(&req, db),
         "check_update" => config::handle_check_update(&req, db),
         "list_interfaces" => setup::handle_list_interfaces(&req, db),
