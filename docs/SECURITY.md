@@ -10,9 +10,9 @@ This document tracks security compromises made during implementation, why they w
 
 **Risk:** Vulnerable to MITM on first connection (no TOFU mechanism). Users must manually trust the certificate.
 
-**Proper fix:** Offer Let's Encrypt via DNS challenge for users with a domain. For LAN-only access, consider mDNS + a local CA root that users can install, or just document the self-signed approach as acceptable for the threat model.
+**Proper fix:** Let's Encrypt via ACME DNS-01 challenge is now available (Cloudflare provider). For LAN-only access without a domain, the self-signed cert remains the fallback.
 
-**Note:** TLS cert generation moved from the web UI to the agent startup (`main.rs`). The self-signed nature is unchanged. The cert and private key are now stored in the config DB and served to the web UI via the `get_tls_config` IPC method — see issue #32.
+**Note:** TLS cert generation moved from the web UI to the agent startup (`main.rs`). The self-signed nature is unchanged for the default mode. The cert and private key are now stored in the config DB and served to the web UI via the `get_tls_config` IPC method — see issue #32. Users with a domain can switch to ACME mode for a real CA-signed certificate.
 
 ## 9. Docker container mounts full /run/hermitshell directory
 
@@ -83,6 +83,8 @@ This document tracks security compromises made during implementation, why they w
 **Why:** dhclient6 is a system daemon running as root that writes lease files to a root-owned directory. The content originates from the ISP's DHCPv6 server, but dhclient validates the protocol-level fields before writing them.
 
 **Risk:** If the lease file is tampered with (by an attacker with root access, or if the file permissions are misconfigured), the parsed prefix could be invalid or malicious. An attacker-controlled prefix could cause the agent to assign addresses from an unexpected range, potentially conflicting with other networks or routing traffic to attacker-controlled infrastructure. However, an attacker with root access already has full control of the system.
+
+**Mitigating factor:** The agent now deletes stale lease files before invoking dhclient and checks the exit status, preventing reuse of expired prefix delegations. The lease file path is explicitly set via `-lf` to avoid reading unexpected locations.
 
 **Proper fix:** Validate the parsed prefix format (must be a valid IPv6 prefix with a reasonable prefix length, e.g., /48 to /64). Reject prefixes that fall outside expected ULA or GUA ranges. Set the lease file permissions to `0600 root:root` and verify them before parsing.
 
@@ -197,6 +199,8 @@ This document tracks security compromises made during implementation, why they w
 **Why:** UDP syslog is the standard protocol. Most syslog collectors (rsyslog, syslog-ng, Splunk) expect this format. Adding TLS syslog (RFC 5425) would add complexity.
 
 **Risk:** Low. An attacker on the network can eavesdrop on syslog traffic (device IPs, DNS queries, alerts) or inject forged syslog messages. Syslog targets are typically on a trusted LAN segment.
+
+**Mitigating factor:** The syslog format is now RFC 5424 compliant — SD-PARAMs are escaped to prevent log injection, message IDs and timestamps follow the spec. This prevents a crafted hostname or alert from breaking structured data fields in the collector.
 
 **Proper fix:** Add TLS syslog (RFC 5425) as an option. Validate that the syslog target is on a local network segment, or warn when targeting WAN addresses.
 
@@ -349,6 +353,8 @@ This document tracks security compromises made during implementation, why they w
 **Why:** Both protocols were designed for simplicity on trusted home networks. PCP added a MAP nonce for replay protection but no authentication.
 
 **Risk:** An attacker on the LAN could craft UDP packets with a trusted device's source IP and create port mappings attributed to that device. The per-device /32 isolation and nftables source validation mitigate this — spoofed packets from incorrect source IPs are dropped by the firewall before reaching the NAT-PMP listener.
+
+**Mitigating factor:** PCP now validates the client IP field in MAP requests against the UDP source address, returning `ADDRESS_MISMATCH` (result code 12) on mismatch. This prevents a PCP client from requesting mappings on behalf of a different IP. NAT-PMP has no equivalent field — it relies solely on the UDP source IP.
 
 **Proper fix:** Cross-reference the UDP source IP against the device's ARP/NDP entry to verify the source MAC matches the expected device. This would catch IP spoofing even on the same L2 segment.
 
