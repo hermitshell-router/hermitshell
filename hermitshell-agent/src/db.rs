@@ -314,6 +314,19 @@ impl Db {
             )?;
         }
 
+        if version < 6 {
+            let _ = conn.execute_batch(
+                "ALTER TABLE port_forwards ADD COLUMN source TEXT NOT NULL DEFAULT 'manual';
+                 ALTER TABLE port_forwards ADD COLUMN expires_at INTEGER;
+                 ALTER TABLE port_forwards ADD COLUMN requesting_ip TEXT;"
+            );
+            conn.execute(
+                "INSERT INTO config (key, value) VALUES ('schema_version', '6')
+                 ON CONFLICT(key) DO UPDATE SET value = '6'",
+                [],
+            )?;
+        }
+
         Ok(())
     }
 
@@ -504,7 +517,7 @@ impl Db {
 
     pub fn list_port_forwards(&self) -> Result<Vec<PortForward>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, protocol, external_port_start, external_port_end, internal_ip, internal_port, enabled, description FROM port_forwards"
+            "SELECT id, protocol, external_port_start, external_port_end, internal_ip, internal_port, enabled, description, source, expires_at, requesting_ip FROM port_forwards"
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(PortForward {
@@ -516,6 +529,9 @@ impl Db {
                 internal_port: row.get(5)?,
                 enabled: row.get::<_, i64>(6)? != 0,
                 description: row.get(7)?,
+                source: row.get::<_, String>(8).unwrap_or_else(|_| "manual".into()),
+                expires_at: row.get(9)?,
+                requesting_ip: row.get(10)?,
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
@@ -547,7 +563,7 @@ impl Db {
 
     pub fn list_enabled_port_forwards(&self) -> Result<Vec<PortForward>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, protocol, external_port_start, external_port_end, internal_ip, internal_port, enabled, description FROM port_forwards WHERE enabled = 1"
+            "SELECT id, protocol, external_port_start, external_port_end, internal_ip, internal_port, enabled, description, source, expires_at, requesting_ip FROM port_forwards WHERE enabled = 1"
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(PortForward {
@@ -559,6 +575,9 @@ impl Db {
                 internal_port: row.get(5)?,
                 enabled: row.get::<_, i64>(6)? != 0,
                 description: row.get(7)?,
+                source: row.get::<_, String>(8).unwrap_or_else(|_| "manual".into()),
+                expires_at: row.get(9)?,
+                requesting_ip: row.get(10)?,
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())

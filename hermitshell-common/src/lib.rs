@@ -77,6 +77,12 @@ pub struct PortForward {
     pub internal_port: u16,
     pub enabled: bool,
     pub description: String,
+    #[serde(default)]
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requesting_ip: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
