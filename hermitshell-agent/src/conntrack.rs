@@ -132,24 +132,9 @@ fn extract_bytes_pair(line: &str) -> (i64, i64) {
     (src, dst)
 }
 
-/// Enable conntrack byte accounting via sysctl.
+/// Conntrack accounting is expected via sysctl.d drop-in (deploy/hermitshell.sysctl.conf).
 pub fn enable_accounting() {
-    match Command::new("sysctl")
-        .args(["-w", "net.netfilter.nf_conntrack_acct=1"])
-        .output()
-    {
-        Ok(output) => {
-            if output.status.success() {
-                info!("conntrack accounting enabled");
-            } else {
-                warn!(
-                    stderr = %String::from_utf8_lossy(&output.stderr),
-                    "sysctl conntrack accounting returned non-zero"
-                );
-            }
-        }
-        Err(e) => error!(error = %e, "failed to run sysctl for conntrack accounting"),
-    }
+    info!("conntrack accounting expected via sysctl.d drop-in");
 }
 
 /// Spawn the conntrack event listener as a child process.
