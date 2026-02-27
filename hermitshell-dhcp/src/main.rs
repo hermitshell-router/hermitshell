@@ -484,6 +484,7 @@ fn run_dhcpv6_server(lan_iface: &str) -> Result<()> {
     let mut agent = AgentConn::new();
     let mut buf = [0u8; 1500];
     let mut solicit_times: LruCache<String, Instant> = LruCache::new(NonZeroUsize::new(10_000).expect("nonzero constant"));
+    let mut neigh_cache: LruCache<Ipv6Addr, String> = LruCache::new(NonZeroUsize::new(10_000).expect("nonzero constant"));
 
     loop {
         let (len, src_addr) = match udp.recv_from(&mut buf) {
@@ -513,16 +514,24 @@ fn run_dhcpv6_server(lan_iface: &str) -> Result<()> {
             }
         };
 
-        // Resolve MAC from kernel neighbor cache via source link-local address
+        // Resolve MAC from kernel neighbor cache via source link-local address.
+        // Cache results to avoid forking a subprocess on every packet.
         let src_ip = match src_addr.ip() {
             std::net::IpAddr::V6(ip) => ip,
             _ => continue,
         };
-        let mac = match resolve_mac_from_neigh(&src_ip, lan_iface) {
-            Some(m) => m,
-            None => {
-                warn!(src = %src_ip, "DHCPv6 could not resolve MAC from neighbor cache");
-                continue;
+        let mac = if let Some(cached) = neigh_cache.get(&src_ip) {
+            cached.clone()
+        } else {
+            match resolve_mac_from_neigh(&src_ip, lan_iface) {
+                Some(m) => {
+                    neigh_cache.put(src_ip, m.clone());
+                    m
+                }
+                None => {
+                    warn!(src = %src_ip, "DHCPv6 could not resolve MAC from neighbor cache");
+                    continue;
+                }
             }
         };
 
