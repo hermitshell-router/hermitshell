@@ -466,3 +466,23 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** Combined with #86 (no signature verification), a compromised release would be auto-installed without the admin seeing a notification first. The rollback mechanism catches crashes but not deliberately malicious code that runs successfully.
 
 **Proper fix:** Acceptable as opt-in. Signature verification (#86) is the proper mitigation.
+
+## 88. Rollback restores binaries but does not verify them
+
+**What:** When the agent crashes after an update, `rollback.sh` copies binaries from `/opt/hermitshell/rollback/` back to the install directory. It does not verify the integrity of the rollback binaries.
+
+**Why:** The rollback directory is populated by the agent itself immediately before the update swap. The binaries are the same ones that were running moments earlier. Verifying them would require a checksum stored somewhere — but the update process runs as root, so an attacker who can tamper with the rollback directory already has root access.
+
+**Risk:** Low. An attacker with root access could replace the rollback binaries with malicious ones, then trigger a failed update to get them installed. But root access already means full compromise.
+
+**Proper fix:** Store a SHA256 manifest of the rollback binaries and verify before restoring. Marginal benefit given the root-only threat model.
+
+## 89. Staged restart has a fixed 2-second sleep between UI and agent restart
+
+**What:** `trigger_staged_restart` restarts `hermitshell-ui` first, waits 2 seconds, then restarts `hermitshell-agent`. During the 2-second window, the old agent is still running with new UI binaries.
+
+**Why:** The UI container needs a moment to come up before the agent restarts. Polling `systemctl is-active` would be more robust but adds complexity. The nftables ruleset and routing are kernel-resident and unaffected by the restart, so network connectivity is maintained throughout.
+
+**Risk:** Low. During the 2-second window, a request to the new UI could reach the old agent. Since the API is backwards-compatible between adjacent versions, this is unlikely to cause issues. If the UI restart fails, the agent still restarts, which the rollback script handles.
+
+**Proper fix:** Poll `systemctl is-active hermitshell-ui` instead of sleeping, with a timeout.
