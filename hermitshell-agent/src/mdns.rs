@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -52,6 +52,9 @@ impl ServiceRegistry {
     ///
     /// TTL is clamped to `MAX_TTL_SECS`. New records (not updates) are rejected
     /// if per-device or total registry limits are exceeded.
+    ///
+    /// A TTL of 0 is a goodbye packet (RFC 6762 Section 10.1) — the matching
+    /// record is removed immediately.
     pub fn upsert(
         &mut self,
         mac: &str,
@@ -63,6 +66,20 @@ impl ServiceRegistry {
         target_hostname: &str,
         ttl_secs: u32,
     ) {
+        // H7: TTL=0 is a goodbye — remove the record immediately
+        if ttl_secs == 0 {
+            if let Some(entries) = self.records.get_mut(mac) {
+                entries.retain(|r| {
+                    !(r.service_type == service_type && r.service_name == service_name)
+                });
+                if entries.is_empty() {
+                    self.records.remove(mac);
+                }
+            }
+            debug!(service = %service_name, "mDNS goodbye: removed record");
+            return;
+        }
+
         let clamped_ttl = ttl_secs.min(MAX_TTL_SECS);
         let expires_at = Instant::now() + std::time::Duration::from_secs(clamped_ttl as u64);
         let record = ServiceRecord {
@@ -169,6 +186,7 @@ impl ServiceRegistry {
     }
 
     /// Query visible services with full internal data for response building.
+    /// L8: Matches service_type (PTR), service_name (SRV/TXT), or target_hostname (A).
     fn query_full(
         &self,
         querier_group: &str,
@@ -192,7 +210,11 @@ impl ServiceRegistry {
             }
             for rec in entries {
                 if let Some(filter) = service_type_filter {
-                    if rec.service_type != filter {
+                    // L8: Match service_type (PTR), service_name (SRV/TXT), or target_hostname (A)
+                    if rec.service_type != filter
+                        && rec.service_name != filter
+                        && rec.target_hostname != filter
+                    {
                         continue;
                     }
                 }
@@ -234,7 +256,7 @@ fn ip_to_mac(db: &Db, ip: &Ipv4Addr) -> Option<String> {
 }
 
 /// Create a UDP socket bound to 0.0.0.0:5353 with multicast membership on the LAN interface.
-fn create_mdns_socket(lan_iface: &str, lan_ip: Ipv4Addr) -> anyhow::Result<UdpSocket> {
+fn create_mdns_socket(lan_iface: &str, lan_ip: Ipv4Addr) -> anyhow::Result<tokio::net::UdpSocket> {
     use socket2::{Domain, Protocol, Socket, Type};
 
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
@@ -252,7 +274,36 @@ fn create_mdns_socket(lan_iface: &str, lan_ip: Ipv4Addr) -> anyhow::Result<UdpSo
     // Bind socket to the LAN interface (safe wrapper around SO_BINDTODEVICE)
     socket.bind_device(Some(lan_iface.as_bytes()))?;
 
-    Ok(socket.into())
+    // L11: Convert to tokio async socket
+    Ok(tokio::net::UdpSocket::from_std(socket.into())?)
+}
+
+/// M20: Create an IPv6 mDNS socket bound to [::]:5353 with ff02::fb multicast membership.
+fn create_mdns_socket_v6(lan_iface: &str) -> anyhow::Result<tokio::net::UdpSocket> {
+    use socket2::{Domain, Protocol, Socket, Type};
+
+    let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
+    socket.set_reuse_address(true)?;
+    #[cfg(unix)]
+    socket.set_reuse_port(true)?;
+    socket.set_nonblocking(true)?;
+
+    let addr: SocketAddr = "[::]:5353".parse()?;
+    socket.bind(&addr.into())?;
+
+    // Read interface index from sysfs
+    let ifindex_str = std::fs::read_to_string(format!("/sys/class/net/{}/ifindex", lan_iface))
+        .map_err(|e| anyhow::anyhow!("failed to read ifindex for {}: {}", lan_iface, e))?;
+    let ifindex: u32 = ifindex_str
+        .trim()
+        .parse()
+        .map_err(|e| anyhow::anyhow!("failed to parse ifindex: {}", e))?;
+
+    let mcast: std::net::Ipv6Addr = "ff02::fb".parse()?;
+    socket.join_multicast_v6(&mcast, ifindex)?;
+    socket.bind_device(Some(lan_iface.as_bytes()))?;
+
+    Ok(tokio::net::UdpSocket::from_std(socket.into())?)
 }
 
 /// Handle an mDNS announcement (response packet).
@@ -415,17 +466,18 @@ fn handle_announcement(
     }
 }
 
-/// Handle an mDNS query.
+/// Handle an mDNS query. Returns a list of (response_bytes, destination) pairs to send.
 fn handle_query(
     src: SocketAddr,
     packet: &Packet<'_>,
     db: &Arc<Mutex<Db>>,
     registry: &SharedRegistry,
-    socket: &UdpSocket,
-) {
+) -> Vec<(Vec<u8>, SocketAddr)> {
+    let mut responses = Vec::new();
+
     let src_ip = match src {
         SocketAddr::V4(addr) => *addr.ip(),
-        _ => return,
+        _ => return responses,
     };
 
     let db_guard = db.lock().unwrap();
@@ -435,22 +487,86 @@ fn handle_query(
         Some(m) => m,
         None => {
             debug!(ip = %src_ip, "mDNS query from unknown device");
-            return;
+            return responses;
         }
     };
 
     let group = match db_guard.get_device(&mac) {
         Ok(Some(dev)) => dev.device_group,
-        _ => return,
+        _ => return responses,
     };
 
     let registry_guard = registry.lock().unwrap();
+
+    // H6: Detect legacy unicast queries (source port != 5353)
+    let is_legacy = src.port() != MDNS_PORT;
 
     for question in &packet.questions {
         let qname = question.qname.to_string();
         debug!(from = %src_ip, name = %qname, "mDNS query");
 
+        // H5: QU bit determines unicast preference
+        let qu_bit = question.unicast_response;
+
+        // H5/H6: Default to multicast; unicast if QU bit set or legacy query
+        let dest = if is_legacy || qu_bit {
+            src
+        } else {
+            SocketAddr::new(MDNS_ADDR.into(), MDNS_PORT)
+        };
+
+        // L8: Meta-query support for _services._dns-sd._udp.local
+        if qname == "_services._dns-sd._udp.local" {
+            let all_records = registry_guard.query_full(&group, None, &db_guard);
+            let mut service_types: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for rec in &all_records {
+                service_types.insert(rec.service_type.clone());
+            }
+            // H6: Legacy queries use query ID; standard queries use 0
+            let mut response =
+                Packet::new_reply(if is_legacy { packet.id() } else { 0 });
+            response.set_flags(PacketFlag::AUTHORITATIVE_ANSWER);
+            let meta_name = Name::new("_services._dns-sd._udp.local")
+                .unwrap()
+                .into_owned();
+            for stype in &service_types {
+                if let Ok(stype_name) = Name::new(stype) {
+                    let ttl = if is_legacy { MAX_TTL_SECS.min(10) } else { MAX_TTL_SECS };
+                    response.answers.push(ResourceRecord::new(
+                        meta_name.clone(),
+                        CLASS::IN,
+                        ttl,
+                        RData::PTR(simple_dns::rdata::PTR(stype_name.into_owned())),
+                    ));
+                }
+            }
+            if let Ok(bytes) = response.build_bytes_vec_compressed() {
+                responses.push((bytes, dest));
+            }
+            continue;
+        }
+
         let records = registry_guard.query_full(&group, Some(&qname), &db_guard);
+        if records.is_empty() {
+            continue;
+        }
+
+        // L10: Known-answer suppression — filter out records the querier already
+        // has with >= 50% remaining TTL.
+        let records: Vec<_> = records
+            .into_iter()
+            .filter(|rec| {
+                let remaining = rec
+                    .expires_at
+                    .saturating_duration_since(Instant::now())
+                    .as_secs() as u32;
+                !packet.answers.iter().any(|ans| {
+                    ans.name.to_string() == rec.service_name && ans.ttl >= remaining / 2
+                })
+            })
+            .collect();
+
         if records.is_empty() {
             continue;
         }
@@ -467,26 +583,38 @@ fn handle_query(
             host_ipv4: Ipv4Addr,
         }
 
+        // L9: Use remaining TTL instead of original TTL
         let entries: Vec<OwnedEntry> = records
             .iter()
-            .map(|rec| OwnedEntry {
-                service_type: rec.service_type.clone(),
-                service_name: rec.service_name.clone(),
-                hostname: rec.target_hostname.clone(),
-                port: rec.port,
-                ttl: rec.ttl_secs,
-                txt_pairs: rec.txt_records.clone(),
-                host_ipv4: rec.host_ipv4,
+            .map(|rec| {
+                let remaining_ttl = rec
+                    .expires_at
+                    .saturating_duration_since(Instant::now())
+                    .as_secs() as u32;
+                OwnedEntry {
+                    service_type: rec.service_type.clone(),
+                    service_name: rec.service_name.clone(),
+                    hostname: rec.target_hostname.clone(),
+                    port: rec.port,
+                    ttl: remaining_ttl.max(1), // at least 1 second
+                    txt_pairs: rec.txt_records.clone(),
+                    host_ipv4: rec.host_ipv4,
+                }
             })
             .collect();
 
-        // Release the registry lock before building the response
+        // Release the registry lock is not needed here since we still hold registry_guard;
+        // the owned data is already cloned above.
         drop(records);
 
-        let mut response = Packet::new_reply(0);
+        // H6: Legacy queries use query ID; standard mDNS replies use 0
+        let mut response = Packet::new_reply(if is_legacy { packet.id() } else { 0 });
         response.set_flags(PacketFlag::AUTHORITATIVE_ANSWER);
 
         for entry in &entries {
+            // H6: Legacy queries clamp TTL to 10 seconds
+            let effective_ttl = if is_legacy { entry.ttl.min(10) } else { entry.ttl };
+
             let service_type_name = match Name::new(&entry.service_type) {
                 Ok(n) => n.into_owned(),
                 Err(_) => continue,
@@ -504,7 +632,7 @@ fn handle_query(
             response.answers.push(ResourceRecord::new(
                 service_type_name,
                 CLASS::IN,
-                entry.ttl,
+                effective_ttl,
                 RData::PTR(simple_dns::rdata::PTR(instance_name.clone())),
             ));
 
@@ -512,7 +640,7 @@ fn handle_query(
             response.additional_records.push(ResourceRecord::new(
                 instance_name.clone(),
                 CLASS::IN,
-                entry.ttl,
+                effective_ttl,
                 RData::SRV(SRV {
                     priority: 0,
                     weight: 0,
@@ -549,7 +677,7 @@ fn handle_query(
             response.additional_records.push(ResourceRecord::new(
                 instance_name,
                 CLASS::IN,
-                entry.ttl,
+                effective_ttl,
                 RData::TXT(txt),
             ));
 
@@ -557,22 +685,22 @@ fn handle_query(
             response.additional_records.push(ResourceRecord::new(
                 host_name,
                 CLASS::IN,
-                entry.ttl,
+                effective_ttl,
                 RData::A(A::from(entry.host_ipv4)),
             ));
         }
 
         match response.build_bytes_vec_compressed() {
             Ok(bytes) => {
-                if let Err(e) = socket.send_to(&bytes, src) {
-                    debug!(error = %e, dest = %src, "failed to send mDNS response");
-                }
+                responses.push((bytes, dest));
             }
             Err(e) => {
                 debug!(error = %e, "failed to build mDNS response packet");
             }
         }
     }
+
+    responses
 }
 
 /// Main mDNS proxy loop. Listens for multicast mDNS traffic on the LAN interface,
@@ -586,6 +714,16 @@ pub async fn run(db: Arc<Mutex<Db>>, lan_iface: String, registry: SharedRegistry
             return;
         }
     };
+
+    // M20: Create IPv6 mDNS socket (ff02::fb), fall back to IPv4-only on failure
+    let socket_v6 = match create_mdns_socket_v6(&lan_iface) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            warn!(error = %e, "failed to create IPv6 mDNS socket, continuing with IPv4 only");
+            None
+        }
+    };
+
     info!(iface = %lan_iface, "mDNS proxy started");
 
     // Spawn periodic expiry sweep
@@ -600,19 +738,34 @@ pub async fn run(db: Arc<Mutex<Db>>, lan_iface: String, registry: SharedRegistry
         }
     });
 
-    let socket = Arc::new(socket);
     let mut buf = [0u8; 9000];
+    let mut buf_v6 = [0u8; 9000];
 
     loop {
-        // Yield to tokio between recv attempts on the nonblocking socket
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-        let (len, src) = match socket.recv_from(&mut buf) {
-            Ok(r) => r,
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
-            Err(e) => {
-                warn!(error = %e, "mDNS recv error");
-                continue;
+        // L11: Async I/O instead of 50ms polling loop
+        let (len, src, data_ref) = tokio::select! {
+            result = socket.recv_from(&mut buf) => {
+                match result {
+                    Ok((len, src)) => (len, src, &buf as &[u8; 9000]),
+                    Err(e) => {
+                        warn!(error = %e, "mDNS recv error");
+                        continue;
+                    }
+                }
+            }
+            result = async {
+                match &socket_v6 {
+                    Some(s) => s.recv_from(&mut buf_v6).await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                match result {
+                    Ok((len, src)) => (len, src, &buf_v6 as &[u8; 9000]),
+                    Err(e) => {
+                        warn!(error = %e, "mDNS v6 recv error");
+                        continue;
+                    }
+                }
             }
         };
 
@@ -623,7 +776,7 @@ pub async fn run(db: Arc<Mutex<Db>>, lan_iface: String, registry: SharedRegistry
             }
         }
 
-        let data = &buf[..len];
+        let data = &data_ref[..len];
         let packet = match Packet::parse(data) {
             Ok(p) => p,
             Err(e) => {
@@ -635,7 +788,20 @@ pub async fn run(db: Arc<Mutex<Db>>, lan_iface: String, registry: SharedRegistry
         if packet.has_flags(PacketFlag::RESPONSE) {
             handle_announcement(src, &packet, &db, &registry);
         } else {
-            handle_query(src, &packet, &db, &registry, &socket);
+            let responses = handle_query(src, &packet, &db, &registry);
+            for (bytes, dest) in responses {
+                // Send via the appropriate socket (v4 or v6) based on destination
+                let send_result = if dest.is_ipv4() {
+                    socket.send_to(&bytes, dest).await
+                } else if let Some(ref s6) = socket_v6 {
+                    s6.send_to(&bytes, dest).await
+                } else {
+                    continue;
+                };
+                if let Err(e) = send_result {
+                    debug!(error = %e, dest = %dest, "failed to send mDNS response");
+                }
+            }
         }
     }
 }
@@ -717,5 +883,40 @@ mod tests {
         dummy_upsert(&mut reg, "FF:FF:FF:FF:FF:FF", "_new._tcp.local", "n", 120);
         let total: usize = reg.records.values().map(|v| v.len()).sum();
         assert_eq!(total, MAX_TOTAL_RECORDS);
+    }
+
+    #[test]
+    fn goodbye_removes_record() {
+        let mut reg = ServiceRegistry::new();
+        let mac = "AA:BB:CC:DD:EE:01";
+        dummy_upsert(&mut reg, mac, "_http._tcp.local", "web", 120);
+        assert_eq!(reg.records[mac].len(), 1);
+
+        // TTL=0 goodbye should remove the record
+        dummy_upsert(&mut reg, mac, "_http._tcp.local", "web", 0);
+        assert!(!reg.records.contains_key(mac));
+    }
+
+    #[test]
+    fn goodbye_only_removes_matching_record() {
+        let mut reg = ServiceRegistry::new();
+        let mac = "AA:BB:CC:DD:EE:01";
+        dummy_upsert(&mut reg, mac, "_http._tcp.local", "web", 120);
+        dummy_upsert(&mut reg, mac, "_ssh._tcp.local", "ssh", 120);
+        assert_eq!(reg.records[mac].len(), 2);
+
+        // Goodbye for just the HTTP service
+        dummy_upsert(&mut reg, mac, "_http._tcp.local", "web", 0);
+        assert_eq!(reg.records[mac].len(), 1);
+        assert_eq!(reg.records[mac][0].service_type, "_ssh._tcp.local");
+    }
+
+    #[test]
+    fn goodbye_for_nonexistent_record_is_noop() {
+        let mut reg = ServiceRegistry::new();
+        let mac = "AA:BB:CC:DD:EE:01";
+        // Goodbye for a record that doesn't exist should not panic or error
+        dummy_upsert(&mut reg, mac, "_http._tcp.local", "web", 0);
+        assert!(!reg.records.contains_key(mac));
     }
 }
