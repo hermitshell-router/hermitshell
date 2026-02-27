@@ -467,43 +467,6 @@ fn handle_request(agent: &mut AgentConn, request: &Message, mac: &str) -> Result
 // DHCPv6 server
 // ---------------------------------------------------------------------------
 
-/// Extract a MAC address from a DHCPv6 Client Identifier (DUID) option.
-///
-/// Supports DUID-LLT (type 1) and DUID-LL (type 3) which both contain an
-/// Ethernet hardware type (1) followed by a 6-byte link-layer address.
-fn extract_mac_from_duid(duid: &[u8]) -> Option<String> {
-    if duid.len() < 4 {
-        return None;
-    }
-    let duid_type = u16::from_be_bytes([duid[0], duid[1]]);
-    let hw_type = u16::from_be_bytes([duid[2], duid[3]]);
-
-    // Only Ethernet (hw_type=1) DUIDs contain a usable MAC
-    if hw_type != 1 {
-        return None;
-    }
-
-    match duid_type {
-        1 => {
-            // DUID-LLT: type(2) + hw(2) + time(4) + link-layer(6) = 14 bytes
-            if duid.len() < 14 {
-                return None;
-            }
-            let mac = &duid[8..14];
-            Some(format_mac(mac))
-        }
-        3 => {
-            // DUID-LL: type(2) + hw(2) + link-layer(6) = 10 bytes
-            if duid.len() < 10 {
-                return None;
-            }
-            let mac = &duid[4..10];
-            Some(format_mac(mac))
-        }
-        _ => None,
-    }
-}
-
 /// Run the DHCPv6 server on UDP port 547.
 fn run_dhcpv6_server(lan_iface: &str) -> Result<()> {
     let sock = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
@@ -541,7 +504,7 @@ fn run_dhcpv6_server(lan_iface: &str) -> Result<()> {
             }
         };
 
-        // Extract client DUID and MAC
+        // Extract client DUID (needed for protocol responses)
         let client_id = match msg.opts().get(OptionCode6::ClientId) {
             Some(DhcpOption6::ClientId(duid)) => duid.clone(),
             _ => {
@@ -550,10 +513,15 @@ fn run_dhcpv6_server(lan_iface: &str) -> Result<()> {
             }
         };
 
-        let mac = match extract_mac_from_duid(&client_id) {
+        // Resolve MAC from kernel neighbor cache via source link-local address
+        let src_ip = match src_addr.ip() {
+            std::net::IpAddr::V6(ip) => ip,
+            _ => continue,
+        };
+        let mac = match resolve_mac_from_neigh(&src_ip, lan_iface) {
             Some(m) => m,
             None => {
-                warn!("DHCPv6 could not extract MAC from DUID");
+                warn!(src = %src_ip, "DHCPv6 could not resolve MAC from neighbor cache");
                 continue;
             }
         };
@@ -643,6 +611,26 @@ fn is_valid_mac_str(mac: &str) -> bool {
         return false;
     }
     is_valid_mac(&bytes)
+}
+
+/// Resolve a MAC address from the kernel IPv6 neighbor cache.
+///
+/// Runs `ip -6 neigh show <addr> dev <iface>` and parses the `lladdr` field.
+/// Returns `None` if no entry is found (e.g. NDP hasn't completed yet).
+fn resolve_mac_from_neigh(src_ip: &std::net::Ipv6Addr, iface: &str) -> Option<String> {
+    let output = std::process::Command::new("/usr/sbin/ip")
+        .args(["-6", "neigh", "show", &src_ip.to_string(), "dev", iface])
+        .output()
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Output format: "fe80::1 dev eth1 lladdr aa:bb:cc:dd:ee:ff REACHABLE"
+    let mut tokens = stdout.split_whitespace();
+    while let Some(tok) = tokens.next() {
+        if tok == "lladdr" {
+            return tokens.next().map(|mac| mac.to_lowercase());
+        }
+    }
+    None
 }
 
 /// Build a DHCPv6 response with common options (server ID, client ID, status).
