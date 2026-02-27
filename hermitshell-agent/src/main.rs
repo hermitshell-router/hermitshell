@@ -383,6 +383,14 @@ async fn main() -> Result<()> {
     }
 
     info!("hermitshell-agent starting");
+
+    // Check for pending update marker (post-update verification)
+    match update::check_update_marker() {
+        Ok(Some(version)) => info!(version = %version, "update completed successfully"),
+        Ok(None) => {}
+        Err(e) => warn!(error = %e, "failed to check update marker"),
+    }
+
     let start_time = std::time::Instant::now();
 
     let wan_iface = {

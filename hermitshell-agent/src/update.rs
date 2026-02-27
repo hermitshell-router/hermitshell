@@ -233,3 +233,31 @@ pub fn trigger_staged_restart() {
             .status().await;
     });
 }
+
+/// Check for update marker on startup. Returns Ok(Some(version)) if update succeeded.
+pub fn check_update_marker() -> anyhow::Result<Option<String>> {
+    let marker = std::path::Path::new(UPDATE_MARKER);
+    if !marker.exists() {
+        return Ok(None);
+    }
+    let expected_version = std::fs::read_to_string(marker)?;
+    let expected_version = expected_version.trim();
+    let current = format!("v{}", current_version());
+
+    if current == expected_version {
+        // Update succeeded — clean up
+        std::fs::remove_file(marker)?;
+        let _ = std::fs::remove_dir_all(ROLLBACK_DIR);
+        tracing::info!(version = %current, "update successful, marker cleared");
+        Ok(Some(current))
+    } else {
+        // Version mismatch — rollback was triggered by rollback.sh,
+        // or rollback.sh didn't run. Clean up the marker.
+        tracing::warn!(
+            expected = %expected_version, current = %current,
+            "update marker present but version mismatch — rollback may have occurred"
+        );
+        std::fs::remove_file(marker)?;
+        Ok(None)
+    }
+}
