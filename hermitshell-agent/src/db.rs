@@ -866,7 +866,7 @@ impl Db {
         Ok(())
     }
 
-    pub const BACKUP_PATH: &str = "/data/hermitshell/hermitshell-backup.db";
+    pub const BACKUP_PATH: &str = "/var/lib/hermitshell/hermitshell-backup.db";
 
     pub fn vacuum_into_backup(&self) -> Result<()> {
         self.conn.execute(&format!("VACUUM INTO '{}'", Self::BACKUP_PATH), [])?;

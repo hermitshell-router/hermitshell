@@ -78,7 +78,7 @@ fn read_upstream_dns(wan_iface: &str) -> Vec<Ipv4Addr> {
     }
 }
 
-const DB_PATH: &str = "/data/hermitshell/db/hermitshell.db";
+const DB_PATH: &str = "/var/lib/hermitshell/hermitshell.db";
 const SOCKET_PATH: &str = "/run/hermitshell/agent.sock";
 const POLL_INTERVAL_SECS: u64 = 10;
 
