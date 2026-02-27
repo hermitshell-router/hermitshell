@@ -354,6 +354,40 @@ This document tracks security compromises made during implementation, why they w
 
 ---
 
+## MAC Spoofing Defense
+
+## 83. Static ARP/NDP binding does not prevent same-MAC spoofing
+
+**What:** Permanent ARP/NDP neighbor entries are added when devices are provisioned. This binds an IP address to a specific MAC address in the kernel's neighbor table.
+
+**Why:** Prevents ARP cache poisoning attacks where a malicious device sends gratuitous ARP to claim another device's IP. Also prevents IP spoofing without MAC spoofing.
+
+**Risk:** If an attacker spoofs the real device's MAC address, the static neighbor entry matches the spoofed MAC — no protection. This defense prevents IP-only attacks, not full MAC+IP spoofing.
+
+**Proper fix:** 802.1X or per-device PSK for cryptographic device identity. The static binding is defense-in-depth alongside MAC-IP validation (issue #84) and DHCP fingerprinting (issue #85).
+
+## 84. nftables MAC-IP validation trusts the Ethernet source address
+
+**What:** The `mac_ip_validate` chain drops forwarded packets where `ip saddr` matches a known device but `ether saddr` does not match the expected MAC. This validates that traffic from a device's assigned IP comes from the correct MAC.
+
+**Why:** Prevents an attacker from using their own MAC while spoofing a trusted device's IP address. Also catches accidental IP conflicts.
+
+**Risk:** An attacker who spoofs both the MAC and IP of a trusted device bypasses this check (both match). The `ether saddr` field is set by the sending device and can be forged. On WiFi, the AP bridges frames to the router — the Ethernet source MAC seen by nftables is the WiFi client's MAC, which the client controls.
+
+**Proper fix:** Per-device PSK (PPSK) or 802.1X binds identity to a cryptographic secret rather than a spoofable MAC. DHCP fingerprinting (issue #85) provides an additional heuristic layer.
+
+## 85. DHCP fingerprint change detection is heuristic
+
+**What:** The analyzer compares each device's DHCP fingerprint (Option 55 Parameter Request List) against a stored baseline. A change fires a "dhcp_fingerprint_change" alert.
+
+**Why:** Different operating systems and device types produce distinctly different Option 55 values. When a "known" MAC reconnects with a different OS fingerprint, it strongly suggests device impersonation.
+
+**Risk:** Same-OS spoofing (e.g., one Linux laptop spoofing another) produces identical fingerprints and evades detection. DHCP fingerprints can be forged — an attacker who knows the target's fingerprint can replay it. Detection is after the fact (alert, not prevention).
+
+**Proper fix:** Acceptable as defense-in-depth. Combine with MAC-IP validation (preventive) and consider TCP/IP stack fingerprinting (p0f) for deeper behavioral analysis.
+
+---
+
 ## WiFi AP TLS
 
 ## 76. TOFU first connection is unauthenticated
