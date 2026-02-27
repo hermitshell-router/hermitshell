@@ -837,12 +837,15 @@ pub(super) fn handle_check_update(_req: &Request, db: &Arc<Mutex<Db>>) -> Respon
     let last_check = db.get_config("update_last_check").ok().flatten();
     let enabled = db.get_config("update_check_enabled").ok().flatten()
         .map(|v| v == "true").unwrap_or(false);
+    let auto_update = db.get_config("auto_update_enabled").ok().flatten()
+        .map(|v| v == "true").unwrap_or(false);
     let mut resp = Response::ok();
     resp.update_info = Some(serde_json::json!({
         "current_version": current,
         "latest_version": latest,
         "last_check": last_check,
         "enabled": enabled,
+        "auto_update_enabled": auto_update,
     }));
     resp
 }
@@ -894,4 +897,17 @@ pub(super) fn handle_get_speed_test_result(_req: &Request, state: &SpeedTestStat
         resp.qos_config = Some(serde_json::json!({"status": "idle"}));
     }
     resp
+}
+
+pub(super) async fn handle_apply_update(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    match crate::update::apply_update(db).await {
+        Ok(version) => {
+            // Trigger staged restart in background
+            crate::update::trigger_staged_restart();
+            let mut resp = Response::ok();
+            resp.config_value = Some(version);
+            resp
+        }
+        Err(e) => Response::err(&e.to_string()),
+    }
 }

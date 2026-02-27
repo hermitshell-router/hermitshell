@@ -335,6 +335,9 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                             | "wifi_get_radios" | "wifi_set_radio" => {
                                 wifi::handle_wifi_async(&req, &db).await
                             }
+                            "apply_update" => {
+                                config::handle_apply_update(&req, &db).await
+                            }
                             _ => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt, &speed_test_state, &mdns_registry, &portmap),
                         }
                     }
@@ -343,6 +346,9 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                         "wifi_get_ssids" | "wifi_set_ssid" | "wifi_delete_ssid"
                         | "wifi_get_radios" | "wifi_set_radio" => {
                             wifi::handle_wifi_async(&req, &db).await
+                        }
+                        "apply_update" => {
+                            config::handle_apply_update(&req, &db).await
                         }
                         _ => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt, &speed_test_state, &mdns_registry, &portmap),
                     }
