@@ -622,12 +622,20 @@ fn resolve_mac_from_neigh(src_ip: &std::net::Ipv6Addr, iface: &str) -> Option<St
         .args(["-6", "neigh", "show", &src_ip.to_string(), "dev", iface])
         .output()
         .ok()?;
+    if !output.status.success() {
+        debug!(src = %src_ip, "ip -6 neigh show returned non-zero status");
+        return None;
+    }
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Output format: "fe80::1 dev eth1 lladdr aa:bb:cc:dd:ee:ff REACHABLE"
     let mut tokens = stdout.split_whitespace();
     while let Some(tok) = tokens.next() {
         if tok == "lladdr" {
-            return tokens.next().map(|mac| mac.to_lowercase());
+            let mac = tokens.next().map(|m| m.to_lowercase())?;
+            if is_valid_mac_str(&mac) {
+                return Some(mac);
+            }
+            return None;
         }
     }
     None
