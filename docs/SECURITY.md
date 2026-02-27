@@ -58,15 +58,13 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** RA Guard at L2 (managed switch with RA Guard support) would provide better protection. Alternatively, use `ebtables` or bridge netfilter rules to filter RAs at the bridge level before they reach other LAN ports.
 
-## 29. DHCPv6 DUID-based MAC extraction assumes Ethernet
+## 29. DHCPv6 MAC resolution uses kernel neighbor cache
 
-**What:** The `extract_mac_from_duid()` function only handles DUID-LLT (type 1) and DUID-LL (type 3) with Ethernet hardware type. Clients using DUID-EN (type 2) or DUID-UUID (type 4) will be rejected.
+**What:** The DHCPv6 server resolves client MAC addresses by querying the kernel's IPv6 neighbor cache for the packet's source link-local address, rather than parsing DUID contents. This works for all DUID types (LLT, LL, EN, UUID).
 
-**Why:** This is intentional for security — the agent needs a MAC address for device tracking and per-device isolation. Without a MAC, there is no way to associate the DHCPv6 client with an existing device record or apply the correct firewall rules.
+**Why:** All DHCPv6 clients are L2-adjacent and have a link-local address learned via NDP before any DHCPv6 exchange. The kernel neighbor cache reliably maps link-local → MAC.
 
-**Risk:** Some clients (notably Windows with certain configurations, VMs, or IoT devices) may use DUID-EN or DUID-UUID formats. These clients will fail to obtain IPv6 addresses via DHCPv6, falling back to SLAAC only (if available) or having no IPv6 connectivity. This is a compatibility limitation rather than a security vulnerability.
-
-**Proper fix:** For DUID-EN and DUID-UUID clients, consider extracting the MAC from the DHCPv6 packet's source link-layer address option (Option 79) or the Ethernet frame's source MAC as a fallback. Log a warning when a DUID type cannot be parsed so administrators can identify affected devices.
+**Risk:** If the neighbor cache entry expires or is flushed between NDP and the DHCPv6 packet (extremely unlikely on the same L2 segment), the client will be rejected. It will retry and succeed on the next SOLICIT since NDP runs again.
 
 ## 30. IPv6 pinholes expose devices to inbound internet traffic
 
