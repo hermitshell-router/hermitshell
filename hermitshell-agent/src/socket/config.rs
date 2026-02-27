@@ -178,7 +178,7 @@ pub(super) fn handle_export_config(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
     resp
 }
 
-pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, wan_iface: &str, lan_iface: &str) -> Response {
+pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: &crate::portmap::SharedRegistry) -> Response {
     let Some(ref data) = req.value else { return Response::err("value required (JSON config)"); };
     let parsed: serde_json::Value = match serde_json::from_str(data) {
         Ok(v) => v,
@@ -423,10 +423,6 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, wan_iface
     // Audit log
     let _ = db.log_audit("config_import", &format!("version={} devices={}", version, device_count));
 
-    let forwards = db.list_enabled_port_forwards().unwrap_or_default();
-    let dmz = db.get_config("dmz_host_ip").ok().flatten().unwrap_or_default();
-    let dmz_ref = if dmz.is_empty() { None } else { Some(dmz.as_str()) };
-
     let qos_enabled = db.get_config_bool("qos_enabled", false);
     let qos_upload: u32 = db.get_config("qos_upload_mbps")
         .ok().flatten().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -442,10 +438,11 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, wan_iface
     };
 
     drop(db);
-    // Re-apply nftables rules from imported config. best-effort: partial apply is acceptable.
-    let _ = nftables::apply_port_forwards(wan_iface, lan_iface, &forwards, dmz_ref);
+    // Re-apply nftables rules from imported config via shared registry.
+    portmap.reapply_rules();
 
     // Re-apply QoS from imported config. best-effort: partial apply is acceptable.
+    let wan_iface = portmap.wan_iface();
     if qos_enabled {
         if qos_upload > 0 && qos_download > 0 {
             let _ = crate::qos::enable(wan_iface, qos_upload, qos_download);

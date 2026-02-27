@@ -111,6 +111,11 @@ impl PortMapRegistry {
         }
     }
 
+    /// The WAN interface name used for nftables rules.
+    pub fn wan_iface(&self) -> &str {
+        &self.wan_iface
+    }
+
     /// Check whether `ip` belongs to a device in the "trusted" group.
     fn is_trusted(ip: &str, db: &Db) -> bool {
         let devices = match db.list_assigned_devices() {

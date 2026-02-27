@@ -255,7 +255,7 @@ impl Response {
 }
 
 /// Start the main Unix socket API server that handles all agent commands.
-pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, bandwidth_rt: BandwidthRealtimeMap, speed_test_state: SpeedTestState, mdns_registry: crate::mdns::SharedRegistry) -> Result<()> {
+pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, bandwidth_rt: BandwidthRealtimeMap, speed_test_state: SpeedTestState, mdns_registry: crate::mdns::SharedRegistry, portmap: crate::portmap::SharedRegistry) -> Result<()> {
     // Remove stale socket from previous run (ignore: may not exist)
     let _ = std::fs::remove_file(socket_path);
     if let Some(parent) = std::path::Path::new(socket_path).parent() {
@@ -296,16 +296,17 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
         let brt = bandwidth_rt.clone();
         let sts = speed_test_state.clone();
         let mreg = mdns_registry.clone();
+        let pm = portmap.clone();
         tokio::spawn(async move {
             let _permit = permit; // held until task completes
-            if let Err(e) = handle_client(stream, db, start, blocky, wan, lan, ltx, lrl, pwl, brt, sts, mreg).await {
+            if let Err(e) = handle_client(stream, db, start, blocky, wan, lan, ltx, lrl, pwl, brt, sts, mreg, pm).await {
                 warn!(error = %e, "client error");
             }
         });
     }
 }
 
-async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: LoginRateLimit, password_lock: PasswordLock, bandwidth_rt: BandwidthRealtimeMap, speed_test_state: SpeedTestState, mdns_registry: crate::mdns::SharedRegistry) -> Result<()> {
+async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: LoginRateLimit, password_lock: PasswordLock, bandwidth_rt: BandwidthRealtimeMap, speed_test_state: SpeedTestState, mdns_registry: crate::mdns::SharedRegistry, portmap: crate::portmap::SharedRegistry) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
@@ -325,7 +326,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                             | "wifi_get_radios" | "wifi_set_radio" => {
                                 wifi::handle_wifi_async(&req, &db).await
                             }
-                            _ => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt, &speed_test_state, &mdns_registry),
+                            _ => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt, &speed_test_state, &mdns_registry, &portmap),
                         }
                     }
                 } else {
@@ -334,7 +335,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                         | "wifi_get_radios" | "wifi_set_radio" => {
                             wifi::handle_wifi_async(&req, &db).await
                         }
-                        _ => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt, &speed_test_state, &mdns_registry),
+                        _ => handle_request(req, &db, start_time, &blocky, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt, &speed_test_state, &mdns_registry, &portmap),
                     }
                 }
             }
@@ -348,7 +349,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
     Ok(())
 }
 
-fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: &Arc<Mutex<BlockyManager>>, wan_iface: &str, lan_iface: &str, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: &LoginRateLimit, password_lock: &PasswordLock, bandwidth_rt: &BandwidthRealtimeMap, speed_test_state: &SpeedTestState, mdns_registry: &crate::mdns::SharedRegistry) -> Response {
+fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: &Arc<Mutex<BlockyManager>>, wan_iface: &str, lan_iface: &str, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: &LoginRateLimit, password_lock: &PasswordLock, bandwidth_rt: &BandwidthRealtimeMap, speed_test_state: &SpeedTestState, mdns_registry: &crate::mdns::SharedRegistry, portmap: &crate::portmap::SharedRegistry) -> Response {
     if let Some(ref mac) = req.mac {
         if let Err(e) = nftables::validate_mac(mac) {
             return Response::err(&e.to_string());
@@ -382,11 +383,11 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "remove_wg_peer" => wireguard::handle_remove_wg_peer(&req, db),
         "set_wg_peer_group" => wireguard::handle_set_wg_peer_group(&req, db),
         "list_port_forwards" => network::handle_list_port_forwards(&req, db),
-        "add_port_forward" => network::handle_add_port_forward(&req, db, wan_iface, lan_iface),
-        "remove_port_forward" => network::handle_remove_port_forward(&req, db, wan_iface, lan_iface),
-        "set_port_forward_enabled" => network::handle_set_port_forward_enabled(&req, db, wan_iface, lan_iface),
+        "add_port_forward" => network::handle_add_port_forward(&req, db, portmap),
+        "remove_port_forward" => network::handle_remove_port_forward(&req, db, portmap),
+        "set_port_forward_enabled" => network::handle_set_port_forward_enabled(&req, db, portmap),
         "get_dmz" => network::handle_get_dmz(&req, db),
-        "set_dmz" => network::handle_set_dmz(&req, db, wan_iface, lan_iface),
+        "set_dmz" => network::handle_set_dmz(&req, db, portmap),
         "add_ipv6_pinhole" => network::handle_add_ipv6_pinhole(&req, db),
         "remove_ipv6_pinhole" => network::handle_remove_ipv6_pinhole(&req, db),
         "list_ipv6_pinholes" => network::handle_list_ipv6_pinholes(&req, db),
@@ -395,7 +396,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "get_ad_blocking" => config::handle_get_ad_blocking(&req, db),
         "set_ad_blocking" => config::handle_set_ad_blocking(&req, db, blocky),
         "export_config" => config::handle_export_config(&req, db),
-        "import_config" => config::handle_import_config(&req, db, wan_iface, lan_iface),
+        "import_config" => config::handle_import_config(&req, db, portmap),
         "backup_database" => config::handle_backup_database(&req, db),
         "get_log_config" => config::handle_get_log_config(&req, db),
         "set_log_config" => config::handle_set_log_config(&req, db),

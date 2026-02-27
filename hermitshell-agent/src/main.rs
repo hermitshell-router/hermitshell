@@ -709,6 +709,11 @@ async fn main() -> Result<()> {
     // Create mDNS registry (shared between proxy task and socket handler)
     let mdns_registry: mdns::SharedRegistry = Arc::new(Mutex::new(mdns::ServiceRegistry::new()));
 
+    // Create shared port-mapping registry (used by socket handlers and UPnP/NAT-PMP)
+    let portmap_registry: crate::portmap::SharedRegistry = std::sync::Arc::new(
+        crate::portmap::PortMapRegistry::new(db.clone(), wan_iface.to_string(), lan_iface.to_string())
+    );
+
     // Spawn socket server
     let db_clone = db.clone();
     let blocky_clone = blocky_mgr.clone();
@@ -720,8 +725,9 @@ async fn main() -> Result<()> {
     let bandwidth_rt_for_socket = bandwidth_realtime.clone();
     let speed_test_state: crate::socket::SpeedTestState = Arc::new(Mutex::new((false, None, None)));
     let mdns_reg_for_socket = mdns_registry.clone();
+    let portmap_for_socket = portmap_registry.clone();
     tokio::spawn(async move {
-        if let Err(e) = socket::run_server(SOCKET_PATH, db_clone, start_time, blocky_clone, wan_for_socket, lan_for_socket, log_tx_socket, bandwidth_rt_for_socket, speed_test_state, mdns_reg_for_socket).await {
+        if let Err(e) = socket::run_server(SOCKET_PATH, db_clone, start_time, blocky_clone, wan_for_socket, lan_for_socket, log_tx_socket, bandwidth_rt_for_socket, speed_test_state, mdns_reg_for_socket, portmap_for_socket).await {
             error!(error = %e, "socket server error");
         }
     });

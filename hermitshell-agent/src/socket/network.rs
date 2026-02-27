@@ -14,7 +14,7 @@ pub(super) fn handle_list_port_forwards(_req: &Request, db: &Arc<Mutex<Db>>) -> 
     }
 }
 
-pub(super) fn handle_add_port_forward(req: &Request, db: &Arc<Mutex<Db>>, wan_iface: &str, lan_iface: &str) -> Response {
+pub(super) fn handle_add_port_forward(req: &Request, db: &Arc<Mutex<Db>>, portmap: &crate::portmap::SharedRegistry) -> Response {
     let Some(ref protocol) = req.protocol else { return Response::err("protocol required"); };
     let Some(ext_start) = req.external_port_start else { return Response::err("external_port_start required"); };
     let Some(ext_end) = req.external_port_end else { return Response::err("external_port_end required"); };
@@ -37,66 +37,55 @@ pub(super) fn handle_add_port_forward(req: &Request, db: &Arc<Mutex<Db>>, wan_if
     if let Err(e) = nftables::validate_ip(internal_ip) {
         return Response::err(&e.to_string());
     }
-    let db = db.lock().unwrap();
-    // Check for overlapping external port ranges on same protocol
-    if let Ok(existing) = db.list_port_forwards() {
-        for fwd in &existing {
-            let protocols_overlap = protocol == &fwd.protocol
-                || protocol == "both"
-                || fwd.protocol == "both";
-            let ports_overlap = ext_start <= fwd.external_port_end
-                && ext_end >= fwd.external_port_start;
-            if protocols_overlap && ports_overlap {
-                return Response::err(&format!(
-                    "external ports {}-{} overlap with existing forward '{}' (ports {}-{})",
-                    ext_start, ext_end, fwd.description,
-                    fwd.external_port_start, fwd.external_port_end
-                ));
+    {
+        let db = db.lock().unwrap();
+        // Check for overlapping external port ranges on same protocol
+        if let Ok(existing) = db.list_port_forwards() {
+            for fwd in &existing {
+                let protocols_overlap = protocol == &fwd.protocol
+                    || protocol == "both"
+                    || fwd.protocol == "both";
+                let ports_overlap = ext_start <= fwd.external_port_end
+                    && ext_end >= fwd.external_port_start;
+                if protocols_overlap && ports_overlap {
+                    return Response::err(&format!(
+                        "external ports {}-{} overlap with existing forward '{}' (ports {}-{})",
+                        ext_start, ext_end, fwd.description,
+                        fwd.external_port_start, fwd.external_port_end
+                    ));
+                }
             }
         }
-    }
-    match db.add_port_forward(protocol, ext_start, ext_end, internal_ip, int_port, desc) {
-        Ok(_id) => {
-            let forwards = db.list_enabled_port_forwards().unwrap_or_default();
-            let dmz = db.get_config("dmz_host_ip").ok().flatten().unwrap_or_default();
-            let dmz_ref = if dmz.is_empty() { None } else { Some(dmz.as_str()) };
-            if let Err(e) = nftables::apply_port_forwards(wan_iface, lan_iface, &forwards, dmz_ref) {
-                return Response::err(&format!("failed to apply rules: {}", e));
-            }
-            Response::ok()
+        if let Err(e) = db.add_port_forward(protocol, ext_start, ext_end, internal_ip, int_port, desc) {
+            return Response::err(&e.to_string());
         }
-        Err(e) => Response::err(&e.to_string()),
     }
-}
-
-pub(super) fn handle_remove_port_forward(req: &Request, db: &Arc<Mutex<Db>>, wan_iface: &str, lan_iface: &str) -> Response {
-    let Some(id) = req.id else { return Response::err("id required"); };
-    let db = db.lock().unwrap();
-    if let Err(e) = db.remove_port_forward(id) {
-        return Response::err(&e.to_string());
-    }
-    let forwards = db.list_enabled_port_forwards().unwrap_or_default();
-    let dmz = db.get_config("dmz_host_ip").ok().flatten().unwrap_or_default();
-    let dmz_ref = if dmz.is_empty() { None } else { Some(dmz.as_str()) };
-    if let Err(e) = nftables::apply_port_forwards(wan_iface, lan_iface, &forwards, dmz_ref) {
-        return Response::err(&format!("failed to apply rules: {}", e));
-    }
+    portmap.reapply_rules();
     Response::ok()
 }
 
-pub(super) fn handle_set_port_forward_enabled(req: &Request, db: &Arc<Mutex<Db>>, wan_iface: &str, lan_iface: &str) -> Response {
+pub(super) fn handle_remove_port_forward(req: &Request, db: &Arc<Mutex<Db>>, portmap: &crate::portmap::SharedRegistry) -> Response {
+    let Some(id) = req.id else { return Response::err("id required"); };
+    {
+        let db = db.lock().unwrap();
+        if let Err(e) = db.remove_port_forward(id) {
+            return Response::err(&e.to_string());
+        }
+    }
+    portmap.reapply_rules();
+    Response::ok()
+}
+
+pub(super) fn handle_set_port_forward_enabled(req: &Request, db: &Arc<Mutex<Db>>, portmap: &crate::portmap::SharedRegistry) -> Response {
     let Some(id) = req.id else { return Response::err("id required"); };
     let Some(enabled) = req.enabled else { return Response::err("enabled required"); };
-    let db = db.lock().unwrap();
-    if let Err(e) = db.set_port_forward_enabled(id, enabled) {
-        return Response::err(&e.to_string());
+    {
+        let db = db.lock().unwrap();
+        if let Err(e) = db.set_port_forward_enabled(id, enabled) {
+            return Response::err(&e.to_string());
+        }
     }
-    let forwards = db.list_enabled_port_forwards().unwrap_or_default();
-    let dmz = db.get_config("dmz_host_ip").ok().flatten().unwrap_or_default();
-    let dmz_ref = if dmz.is_empty() { None } else { Some(dmz.as_str()) };
-    if let Err(e) = nftables::apply_port_forwards(wan_iface, lan_iface, &forwards, dmz_ref) {
-        return Response::err(&format!("failed to apply rules: {}", e));
-    }
+    portmap.reapply_rules();
     Response::ok()
 }
 
@@ -108,22 +97,20 @@ pub(super) fn handle_get_dmz(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     resp
 }
 
-pub(super) fn handle_set_dmz(req: &Request, db: &Arc<Mutex<Db>>, wan_iface: &str, lan_iface: &str) -> Response {
+pub(super) fn handle_set_dmz(req: &Request, db: &Arc<Mutex<Db>>, portmap: &crate::portmap::SharedRegistry) -> Response {
     let Some(ref ip) = req.internal_ip else { return Response::err("internal_ip required (empty string to clear)"); };
     if !ip.is_empty() {
         if let Err(e) = nftables::validate_ip(ip) {
             return Response::err(&e.to_string());
         }
     }
-    let db = db.lock().unwrap();
-    if let Err(e) = db.set_config("dmz_host_ip", ip) {
-        return Response::err(&e.to_string());
+    {
+        let db = db.lock().unwrap();
+        if let Err(e) = db.set_config("dmz_host_ip", ip) {
+            return Response::err(&e.to_string());
+        }
     }
-    let forwards = db.list_enabled_port_forwards().unwrap_or_default();
-    let dmz_ref = if ip.is_empty() { None } else { Some(ip.as_str()) };
-    if let Err(e) = nftables::apply_port_forwards(wan_iface, lan_iface, &forwards, dmz_ref) {
-        return Response::err(&format!("failed to apply rules: {}", e));
-    }
+    portmap.reapply_rules();
     Response::ok()
 }
 
