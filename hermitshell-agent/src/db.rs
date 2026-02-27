@@ -616,6 +616,15 @@ impl Db {
         Ok(deleted)
     }
 
+    /// Delete all automatic port forwards for a specific protocol and requesting IP.
+    pub fn remove_auto_port_forwards_by_source(&self, protocol: &str, requesting_ip: &str) -> Result<usize> {
+        let deleted = self.conn.execute(
+            "DELETE FROM port_forwards WHERE source != 'manual' AND protocol = ?1 AND requesting_ip = ?2",
+            rusqlite::params![protocol, requesting_ip],
+        )?;
+        Ok(deleted)
+    }
+
     /// Delete expired port forwards (where expires_at <= now_unix), returning the count deleted.
     pub fn delete_expired_port_forwards(&self, now_unix: i64) -> Result<usize> {
         let deleted = self.conn.execute(

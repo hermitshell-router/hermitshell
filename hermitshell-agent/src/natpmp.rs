@@ -8,20 +8,25 @@ use crate::db::Db;
 
 const NATPMP_PORT: u16 = 5351;
 
-// NAT-PMP result codes
+// NAT-PMP result codes (RFC 6886)
 const RESULT_SUCCESS: u16 = 0;
 const RESULT_UNSUPPORTED_VERSION: u16 = 1;
 const RESULT_NOT_AUTHORIZED: u16 = 2;
 const RESULT_NETWORK_FAILURE: u16 = 3;
-const RESULT_OUT_OF_RESOURCES: u16 = 5;
+const RESULT_OUT_OF_RESOURCES: u16 = 4;
+const RESULT_UNSUPP_OPCODE: u16 = 5;
 
-// PCP result codes
+// PCP result codes (RFC 6887 §7.4)
 const PCP_SUCCESS: u8 = 0;
-const PCP_NOT_AUTHORIZED: u8 = 2;
-const PCP_NETWORK_FAILURE: u8 = 3;
-const PCP_NO_RESOURCES: u8 = 4;
 const PCP_UNSUPP_VERSION: u8 = 1;
-const PCP_UNSUPP_OPCODE: u8 = 5;
+const PCP_NOT_AUTHORIZED: u8 = 2;
+const PCP_MALFORMED_REQUEST: u8 = 3;
+const PCP_UNSUPP_OPCODE: u8 = 4;
+const PCP_UNSUPP_OPTION: u8 = 5;
+const PCP_NETWORK_FAILURE: u8 = 7;
+const PCP_NO_RESOURCES: u8 = 8;
+const PCP_UNSUPP_PROTOCOL: u8 = 9;
+const PCP_ADDRESS_MISMATCH: u8 = 12;
 
 /// Create a UDP socket bound to 0.0.0.0:5351 on the LAN interface.
 fn create_socket(lan_iface: &str) -> anyhow::Result<tokio::net::UdpSocket> {
@@ -113,7 +118,15 @@ fn handle_natpmp(
         1 | 2 => handle_natpmp_mapping(data, opcode, src, db, portmap, wan_iface, epoch),
         _ => {
             debug!(opcode = opcode, "unknown NAT-PMP opcode");
-            None
+            let sssoe = epoch_secs(epoch);
+            Some(natpmp_mapping_response(
+                opcode | 0x80,
+                RESULT_UNSUPP_OPCODE,
+                sssoe,
+                0,
+                0,
+                0,
+            ))
         }
     }
 }
@@ -189,6 +202,23 @@ fn handle_natpmp_mapping(
 
     // lifetime=0 means delete
     if lifetime == 0 {
+        // M4: Bulk delete when internal_port=0 && external_port=0
+        if internal_port == 0 && external_port == 0 {
+            if let Err(e) = portmap.remove_all_by_source(protocol, &src_ip_str) {
+                warn!(error = %e, "NAT-PMP bulk delete failed");
+            } else {
+                info!(protocol = %protocol, from = %src_ip, "NAT-PMP bulk delete");
+            }
+            return Some(natpmp_mapping_response(
+                resp_opcode,
+                RESULT_SUCCESS,
+                sssoe,
+                0,
+                0,
+                0,
+            ));
+        }
+
         match portmap.remove_mapping(protocol, ext_port, &src_ip_str) {
             Ok(()) => {
                 info!(
@@ -202,7 +232,7 @@ fn handle_natpmp_mapping(
                     RESULT_SUCCESS,
                     sssoe,
                     internal_port,
-                    ext_port,
+                    0, // M2: deletion response must have external_port=0
                     0,
                 ));
             }
@@ -311,6 +341,12 @@ fn handle_pcp(
         return None;
     }
 
+    // M6: PCP packets must be a multiple of 4 octets
+    if data.len() % 4 != 0 {
+        let sssoe = epoch_secs(epoch);
+        return Some(pcp_error_response(0, PCP_MALFORMED_REQUEST, sssoe));
+    }
+
     let opcode_r = data[1];
     // Bit 7 is R flag; should be 0 for requests
     if opcode_r & 0x80 != 0 {
@@ -375,13 +411,25 @@ fn handle_pcp_map(
     let suggested_ext_port = u16::from_be_bytes([data[42], data[43]]);
     // suggested_external_ip at data[44..60] -- not used, we assign our WAN IP
 
+    // M1: Validate client IP matches UDP source
+    let src_ipv4 = match src {
+        SocketAddr::V4(addr) => *addr.ip(),
+        _ => return None,
+    };
+    if let Some(client_ip) = client_ipv4 {
+        if client_ip != Ipv4Addr::UNSPECIFIED && client_ip != src_ipv4 {
+            return Some(pcp_error_response(1, PCP_ADDRESS_MISMATCH, sssoe));
+        }
+    }
+    let client_ip_str = src_ipv4.to_string();
+
     let protocol = match protocol_byte {
         6 => "tcp",
         17 => "udp",
         _ => {
             debug!(protocol = protocol_byte, "PCP MAP unsupported protocol");
             return Some(pcp_map_error_response(
-                PCP_UNSUPP_OPCODE,
+                PCP_UNSUPP_PROTOCOL,
                 sssoe,
                 nonce,
                 protocol_byte,
@@ -390,18 +438,11 @@ fn handle_pcp_map(
         }
     };
 
-    // Use the client IP from the PCP header, falling back to the UDP source
-    let client_ip = client_ipv4.unwrap_or_else(|| match src {
-        SocketAddr::V4(addr) => *addr.ip(),
-        _ => Ipv4Addr::UNSPECIFIED,
-    });
-    let client_ip_str = client_ip.to_string();
-
     // Check trust
     {
         let db_guard = db.lock().unwrap();
         if !is_trusted(&db_guard, &client_ip_str) {
-            debug!(ip = %client_ip, "PCP request from non-trusted device");
+            debug!(ip = %src_ipv4, "PCP request from non-trusted device");
             return Some(pcp_map_error_response(
                 PCP_NOT_AUTHORIZED,
                 sssoe,
@@ -426,7 +467,7 @@ fn handle_pcp_map(
                 info!(
                     protocol = %protocol,
                     external_port = ext_port,
-                    from = %client_ip,
+                    from = %src_ipv4,
                     "PCP mapping removed"
                 );
                 let wan_ip = get_wan_ipv4(wan_iface).unwrap_or(Ipv4Addr::UNSPECIFIED);
@@ -466,7 +507,7 @@ fn handle_pcp_map(
                 protocol = %protocol,
                 external_port = resp.external_port,
                 internal_port = internal_port,
-                from = %client_ip,
+                from = %src_ipv4,
                 lifetime = resp.lifetime,
                 "PCP mapping added"
             );
@@ -575,6 +616,18 @@ fn pcp_map_error_response(
 // Main entry point
 // ---------------------------------------------------------------------------
 
+/// Build a gratuitous NAT-PMP external address response for announcement.
+fn build_announcement(wan_ip: Ipv4Addr, epoch: &Instant) -> Vec<u8> {
+    let sssoe = epoch_secs(epoch);
+    let mut resp = Vec::with_capacity(12);
+    resp.push(0); // version
+    resp.push(128); // opcode (0 + 128)
+    resp.extend_from_slice(&RESULT_SUCCESS.to_be_bytes()); // result
+    resp.extend_from_slice(&sssoe.to_be_bytes()); // epoch
+    resp.extend_from_slice(&wan_ip.octets()); // external IP
+    resp
+}
+
 pub async fn run(
     db: Arc<Mutex<Db>>,
     portmap: crate::portmap::SharedRegistry,
@@ -584,7 +637,7 @@ pub async fn run(
     info!(iface = %lan_iface, "starting NAT-PMP/PCP listener");
 
     let socket = match create_socket(&lan_iface) {
-        Ok(s) => s,
+        Ok(s) => Arc::new(s),
         Err(e) => {
             error!(error = %e, "failed to create NAT-PMP socket");
             return;
@@ -592,6 +645,38 @@ pub async fn run(
     };
 
     let epoch = Instant::now();
+
+    // M5: Monitor WAN IP and send gratuitous announcements on change
+    {
+        let announce_socket = Arc::clone(&socket);
+        let announce_wan = wan_iface.clone();
+        let announce_epoch = epoch;
+        tokio::spawn(async move {
+            let multicast_dest: SocketAddr = "224.0.0.1:5350".parse().unwrap();
+            let mut last_wan_ip = query_wan_ipv4(&announce_wan);
+
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                let current_ip = query_wan_ipv4(&announce_wan);
+                if current_ip != last_wan_ip {
+                    let ip = current_ip.unwrap_or(Ipv4Addr::UNSPECIFIED);
+                    info!(new_ip = %ip, "WAN IP changed, sending gratuitous announcements");
+                    let resp = build_announcement(ip, &announce_epoch);
+                    // Send 10 announcements with exponential backoff starting at 250ms
+                    let mut delay = std::time::Duration::from_millis(250);
+                    for _ in 0..10 {
+                        if let Err(e) = announce_socket.send_to(&resp, multicast_dest).await {
+                            debug!(error = %e, "gratuitous announcement send failed");
+                        }
+                        tokio::time::sleep(delay).await;
+                        delay *= 2;
+                    }
+                    last_wan_ip = current_ip;
+                }
+            }
+        });
+    }
+
     let mut buf = [0u8; 1100]; // PCP max payload
 
     loop {

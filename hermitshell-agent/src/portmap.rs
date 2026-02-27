@@ -310,6 +310,16 @@ impl PortMapRegistry {
         }
     }
 
+    /// Remove all automatic mappings for a given protocol and requesting IP.
+    pub fn remove_all_by_source(&self, protocol: &str, requesting_ip: &str) -> Result<(), MappingError> {
+        let db = self.db.lock().unwrap();
+        db.remove_auto_port_forwards_by_source(protocol, requesting_ip)
+            .map_err(|e| MappingError::Internal(e.to_string()))?;
+        Self::apply_rules(&db, &self.wan_iface, &self.lan_iface, &self.lan_ip)?;
+        info!(protocol = %protocol, requesting_ip = %requesting_ip, "bulk port mappings removed");
+        Ok(())
+    }
+
     /// Look up a mapping by protocol and external port.
     pub fn get_mapping(&self, protocol: &str, ext_port: u16) -> Option<PortForward> {
         let db = self.db.lock().unwrap();
