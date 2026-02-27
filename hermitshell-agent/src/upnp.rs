@@ -7,6 +7,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
+use rand::Rng;
 use tracing::{debug, error, info, warn};
 
 use crate::db::Db;
@@ -71,12 +72,14 @@ fn create_ssdp_socket(lan_iface: &str, lan_ip: Ipv4Addr) -> anyhow::Result<std::
 
 /// Build an SSDP M-SEARCH response for a given search target.
 fn ssdp_response(st: &str, uuid: &str, lan_ip: &str) -> String {
+    let usn = format!("uuid:{}::{}", uuid, st);
     format!(
         "HTTP/1.1 200 OK\r\n\
          CACHE-CONTROL: max-age=1800\r\n\
+         EXT:\r\n\
          LOCATION: http://{lan_ip}:{HTTP_PORT}/rootDesc.xml\r\n\
          ST: {st}\r\n\
-         USN: uuid:{uuid}::urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\
+         USN: {usn}\r\n\
          SERVER: HermitShell/1.0 UPnP/1.1\r\n\
          \r\n"
     )
@@ -84,6 +87,7 @@ fn ssdp_response(st: &str, uuid: &str, lan_ip: &str) -> String {
 
 /// Build an SSDP NOTIFY alive message for a given notification type.
 fn ssdp_notify(nt: &str, uuid: &str, lan_ip: &str) -> String {
+    let usn = format!("uuid:{}::{}", uuid, nt);
     format!(
         "NOTIFY * HTTP/1.1\r\n\
          HOST: 239.255.255.250:1900\r\n\
@@ -91,8 +95,21 @@ fn ssdp_notify(nt: &str, uuid: &str, lan_ip: &str) -> String {
          LOCATION: http://{lan_ip}:{HTTP_PORT}/rootDesc.xml\r\n\
          NT: {nt}\r\n\
          NTS: ssdp:alive\r\n\
-         USN: uuid:{uuid}::urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\
+         USN: {usn}\r\n\
          SERVER: HermitShell/1.0 UPnP/1.1\r\n\
+         \r\n"
+    )
+}
+
+/// Build an SSDP NOTIFY byebye message for a given notification type.
+fn ssdp_byebye(nt: &str, uuid: &str) -> String {
+    let usn = format!("uuid:{}::{}", uuid, nt);
+    format!(
+        "NOTIFY * HTTP/1.1\r\n\
+         HOST: 239.255.255.250:1900\r\n\
+         NT: {nt}\r\n\
+         NTS: ssdp:byebye\r\n\
+         USN: {usn}\r\n\
          \r\n"
     )
 }
@@ -108,12 +125,39 @@ fn parse_st(data: &str) -> Option<&str> {
     None
 }
 
+/// Parse the MX header from an M-SEARCH request.
+/// Returns a value clamped to [1, 120]; defaults to 3 seconds per spec.
+fn parse_mx(data: &str) -> u32 {
+    for line in data.lines() {
+        let lower = line.to_ascii_lowercase();
+        if lower.starts_with("mx:") {
+            if let Ok(val) = line[3..].trim().parse::<u32>() {
+                return val.clamp(1, 120);
+            }
+        }
+    }
+    3 // default 3 seconds per spec
+}
+
 // ---------------------------------------------------------------------------
 // SSDP listener + NOTIFY sender
 // ---------------------------------------------------------------------------
 
+/// All notification types for the IGD device hierarchy.
+fn all_notify_types(uuid: &str) -> Vec<String> {
+    vec![
+        format!("uuid:{}", uuid),
+        ST_ROOT.to_string(),
+        ST_IGD.to_string(),
+        "urn:schemas-upnp-org:device:WANDevice:1".to_string(),
+        "urn:schemas-upnp-org:device:WANConnectionDevice:1".to_string(),
+        ST_WANIP.to_string(),
+        "urn:schemas-upnp-org:service:WANCommonInterfaceConfig:1".to_string(),
+    ]
+}
+
 /// Main SSDP loop: listen for M-SEARCH, respond to trusted devices, and
-/// periodically send NOTIFY alive multicast.
+/// periodically send NOTIFY alive multicast.  Sends ssdp:byebye on shutdown.
 async fn run_ssdp(db: Arc<Mutex<Db>>, device_uuid: String, lan_iface: String, lan_ip: Ipv4Addr) {
     let lan_ip_str = lan_ip.to_string();
     let socket = match create_ssdp_socket(&lan_iface, lan_ip) {
@@ -135,9 +179,10 @@ async fn run_ssdp(db: Arc<Mutex<Db>>, device_uuid: String, lan_iface: String, la
         let mcast_dest: SocketAddr = SocketAddr::new(SSDP_ADDR.into(), SSDP_PORT);
         let mut interval =
             tokio::time::interval(std::time::Duration::from_secs(NOTIFY_INTERVAL_SECS));
+        let all_nts = all_notify_types(&notify_uuid);
         loop {
             interval.tick().await;
-            for nt in &[ST_ROOT, ST_IGD, ST_WANIP] {
+            for nt in &all_nts {
                 let msg = ssdp_notify(nt, &notify_uuid, &notify_lan_ip);
                 if let Err(e) = notify_socket.send_to(msg.as_bytes(), mcast_dest).await {
                     debug!(error = %e, "SSDP NOTIFY send failed");
@@ -149,12 +194,38 @@ async fn run_ssdp(db: Arc<Mutex<Db>>, device_uuid: String, lan_iface: String, la
 
     let mut buf = [0u8; 4096];
 
+    // L13: Send ssdp:byebye on shutdown (SIGTERM/SIGINT)
+    let mut sigterm =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
+
     loop {
-        let (len, src) = match socket.recv_from(&mut buf).await {
-            Ok(r) => r,
-            Err(e) => {
+        // Wait for incoming data or shutdown signal
+        let recv_result = tokio::select! {
+            r = socket.recv_from(&mut buf) => Some(r),
+            _ = async {
+                match sigterm.as_mut() {
+                    Some(s) => s.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => None,
+        };
+
+        let (len, src) = match recv_result {
+            Some(Ok(r)) => r,
+            Some(Err(e)) => {
                 warn!(error = %e, "SSDP recv error");
                 continue;
+            }
+            None => {
+                // Shutdown signal received — send byebye for all NTs
+                let mcast_dest: SocketAddr = SocketAddr::new(SSDP_ADDR.into(), SSDP_PORT);
+                let all_nts = all_notify_types(&device_uuid);
+                for nt in &all_nts {
+                    let msg = ssdp_byebye(nt, &device_uuid);
+                    let _ = socket.send_to(msg.as_bytes(), mcast_dest).await;
+                }
+                info!("SSDP byebye sent, shutting down");
+                return;
             }
         };
 
@@ -172,6 +243,16 @@ async fn run_ssdp(db: Arc<Mutex<Db>>, device_uuid: String, lan_iface: String, la
 
         // Only handle M-SEARCH requests
         if !data.starts_with("M-SEARCH") {
+            continue;
+        }
+
+        // L12: Validate MAN header
+        let has_valid_man = data.lines().any(|line| {
+            let lower = line.to_ascii_lowercase();
+            lower.starts_with("man:") && lower.contains("\"ssdp:discover\"")
+        });
+        if !has_valid_man {
+            debug!("M-SEARCH missing valid MAN header, ignoring");
             continue;
         }
 
@@ -203,6 +284,11 @@ async fn run_ssdp(db: Arc<Mutex<Db>>, device_uuid: String, lan_iface: String, la
         } else {
             continue;
         };
+
+        // H9: Random delay 0..MX seconds before responding
+        let mx = parse_mx(data);
+        let delay = rand::thread_rng().gen_range(0..=mx);
+        tokio::time::sleep(std::time::Duration::from_secs(delay as u64)).await;
 
         for rst in response_sts {
             let resp = ssdp_response(rst, &device_uuid, &lan_ip_str);

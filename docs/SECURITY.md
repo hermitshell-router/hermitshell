@@ -342,6 +342,13 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Cross-reference the UDP source IP against the device's ARP/NDP entry to verify the source MAC matches the expected device. This would catch IP spoofing even on the same L2 segment.
 
+### UPnP permanent leases capped to 24 hours
+
+- **What:** UPnP `AddPortMapping` with `NewLeaseDuration=0` (permanent) is capped to 86400 seconds (24 hours).
+- **Why:** Permanent UPnP port mappings create indefinite attack surface. Clients that need persistent mappings renew periodically.
+- **Risk:** Clients expecting truly permanent mappings lose them after 24 hours. Most UPnP clients renew every 20 minutes.
+- **Proper fix:** None needed — this is an intentional security limit, not a compromise.
+
 ---
 
 ## MAC Spoofing Defense

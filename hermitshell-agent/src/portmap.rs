@@ -82,7 +82,7 @@ pub struct MappingRequest {
     pub source: String,
     /// IP of the device making the request.
     pub requesting_ip: String,
-    /// Requested lease duration in seconds (0 = use default).
+    /// Requested lease duration in seconds (0 = permanent, capped to MAX_LEASE_SECS).
     pub lease_secs: u32,
 }
 
@@ -136,7 +136,7 @@ impl PortMapRegistry {
     /// - Secure mode (internal_ip == requesting_ip)
     /// - External port >= 1024
     /// - Per-IP and global automatic mapping limits
-    /// - Lease clamping (0 -> 3600, otherwise 120..86400)
+    /// - Lease clamping (0 -> 86400 permanent cap, otherwise 120..86400)
     /// - Conflict detection with renewal support
     pub fn add_mapping(&self, req: &MappingRequest) -> Result<MappingResponse, MappingError> {
         // 0. Validate protocol and internal IP before acquiring lock
@@ -181,9 +181,10 @@ impl PortMapRegistry {
             return Err(MappingError::GlobalLimit);
         }
 
-        // 6. Clamp lease: 0 -> 3600, otherwise clamp to [120, 86400]
+        // 6. L15: lease_duration=0 means "permanent" per UPnP spec.
+        // Cap to MAX_LEASE_SECS (86400) for security — documented in SECURITY.md.
         let lifetime = if req.lease_secs == 0 {
-            3600
+            MAX_LEASE_SECS
         } else {
             req.lease_secs.clamp(MIN_LEASE_SECS, MAX_LEASE_SECS)
         };
