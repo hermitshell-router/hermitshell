@@ -76,17 +76,15 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Warn the user in the web UI when creating a pinhole that the device will be directly reachable from the internet on the specified port. Consider adding rate limiting or geo-IP filtering options for pinholed ports. Log all inbound connections through pinholes for audit purposes.
 
-## 31. DHCPv6-PD lease file parsing trusts dhclient output
+## 31. WAN DHCP client trusts server responses
 
-**What:** The `parse_delegated_prefix()` function reads the dhclient6 lease file and extracts the `iaprefix` value. The lease file is written by dhclient running as root, so it is treated as trusted input.
+**What:** The in-agent DHCP client (`wan.rs`) processes DHCPv4 OFFER/ACK and DHCPv6 ADVERTISE/REPLY messages from the upstream DHCP server. It applies the offered IP address, subnet mask, gateway, and DNS servers directly to the WAN interface.
 
-**Why:** dhclient6 is a system daemon running as root that writes lease files to a root-owned directory. The content originates from the ISP's DHCPv6 server, but dhclient validates the protocol-level fields before writing them.
+**Why:** DHCP inherently trusts the server on the network segment. The agent validates transaction IDs (`xid`) to match requests with responses, preventing replay of stale messages. The `dhcproto` crate handles protocol-level validation (option lengths, message format).
 
-**Risk:** If the lease file is tampered with (by an attacker with root access, or if the file permissions are misconfigured), the parsed prefix could be invalid or malicious. An attacker-controlled prefix could cause the agent to assign addresses from an unexpected range, potentially conflicting with other networks or routing traffic to attacker-controlled infrastructure. However, an attacker with root access already has full control of the system.
+**Risk:** A rogue DHCP server on the WAN segment could provide a malicious gateway or DNS servers. This is the same risk as any DHCP client (including the replaced `dhclient`).
 
-**Mitigating factor:** The agent now deletes stale lease files before invoking dhclient and checks the exit status, preventing reuse of expired prefix delegations. The lease file path is explicitly set via `-lf` to avoid reading unexpected locations.
-
-**Proper fix:** Validate the parsed prefix format (must be a valid IPv6 prefix with a reasonable prefix length, e.g., /48 to /64). Reject prefixes that fall outside expected ULA or GUA ranges. Set the lease file permissions to `0600 root:root` and verify them before parsing.
+**Proper fix:** DHCP authentication (RFC 3118) is rarely deployed. In practice, the WAN segment is between the router and the ISP — if that's compromised, DHCP auth wouldn't help.
 
 ---
 
