@@ -493,6 +493,10 @@ pub async fn setup_dns(upstream_dns: String, ad_blocking: Option<String>) -> Res
 
 #[server]
 pub async fn setup_password_step(password: String, confirm: String) -> Result<(), ServerFnError> {
+    if crate::client::has_password().unwrap_or(false) {
+        leptos_axum::redirect("/setup/7");
+        return Ok(());
+    }
     if password != confirm || password.len() < 8 || password.len() > 128 {
         return Err(ServerFnError::new("Passwords must match and be 8-128 characters"));
     }

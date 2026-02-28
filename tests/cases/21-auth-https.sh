@@ -24,6 +24,9 @@ fi
 response=$(vm_exec lan "curl -s -k -o /dev/null -w '%{http_code}' -X POST -d 'password=testpass123&confirm=testpass123' $ROUTER${setup_action}")
 assert_match "$response" "200|30[0-9]" "Setup accepts or already configured"
 
+# Finalize setup so middleware doesn't redirect to wizard
+vm_exec router 'echo "{\"method\":\"finalize_setup\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' >/dev/null 2>&1
+
 # Get the login form action URL
 login_action=$(vm_exec lan "curl -s -k -L $ROUTER/login | grep -oP 'action=\"[^\"]*login[^\"]*\"' | head -1 | grep -oP '/api/[^\"]*'")
 if [ -z "$login_action" ]; then
