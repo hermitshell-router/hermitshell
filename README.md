@@ -8,7 +8,7 @@ Per-device network isolation, DNS ad blocking, WireGuard VPN, WiFi AP management
 
 ```
 hermitshell/          Web UI (Leptos 0.8 + Axum 0.8, Docker, ports 8080/8443)
-hermitshell-agent/    Router daemon: nftables, DHCP, DNS, WireGuard, logging, IPv6
+hermitshell-agent/    Router daemon: nftables, DHCP, Unbound DNS, WireGuard, WAN DHCP client, logging, IPv6
 hermitshell-common/   Shared wire types (Device, Alert, PortForward, etc.)
 hermitshell-dhcp/     DHCP server (DHCPv4 + DHCPv6)
 ```

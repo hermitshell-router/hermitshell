@@ -19,10 +19,10 @@ usermod -aG docker vagrant
 # eth1 = WAN (gets IP from wan-vm via DHCP)
 # eth2 = LAN (static IP, runs DHCP server)
 
-# Configure WAN interface to use DHCP
+# Configure WAN interface (agent handles DHCP)
 cat > /etc/network/interfaces.d/wan <<EOF
 auto eth1
-iface eth1 inet dhcp
+iface eth1 inet manual
 EOF
 
 # Configure LAN interface (agent adds addresses at startup)

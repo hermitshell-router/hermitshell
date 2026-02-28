@@ -8,7 +8,6 @@ mod log_export;
 mod mdns;
 mod natpmp;
 mod nftables;
-mod pd;
 mod portmap;
 mod qos;
 mod ra;
@@ -18,6 +17,7 @@ mod tls_client;
 mod update;
 mod upnp;
 mod runzero;
+mod wan;
 mod wifi;
 mod wireguard;
 
@@ -496,20 +496,18 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Try to obtain IPv6 prefix delegation from ISP
-    match crate::pd::request_prefix(&wan_iface) {
-        Ok(Some(prefix)) => {
-            info!(prefix = %prefix, "IPv6 prefix delegated");
-            let db_guard = db.lock().unwrap();
-            let _ = db_guard.set_config("ipv6_delegated_prefix", &prefix);
+    // Start WAN lifecycle (DHCP or static)
+    let wan_lease = wan::start(wan_iface.clone(), db.clone());
+    // Wait briefly for initial lease acquisition
+    for _ in 0..50 {
+        if wan_lease.lock().unwrap().is_some() {
+            break;
         }
-        Ok(None) => {
-            info!("no IPv6 prefix delegation, using ULA only");
-        }
-        Err(e) => {
-            warn!(error = %e, "DHCPv6-PD failed, using ULA only");
-        }
-    };
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    if wan_lease.lock().unwrap().is_none() {
+        warn!("WAN lease not yet acquired, continuing startup");
+    }
 
     // Restore state for previously assigned devices
     {
