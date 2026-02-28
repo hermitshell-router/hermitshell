@@ -246,7 +246,7 @@ async fn rate_limit_middleware(
 
     let ip = match ip {
         Some(ip) => ip,
-        None => return next.run(req).await, // fail-open if no IP available
+        None => return (axum::http::StatusCode::FORBIDDEN, "Unable to determine client address").into_response(),
     };
 
     // Check cooldown for this IP
