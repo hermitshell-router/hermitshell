@@ -209,10 +209,9 @@ pub(super) fn handle_set_timezone(req: &Request, db: &Arc<Mutex<Db>>) -> Respons
     Response::ok()
 }
 
-pub(super) fn handle_setup_set_dns(req: &Request, db: &Arc<Mutex<Db>>, blocky: &Arc<Mutex<BlockyManager>>) -> Response {
+pub(super) fn handle_setup_set_dns(req: &Request, db: &Arc<Mutex<Db>>, unbound: &Arc<Mutex<UnboundManager>>) -> Response {
     let db_guard = db.lock().unwrap();
     if db_guard.get_config("admin_password_hash").ok().flatten().is_some() {
-        // Allow DNS config during post-password setup steps too
         if db_guard.get_config("setup_complete").ok().flatten().as_deref() == Some("true") {
             return Response::err("DNS config during setup only");
         }
@@ -221,7 +220,6 @@ pub(super) fn handle_setup_set_dns(req: &Request, db: &Arc<Mutex<Db>>, blocky: &
     // Store upstream DNS preference
     if let Some(ref dns) = req.value {
         if dns != "auto" {
-            // Validate each IP
             for part in dns.split(',') {
                 if part.trim().parse::<std::net::IpAddr>().is_err() {
                     return Response::err(&format!("invalid DNS address: {}", part.trim()));
@@ -229,7 +227,6 @@ pub(super) fn handle_setup_set_dns(req: &Request, db: &Arc<Mutex<Db>>, blocky: &
             }
             let _ = db_guard.set_config("upstream_dns", dns);
         } else {
-            // Remove custom DNS, use auto-detected
             let _ = db_guard.set_config("upstream_dns", "auto");
         }
     }
@@ -237,16 +234,17 @@ pub(super) fn handle_setup_set_dns(req: &Request, db: &Arc<Mutex<Db>>, blocky: &
     // Ad blocking toggle
     if let Some(enabled) = req.enabled {
         let _ = db_guard.set_config("ad_blocking_enabled", if enabled { "true" } else { "false" });
-        drop(db_guard);
-        let mgr = blocky.lock().unwrap();
-        let _ = mgr.set_blocking_enabled(enabled);
-    } else {
-        drop(db_guard);
     }
 
-    let db_guard = db.lock().unwrap();
     let _ = db_guard.set_config("setup_step", "5");
     let _ = db_guard.log_audit("setup_set_dns", req.value.as_deref().unwrap_or("auto"));
+    drop(db_guard);
+
+    // Regenerate Unbound config and reload
+    let mgr = unbound.lock().unwrap();
+    let _ = mgr.write_config(db);
+    let _ = mgr.reload();
+
     Response::ok()
 }
 

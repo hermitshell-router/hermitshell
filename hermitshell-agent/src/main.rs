@@ -1,5 +1,5 @@
 mod analyzer;
-mod blocky;
+mod unbound;
 mod conntrack;
 mod crypto;
 mod db;
@@ -25,58 +25,9 @@ use hermitshell_common::subnet;
 
 use anyhow::Result;
 use std::io::{BufRead, BufReader, Write};
-use std::net::Ipv4Addr;
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error, info, warn};
-
-/// Read nameservers from WAN DHCP lease, then /etc/resolv.conf, falling back to public DNS.
-fn read_upstream_dns(wan_iface: &str) -> Vec<Ipv4Addr> {
-    // Prefer DNS from WAN DHCP lease (most accurate for a router)
-    let lease_path = format!("/var/lib/dhcp/dhclient.{}.leases", wan_iface);
-    if let Ok(content) = std::fs::read_to_string(&lease_path) {
-        // Parse last "option domain-name-servers" line (most recent lease)
-        if let Some(line) = content.lines().rev().find(|l| l.contains("option domain-name-servers")) {
-            let servers: Vec<Ipv4Addr> = line
-                .split("domain-name-servers")
-                .nth(1)
-                .unwrap_or("")
-                .trim()
-                .trim_end_matches(';')
-                .split(',')
-                .filter_map(|s| s.trim().parse().ok())
-                .collect();
-            if !servers.is_empty() {
-                return servers;
-            }
-        }
-    }
-
-    // Fall back to /etc/resolv.conf
-    let content = std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default();
-    let servers: Vec<Ipv4Addr> = content
-        .lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            if line.starts_with("nameserver") {
-                let ip: Ipv4Addr = line.split_whitespace().nth(1)?.parse().ok()?;
-                // Skip systemd-resolved stub
-                if ip == Ipv4Addr::new(127, 0, 0, 53) {
-                    None
-                } else {
-                    Some(ip)
-                }
-            } else {
-                None
-            }
-        })
-        .collect();
-    if servers.is_empty() {
-        vec![Ipv4Addr::new(1, 1, 1, 1), Ipv4Addr::new(8, 8, 8, 8)]
-    } else {
-        servers
-    }
-}
 
 const DB_PATH: &str = "/var/lib/hermitshell/hermitshell.db";
 const SOCKET_PATH: &str = "/run/hermitshell/agent.sock";
@@ -688,37 +639,33 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Start blocky DNS server
-    let upstream_dns = read_upstream_dns(&wan_iface);
-    info!(servers = ?upstream_dns, "upstream DNS");
-
-    let blocky_mgr = {
-        let dns_strings: Vec<String> = upstream_dns.iter().map(|ip| ip.to_string()).collect();
-        let blocky_listen = if has_ipv6_ula {
-            format!("{}:5354,[{}]:5354", lan_ip, lan_ip_v6)
-        } else {
-            format!("{}:5354", lan_ip)
-        };
-        let blocky_bin = std::env::var("BLOCKY_BIN")
-            .unwrap_or_else(|_| "/opt/hermitshell/blocky".into());
-        let mut mgr = blocky::BlockyManager::new(
-            dns_strings,
-            blocky_listen,
-            "/var/lib/hermitshell/blocky".to_string(),
-            blocky_bin,
+    // Start Unbound DNS server
+    let unbound_mgr = {
+        let mut mgr = unbound::UnboundManager::new(
+            5354,
+            lan_ip.clone(),
+            if has_ipv6_ula { Some(lan_ip_v6.clone()) } else { None },
+            None, // TLS cert path (DoT managed separately via tls.rs)
+            None, // TLS key path
         );
+        if let Err(e) = mgr.write_config(&db) {
+            error!(error = %e, "failed to write unbound config");
+        }
+        if let Err(e) = mgr.download_blocklists(&db) {
+            error!(error = %e, "failed to download blocklists");
+        }
         if let Err(e) = mgr.start() {
-            error!(error = %e, "failed to start blocky");
+            error!(error = %e, "failed to start unbound");
         } else {
-            if !mgr.wait_for_ready(10) {
-                error!("blocky did not become ready within 10s");
+            if !mgr.wait_for_ready(15) {
+                error!("unbound did not become ready within 15s");
             }
             // Check ad_blocking_enabled setting
             let db_guard = db.lock().unwrap();
             let enabled = db_guard.get_config_bool("ad_blocking_enabled", true);
             drop(db_guard);
             if !enabled {
-                if let Err(e) = mgr.set_blocking_enabled(false) {
+                if let Err(e) = mgr.set_blocking_enabled(&db, false) {
                     error!(error = %e, "failed to disable blocking");
                 }
             }
@@ -801,7 +748,7 @@ async fn main() -> Result<()> {
 
     // Spawn socket server
     let db_clone = db.clone();
-    let blocky_clone = blocky_mgr.clone();
+    let unbound_clone = unbound_mgr.clone();
     let wan_for_socket = wan_iface.to_string();
     let lan_for_socket = lan_iface.to_string();
     let log_tx_socket = log_tx.clone();
@@ -812,7 +759,7 @@ async fn main() -> Result<()> {
     let mdns_reg_for_socket = mdns_registry.clone();
     let portmap_for_socket = portmap_registry.clone();
     tokio::spawn(async move {
-        if let Err(e) = socket::run_server(SOCKET_PATH, db_clone, start_time, blocky_clone, wan_for_socket, lan_for_socket, log_tx_socket, bandwidth_rt_for_socket, speed_test_state, mdns_reg_for_socket, portmap_for_socket).await {
+        if let Err(e) = socket::run_server(SOCKET_PATH, db_clone, start_time, unbound_clone, wan_for_socket, lan_for_socket, log_tx_socket, bandwidth_rt_for_socket, speed_test_state, mdns_reg_for_socket, portmap_for_socket).await {
             error!(error = %e, "socket server error");
         }
     });
