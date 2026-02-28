@@ -336,3 +336,189 @@ select {
     gap: 0.5rem;
     justify-content: flex-end;
 }
+
+/* Setup wizard */
+.setup-container {
+    max-width: 540px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+}
+
+.setup-container h1 {
+    font-size: 1.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.setup-container .setup-subtitle {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    margin-bottom: 1.5rem;
+}
+
+.setup-progress {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 2rem;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+}
+
+.setup-progress-bar {
+    flex: 1;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.setup-progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 0.3s;
+}
+
+.setup-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+}
+
+.setup-card label {
+    display: block;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.25rem;
+    margin-top: 1rem;
+}
+
+.setup-card label:first-child {
+    margin-top: 0;
+}
+
+.setup-card input[type="text"],
+.setup-card input[type="password"],
+.setup-card select {
+    width: 100%;
+    padding: 0.5rem;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+}
+
+.setup-card .radio-group {
+    margin-top: 0.5rem;
+}
+
+.setup-card .radio-group label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    margin-top: 0.25rem;
+    cursor: pointer;
+    border-radius: 0.375rem;
+    color: var(--text-primary);
+    font-size: 0.875rem;
+}
+
+.setup-card .radio-group label:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.setup-card .radio-group input[type="radio"] {
+    accent-color: var(--accent);
+}
+
+.setup-card .checkbox-group label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    cursor: pointer;
+    color: var(--text-primary);
+    font-size: 0.875rem;
+}
+
+.setup-card .checkbox-group input[type="checkbox"] {
+    accent-color: var(--accent);
+}
+
+.setup-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 1.5rem;
+}
+
+.setup-actions .btn {
+    padding: 0.5rem 1.5rem;
+    font-size: 0.875rem;
+}
+
+.setup-back {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+}
+
+/* CSS-only toggle: hide static fields when DHCP is selected */
+.wan-static-fields { display: none; }
+input[name="wan_mode"][value="static"]:checked ~ .wan-static-fields { display: block; }
+
+/* CSS-only toggle: hide custom DNS fields when not selected */
+.dns-custom-fields { display: none; }
+input[name="upstream_dns"][value="custom"]:checked ~ .dns-custom-fields { display: block; }
+
+/* Welcome page */
+.setup-welcome {
+    text-align: center;
+    padding: 3rem 1.5rem;
+}
+
+.setup-welcome h1 {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
+}
+
+.setup-welcome p {
+    color: var(--text-secondary);
+    margin-bottom: 2rem;
+    font-size: 1rem;
+}
+
+/* Summary page */
+.setup-summary-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.875rem;
+}
+
+.setup-summary-row:last-child { border-bottom: none; }
+.setup-summary-label { color: var(--text-secondary); }
+.setup-summary-value { font-weight: 500; }
+
+/* Carrier status dot */
+.carrier-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 0.25rem;
+}
+.carrier-up { background: var(--success); }
+.carrier-down { background: var(--text-muted); }
+
+/* Skip link for optional steps */
+.setup-skip {
+    display: block;
+    text-align: center;
+    margin-bottom: 1rem;
+    color: var(--text-muted);
+    font-size: 0.875rem;
+}
