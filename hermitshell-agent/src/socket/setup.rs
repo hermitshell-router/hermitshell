@@ -304,3 +304,164 @@ pub(super) fn handle_finalize_setup(_req: &Request, db: &Arc<Mutex<Db>>) -> Resp
     let _ = db.log_audit("finalize_setup", "complete");
     Response::ok()
 }
+
+pub(super) fn handle_update_hostname(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref hostname) = req.value else {
+        return Response::err("value required (hostname)");
+    };
+
+    let clean = hermitshell_common::sanitize_hostname(hostname);
+    if clean.is_empty() || clean.len() > 63 {
+        return Response::err("invalid hostname");
+    }
+
+    let db = db.lock().unwrap();
+    if let Err(e) = db.set_config("router_hostname", &clean) {
+        return Response::err(&format!("failed to store hostname: {}", e));
+    }
+
+    let _ = std::process::Command::new("hostnamectl")
+        .args(["set-hostname", &clean])
+        .status();
+
+    let _ = db.log_audit("update_hostname", &clean);
+    Response::ok()
+}
+
+pub(super) fn handle_update_timezone(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref tz) = req.value else {
+        return Response::err("value required (timezone)");
+    };
+
+    if tz.contains("..") || tz.starts_with('/') {
+        return Response::err("invalid timezone");
+    }
+    let tz_path = format!("/usr/share/zoneinfo/{}", tz);
+    if !std::path::Path::new(&tz_path).exists() {
+        return Response::err(&format!("unknown timezone: {}", tz));
+    }
+
+    let db = db.lock().unwrap();
+    if let Err(e) = db.set_config("timezone", tz) {
+        return Response::err(&format!("failed to store timezone: {}", e));
+    }
+
+    let _ = std::process::Command::new("timedatectl")
+        .args(["set-timezone", tz])
+        .status();
+
+    let _ = db.log_audit("update_timezone", tz);
+    Response::ok()
+}
+
+pub(super) fn handle_update_upstream_dns(req: &Request, db: &Arc<Mutex<Db>>, unbound: &Arc<Mutex<UnboundManager>>) -> Response {
+    let Some(ref dns) = req.value else {
+        return Response::err("value required (upstream DNS or 'auto')");
+    };
+
+    if dns != "auto" {
+        for part in dns.split(',') {
+            if part.trim().parse::<std::net::IpAddr>().is_err() {
+                return Response::err(&format!("invalid DNS address: {}", part.trim()));
+            }
+        }
+    }
+
+    let db_guard = db.lock().unwrap();
+    if let Err(e) = db_guard.set_config("upstream_dns", dns) {
+        return Response::err(&format!("failed to store upstream_dns: {}", e));
+    }
+    let _ = db_guard.log_audit("update_upstream_dns", dns);
+    drop(db_guard);
+
+    let mgr = unbound.lock().unwrap();
+    let _ = mgr.write_config(db);
+    let _ = mgr.reload();
+
+    Response::ok()
+}
+
+pub(super) fn handle_update_wan_config(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref mode) = req.value else {
+        return Response::err("value required (wan_mode: dhcp or static)");
+    };
+
+    match mode.as_str() {
+        "dhcp" | "static" => {}
+        _ => return Response::err("wan_mode must be 'dhcp' or 'static'"),
+    }
+
+    let db = db.lock().unwrap();
+    if let Err(e) = db.set_config("wan_mode", mode) {
+        return Response::err(&format!("failed to store wan_mode: {}", e));
+    }
+
+    if mode == "static" {
+        if let Some(ref ip) = req.key {
+            let valid = if let Some((addr, prefix)) = ip.split_once('/') {
+                addr.parse::<std::net::Ipv4Addr>().is_ok()
+                    && prefix.parse::<u8>().map(|p| p <= 32).unwrap_or(false)
+            } else {
+                ip.parse::<std::net::Ipv4Addr>().is_ok()
+            };
+            if !valid {
+                return Response::err("invalid static IP address");
+            }
+            let _ = db.set_config("wan_static_ip", ip);
+        }
+        if let Some(ref gw) = req.name {
+            if gw.parse::<std::net::Ipv4Addr>().is_err() {
+                return Response::err("invalid gateway address");
+            }
+            let _ = db.set_config("wan_static_gateway", gw);
+        }
+        if let Some(ref dns) = req.description {
+            for part in dns.split(',') {
+                if part.trim().parse::<std::net::IpAddr>().is_err() {
+                    return Response::err(&format!("invalid DNS address: {}", part.trim()));
+                }
+            }
+            let _ = db.set_config("wan_static_dns", dns);
+        }
+    }
+
+    let _ = db.log_audit("update_wan_config", mode);
+    Response::ok()
+}
+
+pub(super) fn handle_update_interfaces(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref wan) = req.key else {
+        return Response::err("key required (WAN interface name)");
+    };
+    let Some(ref lan) = req.value else {
+        return Response::err("value required (LAN interface name)");
+    };
+
+    if wan == lan {
+        return Response::err("WAN and LAN must be different interfaces");
+    }
+
+    if let Err(e) = nftables::validate_iface(wan) {
+        return Response::err(&format!("invalid WAN interface name: {}", e));
+    }
+    if let Err(e) = nftables::validate_iface(lan) {
+        return Response::err(&format!("invalid LAN interface name: {}", e));
+    }
+
+    if !std::path::Path::new(&format!("/sys/class/net/{}", wan)).exists() {
+        return Response::err(&format!("WAN interface '{}' not found", wan));
+    }
+    if !std::path::Path::new(&format!("/sys/class/net/{}", lan)).exists() {
+        return Response::err(&format!("LAN interface '{}' not found", lan));
+    }
+
+    let db = db.lock().unwrap();
+    if let Err(e) = db.set_config("wan_iface", wan) {
+        return Response::err(&format!("failed to store WAN: {}", e));
+    }
+    if let Err(e) = db.set_config("lan_iface", lan) {
+        return Response::err(&format!("failed to store LAN: {}", e));
+    }
+    let _ = db.log_audit("update_interfaces", &format!("wan={}, lan={}", wan, lan));
+    Response::ok()
+}
