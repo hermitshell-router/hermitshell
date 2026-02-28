@@ -30,7 +30,7 @@ How HermitShell compares to the platforms most home and prosumer users actually 
 | **Web UI** | Built-in (Leptos SSR) | LuCI | Full GUI (Bootstrap) | Mobile app + web | UniFi controller | Built-in (PHP) | Minimal (optional) |
 | **WiFi AP management** | TP-Link EAP720 only | Native (runs on the AP) | Not built-in | Not applicable (wired only) | UniFi APs only | Native (hostapd, the device IS the AP) | Not built-in |
 | **Multi-WAN failover** | Not yet | Packages (mwan3) | Built-in (gateway groups) | Built-in | Built-in | Not built-in | Built-in (load balancing) |
-| **Setup** | Install script + web wizard | Flash firmware, LuCI | ISO install + web wizard | Plug in, app setup | Plug in, app setup | Install script + web UI | ISO install + CLI |
+| **Setup** | Install script, Docker container, or .deb package | Flash firmware, LuCI | ISO install + web wizard | Plug in, app setup | Plug in, app setup | Install script + web UI | ISO install + CLI |
 | **Updates** | GUI one-click + auto-update (opt-in) | Sysupgrade | GUI one-click + firmware mirrors | Automatic OTA | Automatic OTA | apt upgrade | apt (rolling) or image (LTS) |
 | **Multi-admin** | Single admin | Multi-user | Multi-user + RBAC | Multi-user | Multi-user | Single admin | Multi-user + RBAC |
 
@@ -43,6 +43,8 @@ How HermitShell compares to the platforms most home and prosumer users actually 
 **Transparent security model.** Every security compromise is documented in [SECURITY.md](SECURITY.md) with what, why, risk, and proper fix. No other consumer router platform publishes this level of detail about their security trade-offs.
 
 **Behavioral analysis built in.** Traffic anomaly detection, DHCP fingerprint change alerts, and DNS reputation monitoring ship out of the box. OpenWrt, RaspAP, and VyOS have no equivalent; OPNsense, Firewalla, and Ubiquiti offer IDS/IPS but not behavioral baselines.
+
+**Lightweight, multiple deployment options.** Runs as a single all-in-one Docker container, a .deb package, or via install script. The static Rust binaries and Alpine-based container image keep resource usage minimal — suitable for a Raspberry Pi or any low-power SBC with two network interfaces. OPNsense requires a dedicated x86_64 machine with FreeBSD. Firewalla and Ubiquiti require buying proprietary hardware. OpenWrt requires a supported router.
 
 **Full source, permissive license.** MIT licensed. Inspect, modify, and redistribute without restriction. OpenWrt, RaspAP, and VyOS (rolling) are GPL; OPNsense is BSD; VyOS LTS is proprietary; Firewalla and Ubiquiti are closed source.
 
