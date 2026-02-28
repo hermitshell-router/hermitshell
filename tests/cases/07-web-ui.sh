@@ -15,9 +15,9 @@ response=$(vm_exec lan "curl -s -o /dev/null -w '%{http_code}' http://10.0.0.1/"
 assert_match "$response" "30[0-9]|000" "HTTP redirects or refused"
 
 # Get the setup form action URL (Leptos appends a hash to server fn paths)
-setup_action=$(vm_exec lan "curl -s -k -L $ROUTER/setup | grep -oP 'action=\"[^\"]*setup_password[^\"]*\"' | head -1 | grep -oP '/api/[^\"]*'")
+setup_action=$(vm_exec lan "curl -s -k -L $ROUTER/setup/6 | grep -oP 'action=\"[^\"]*setup_password[^\"]*\"' | head -1 | grep -oP '/api/[^\"]*'")
 if [ -z "$setup_action" ]; then
-    setup_action="/api/setup_password"
+    setup_action="/api/setup_password_step"
 fi
 
 # Setup: set password first
