@@ -119,6 +119,32 @@ pub struct DnsLogEntry {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DnsForwardZone {
+    pub id: i64,
+    pub domain: String,
+    pub forward_addr: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DnsCustomRule {
+    pub id: i64,
+    pub domain: String,
+    pub record_type: String,
+    pub value: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DnsBlocklist {
+    pub id: i64,
+    pub name: String,
+    pub url: String,
+    pub tag: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Alert {
     pub id: i64,
     pub device_mac: String,
