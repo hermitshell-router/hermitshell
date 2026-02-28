@@ -100,7 +100,7 @@ This document tracks security compromises made during implementation, why they w
 
 **Risk:** Any process with socket access can obtain the TLS private key. With the key, an attacker can impersonate the router's web UI or decrypt captured traffic. The socket is `0660` (see issue #49), so only root and group members can read the key.
 
-**Mitigating factor:** Same socket access control as all other IPC methods. The cert is self-signed, so impersonation is only meaningful if the user has already trusted it.
+**Mitigating factor:** The socket now enforces SO_PEERCRED method allowlists (see issue #90). `get_tls_config` is in the web-allowed set because the web UI container needs it at startup. The cert is self-signed, so impersonation is only meaningful if the user has already trusted it.
 
 **Proper fix:** Have the agent terminate TLS directly instead of delegating to the web UI container. Alternatively, write the cert/key to a file readable only by the container, avoiding IPC transfer. Neither approach is clearly better given the current Docker architecture.
 
@@ -152,9 +152,35 @@ This document tracks security compromises made during implementation, why they w
 
 **Why:** Bounded caches are necessary to prevent unbounded memory growth. LRU eviction is a standard trade-off — it favors tracking recently active IPs, but allows old entries to be displaced.
 
-**Risk:** Low. The agent-side rate limiter uses a global counter that is unaffected by web UI cache eviction. An attacker who evicts their IP from the web UI cache still hits the agent's exponential backoff on the next attempt. The web UI per-IP layer is a UX improvement (prevents one attacker from locking out other clients); the agent-side global limiter is the ultimate brute-force defense.
+**Risk:** Low. The agent-side rate limiter uses a global counter that is unaffected by web UI cache eviction. An attacker who evicts their IP from the web UI cache still hits the agent's exponential backoff on the next attempt. The web UI per-IP layer is a UX improvement (prevents one attacker from locking out other clients); the agent-side global limiter is the ultimate brute-force defense. The web UI rate limiter now fails closed — if the client IP cannot be determined (missing `ConnectInfo`), the request is rejected with 403 instead of being allowed through.
 
 **Proper fix:** No fix needed — the two-layer design (per-IP web UI + global agent) provides defense in depth. If a stronger guarantee were desired, the web UI could use a larger cache or persist rate limit state to the agent's SQLite database.
+
+---
+
+## Socket Access Control
+
+## 90. SO_PEERCRED method allowlist grants broad access to non-root callers
+
+**What:** The agent socket uses `SO_PEERCRED` (`peer_cred()`) to identify the UID of each connecting process. Root (UID 0) callers have unrestricted access. Non-root callers are restricted to a compile-time allowlist (`WEB_ALLOWED_METHODS`, ~80 methods). Methods not in the allowlist — `dhcp_discover`, `dhcp_provision`, `dhcp6_discover`, `dhcp6_provision`, `ingest_dns_logs` — return "access denied" for non-root callers.
+
+**Why:** The web UI container runs as non-root and connects to the agent socket. It needs access to most methods (device management, config, status, WiFi, WireGuard, etc.) but should not be able to invoke DHCP provisioning or DNS log ingestion, which are internal IPC between the agent and its child processes.
+
+**Risk:** The allowlist is permissive — non-root callers can still read secrets via `get_tls_config` and `export_config`, modify firewall rules, change DNS settings, and manage WireGuard peers. A compromised web UI container retains significant control over the router. The allowlist is deny-by-default for new methods (they must be explicitly added), which prevents accidental exposure of future admin-only methods.
+
+**Mitigating factor:** The socket is `0660 root:root`, so only root and the web UI container (which has the socket bind-mounted) can connect. The `peer_cred()` check is kernel-enforced and unforgeable. Connections that fail `peer_cred()` are dropped immediately.
+
+**Proper fix:** Further partition the allowlist into read-only and read-write tiers. Read-only methods (status, list) could be available to any socket caller, while write methods (set_config, add_port_forward) could require a session token or elevated credential. This would limit damage from a compromised read-only consumer.
+
+## 91. DHCP IPC socket does not enforce SO_PEERCRED
+
+**What:** The DHCP IPC socket (`/run/hermitshell/dhcp.sock`) does not perform peer credential checks. It relies solely on filesystem permissions (`0660 root:root`) for access control.
+
+**Why:** The DHCP socket has a restricted dispatch table that only handles `dhcp_discover`, `dhcp_provision`, `dhcp6_discover`, and `dhcp6_provision`. Only the DHCP server process (running as root) connects to it.
+
+**Risk:** Low. The filesystem permissions prevent non-root access, and the dispatch table limits what can be done even if access is gained. However, this lacks the defense-in-depth that `peer_cred()` provides on the main socket.
+
+**Proper fix:** Add a `peer_cred()` check that only allows UID 0. Low priority given the restricted dispatch table and filesystem permissions.
 
 ---
 
@@ -260,19 +286,15 @@ This document tracks security compromises made during implementation, why they w
 
 **Why:** Users need the ability to fully restore a router from backup without re-entering every credential. Requiring encryption adds friction that may prevent users from making backups at all.
 
-**Risk:** If the backup file is compromised, an attacker gains all router credentials. The admin password hash (Argon2id) still requires cracking, but WireGuard keys, TLS keys, and API tokens are immediately usable. Additionally, the `export_config` IPC method returns all secrets as cleartext JSON over the Unix socket when `include_secrets` is true and no passphrase is given — any process with socket access can obtain every credential in a single request.
+**Risk:** If the backup file is compromised, an attacker gains all router credentials. The admin password hash (Argon2id) still requires cracking, but WireGuard keys, TLS keys, and API tokens are immediately usable. The `export_config` IPC method returns all secrets as cleartext JSON over the Unix socket when `include_secrets` is true and no passphrase is given. The method is in the web-allowed set (see issue #90), so non-root callers with socket access can reach it.
 
 **Proper fix:** Always use `--encrypt` with a strong passphrase. The encrypted backup uses Argon2id key derivation (m=64MB, t=3) + AES-256-GCM, making brute-force impractical with a decent passphrase. Store backup files with restricted permissions (0600) and on encrypted storage. Consider requiring a passphrase for any export that includes secrets.
 
-## 63. Backup passphrase in URL query parameter
+## ~~63. Backup passphrase in URL query parameter~~ (RESOLVED)
 
-**What:** The web UI backup download endpoint (`/api/backup/config`) accepts the encryption passphrase as a URL query parameter (`?secrets=1&passphrase=...`).
+**Status:** Fixed. The backup endpoint was changed from GET to POST. The passphrase is now sent in the POST body via an HTML form, not in the URL. Browser history, proxy logs, and `Referer` headers no longer expose the passphrase.
 
-**Why:** Browser download flows require GET requests. Sending the passphrase in a POST body would prevent the browser from initiating a file download directly (it would require JavaScript to fetch the response and trigger a download, or a two-step flow).
-
-**Risk:** The passphrase appears in the URL. HTTPS encrypts the URL in transit, so it is not visible on the wire. However, the URL may be logged in browser history, proxy logs (if TLS-terminating), or the `Referer` header on subsequent navigation. The agent does not log query parameters.
-
-**Proper fix:** Use a POST-based download flow with JavaScript: submit the form via `fetch()`, receive the response as a blob, and trigger a download via `URL.createObjectURL()`. This keeps the passphrase in the POST body, out of URL logs. The tradeoff is requiring JavaScript for the download (currently works without JS).
+**Original issue:** The endpoint accepted the passphrase as a URL query parameter (`?secrets=1&passphrase=...`), which could appear in browser history and logs.
 
 ---
 
