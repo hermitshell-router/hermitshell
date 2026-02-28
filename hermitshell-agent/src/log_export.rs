@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tracing::{error, info};
+use zeroize::Zeroizing;
 
 #[derive(Debug, Clone)]
 pub enum LogEvent {
@@ -279,7 +280,7 @@ pub async fn start(
     let hostname = get_hostname();
     let mut syslog_addr: Option<String> = None;
     let mut webhook_url: Option<String> = None;
-    let mut webhook_secret: String = String::new();
+    let mut webhook_secret: Zeroizing<String> = Zeroizing::new(String::new());
     let mut webhook_batch: Vec<serde_json::Value> = Vec::new();
     let mut last_config_refresh = std::time::Instant::now();
     let mut last_webhook_flush = std::time::Instant::now();
@@ -337,7 +338,7 @@ fn refresh_config(
     db: &Arc<Mutex<Db>>,
     syslog_addr: &mut Option<String>,
     webhook_url: &mut Option<String>,
-    webhook_secret: &mut String,
+    webhook_secret: &mut Zeroizing<String>,
 ) {
     let db_guard = db.lock().unwrap();
     *syslog_addr = db_guard
@@ -350,11 +351,11 @@ fn refresh_config(
         .ok()
         .flatten()
         .filter(|v| !v.is_empty());
-    *webhook_secret = db_guard
+    *webhook_secret = Zeroizing::new(db_guard
         .get_config("webhook_secret")
         .ok()
         .flatten()
-        .unwrap_or_default();
+        .unwrap_or_default());
 }
 
 fn emit_tracing(event: &LogEvent) {

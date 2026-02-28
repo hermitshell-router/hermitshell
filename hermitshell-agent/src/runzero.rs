@@ -3,6 +3,7 @@ use serde::Deserialize;
 use std::sync::{Arc, Mutex};
 use tokio::time::{Duration, interval};
 use tracing::{info, warn};
+use zeroize::Zeroizing;
 
 use crate::db::Db;
 
@@ -76,7 +77,7 @@ pub async fn run(db: Arc<Mutex<Db>>) {
             let db = db.lock().unwrap();
             let enabled = db.get_config_bool("runzero_enabled", false);
             let url = db.get_config("runzero_url").ok().flatten().unwrap_or_default();
-            let token = db.get_config("runzero_token").ok().flatten().unwrap_or_default();
+            let token = Zeroizing::new(db.get_config("runzero_token").ok().flatten().unwrap_or_default());
             let sync_secs: u64 = db.get_config("runzero_sync_interval")
                 .ok().flatten()
                 .and_then(|v| v.parse().ok())

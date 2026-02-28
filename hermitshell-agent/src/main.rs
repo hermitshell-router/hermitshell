@@ -643,6 +643,7 @@ async fn main() -> Result<()> {
             5354,
             lan_ip.clone(),
             if has_ipv6_ula { Some(lan_ip_v6.clone()) } else { None },
+            device_range_cidr.clone(),
             None, // TLS cert path (DoT managed separately via tls.rs)
             None, // TLS key path
         );

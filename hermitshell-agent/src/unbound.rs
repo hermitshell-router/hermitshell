@@ -63,6 +63,7 @@ pub struct UnboundManager {
     listen_port: u16,
     listen_addr: String,
     listen_addr_v6: Option<String>,
+    lan_subnet: String,
     tls_cert_path: Option<String>,
     tls_key_path: Option<String>,
     child: Option<Child>,
@@ -73,6 +74,7 @@ impl UnboundManager {
         listen_port: u16,
         listen_addr: String,
         listen_addr_v6: Option<String>,
+        lan_subnet: String,
         tls_cert_path: Option<String>,
         tls_key_path: Option<String>,
     ) -> Self {
@@ -80,6 +82,7 @@ impl UnboundManager {
             listen_port,
             listen_addr,
             listen_addr_v6,
+            lan_subnet,
             tls_cert_path,
             tls_key_path,
             child: None,
@@ -162,8 +165,35 @@ impl UnboundManager {
         cfg.push_str("server:\n");
         cfg.push_str(&format!("    interface: 0.0.0.0@{}\n", self.listen_port));
         cfg.push_str(&format!("    interface: ::0@{}\n", self.listen_port));
-        cfg.push_str("    access-control: 0.0.0.0/0 allow\n");
-        cfg.push_str("    access-control: ::/0 allow\n");
+
+        // Restrict queries to loopback, LAN subnet, and ULA — defense in
+        // depth behind nftables which also blocks WAN→53/5354.
+        cfg.push_str("    access-control: 0.0.0.0/0 refuse\n");
+        cfg.push_str("    access-control: ::/0 refuse\n");
+        cfg.push_str("    access-control: 127.0.0.0/8 allow\n");
+        cfg.push_str("    access-control: ::1/128 allow\n");
+        cfg.push_str(&format!("    access-control: {} allow\n", self.lan_subnet));
+        cfg.push_str("    access-control: fd00::/8 allow\n");
+
+        // Prevent DNS rebinding: refuse answers that resolve external names
+        // to private/loopback addresses.
+        cfg.push_str("    private-address: 10.0.0.0/8\n");
+        cfg.push_str("    private-address: 172.16.0.0/12\n");
+        cfg.push_str("    private-address: 192.168.0.0/16\n");
+        cfg.push_str("    private-address: 169.254.0.0/16\n");
+        cfg.push_str("    private-address: 127.0.0.0/8\n");
+        cfg.push_str("    private-address: fd00::/8\n");
+        cfg.push_str("    private-address: fe80::/10\n");
+        cfg.push_str("    private-address: ::1/128\n");
+
+        // Exempt forward zones from rebinding protection — these
+        // intentionally resolve to private IPs (e.g., corp.internal).
+        for fz in &forward_zones {
+            if fz.enabled {
+                cfg.push_str(&format!("    private-domain: \"{}\"\n", fz.domain));
+            }
+        }
+
         cfg.push_str("    do-ip4: yes\n");
         cfg.push_str("    do-ip6: yes\n");
         cfg.push_str("    do-udp: yes\n");
@@ -296,6 +326,9 @@ impl UnboundManager {
             for ip in upstream.split(',') {
                 let ip = ip.trim();
                 if !ip.is_empty() {
+                    if ip.parse::<std::net::IpAddr>().is_err() {
+                        bail!("invalid upstream DNS address: {}", ip);
+                    }
                     cfg.push_str(&format!("    forward-addr: {}\n", ip));
                 }
             }
@@ -749,6 +782,7 @@ mod tests {
             5354,
             "10.0.0.1".to_string(),
             Some("fd00::1".to_string()),
+            "10.0.0.0/8".to_string(),
             None,
             None,
         );
@@ -772,6 +806,7 @@ mod tests {
             5354,
             "10.0.0.1".to_string(),
             None,
+            "10.0.0.0/8".to_string(),
             Some("/tmp/cert.pem".to_string()),
             Some("/tmp/key.pem".to_string()),
         );
@@ -795,12 +830,14 @@ mod tests {
                 .unwrap();
         }
 
-        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, None, None);
+        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, "10.0.0.0/8".to_string(), None, None);
         let config = mgr.generate_config_string(&db).unwrap();
 
         assert!(config.contains("forward-zone:"));
         assert!(config.contains("name: \"corp.local\""));
         assert!(config.contains("forward-addr: 10.1.1.1"));
+        // Forward zones are exempted from rebinding protection
+        assert!(config.contains("private-domain: \"corp.local\""));
     }
 
     #[test]
@@ -816,7 +853,7 @@ mod tests {
                 .unwrap();
         }
 
-        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, None, None);
+        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, "10.0.0.0/8".to_string(), None, None);
         let config = mgr.generate_config_string(&db).unwrap();
 
         assert!(config.contains("local-data: \"myhost.home IN A 10.0.1.50\""));
@@ -835,7 +872,7 @@ mod tests {
                 .unwrap();
         }
 
-        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, None, None);
+        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, "10.0.0.0/8".to_string(), None, None);
         let config = mgr.generate_config_string(&db).unwrap();
 
         // The quotes must be escaped in the output
@@ -855,7 +892,7 @@ mod tests {
             db_guard.set_config("upstream_dns", "1.1.1.1,8.8.8.8").unwrap();
         }
 
-        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, None, None);
+        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, "10.0.0.0/8".to_string(), None, None);
         let config = mgr.generate_config_string(&db).unwrap();
 
         assert!(config.contains("name: \".\""));
@@ -869,7 +906,7 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let db = Arc::new(Mutex::new(Db::open(db_path.to_str().unwrap()).unwrap()));
 
-        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, None, None);
+        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, "10.0.0.0/8".to_string(), None, None);
         let config = mgr.generate_config_string(&db).unwrap();
 
         // DoH domains should be blocked by default (ad_blocking_enabled defaults to true)
@@ -888,7 +925,7 @@ mod tests {
             db_guard.set_config("ad_blocking_enabled", "false").unwrap();
         }
 
-        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, None, None);
+        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, "10.0.0.0/8".to_string(), None, None);
         let config = mgr.generate_config_string(&db).unwrap();
 
         // With blocking disabled, no DoH blocking or blocklist includes
@@ -911,10 +948,84 @@ mod tests {
                 .unwrap();
         }
 
-        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, None, None);
+        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, "10.0.0.0/8".to_string(), None, None);
         let config = mgr.generate_config_string(&db).unwrap();
 
         assert!(config.contains("ip-ratelimit: 100"));
         assert!(config.contains("ratelimit: 50"));
+    }
+
+    #[test]
+    fn test_generate_config_upstream_dns_rejects_invalid_ip() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Arc::new(Mutex::new(Db::open(db_path.to_str().unwrap()).unwrap()));
+
+        {
+            let db_guard = db.lock().unwrap();
+            db_guard
+                .set_config("upstream_dns", "8.8.8.8\n    local-zone: \"evil\" static")
+                .unwrap();
+        }
+
+        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, "10.0.0.0/8".to_string(), None, None);
+        let result = mgr.generate_config_string(&db);
+        assert!(result.is_err(), "should reject config-injection attempt in upstream_dns");
+    }
+
+    #[test]
+    fn test_generate_config_upstream_dns_accepts_ipv6() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Arc::new(Mutex::new(Db::open(db_path.to_str().unwrap()).unwrap()));
+
+        {
+            let db_guard = db.lock().unwrap();
+            db_guard
+                .set_config("upstream_dns", "1.1.1.1,2606:4700:4700::1111")
+                .unwrap();
+        }
+
+        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, "10.0.0.0/8".to_string(), None, None);
+        let config = mgr.generate_config_string(&db).unwrap();
+        assert!(config.contains("forward-addr: 1.1.1.1"));
+        assert!(config.contains("forward-addr: 2606:4700:4700::1111"));
+    }
+
+    #[test]
+    fn test_generate_config_private_address_directives() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Arc::new(Mutex::new(Db::open(db_path.to_str().unwrap()).unwrap()));
+
+        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, "10.0.0.0/8".to_string(), None, None);
+        let config = mgr.generate_config_string(&db).unwrap();
+
+        assert!(config.contains("private-address: 10.0.0.0/8"));
+        assert!(config.contains("private-address: 172.16.0.0/12"));
+        assert!(config.contains("private-address: 192.168.0.0/16"));
+        assert!(config.contains("private-address: 127.0.0.0/8"));
+        assert!(config.contains("private-address: fd00::/8"));
+        assert!(config.contains("private-address: fe80::/10"));
+    }
+
+    #[test]
+    fn test_generate_config_access_control_restricted() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Arc::new(Mutex::new(Db::open(db_path.to_str().unwrap()).unwrap()));
+
+        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, "10.0.0.0/8".to_string(), None, None);
+        let config = mgr.generate_config_string(&db).unwrap();
+
+        // Default deny
+        assert!(config.contains("access-control: 0.0.0.0/0 refuse"));
+        assert!(config.contains("access-control: ::/0 refuse"));
+        // Allow loopback and LAN
+        assert!(config.contains("access-control: 127.0.0.0/8 allow"));
+        assert!(config.contains("access-control: 10.0.0.0/8 allow"));
+        assert!(config.contains("access-control: fd00::/8 allow"));
+        // Must NOT have the old wide-open allow
+        assert!(!config.contains("access-control: 0.0.0.0/0 allow"));
     }
 }

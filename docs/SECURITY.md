@@ -575,6 +575,16 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Acceptable as-is. If `unbound-control` features are needed later, add `CAP_CHOWN` to the capability bounding set and re-enable the control socket.
 
+## 100. DNS rebinding protection blocks private answers from upstream resolvers
+
+**What:** Unbound is configured with `private-address` directives for all RFC1918, link-local, loopback, and ULA ranges. This causes Unbound to refuse upstream DNS responses that resolve external domain names to private IP addresses (NXDOMAIN instead of the real answer).
+
+**Why:** DNS rebinding attacks work by pointing an attacker-controlled domain at a private IP (e.g., `evil.com → 10.0.0.1`). A browser that resolved `evil.com` would then make same-origin requests to the router's LAN address. The `private-address` directives block this class of attack.
+
+**Risk:** The catch-all upstream forwarder (the `upstream_dns` config) cannot return private IPs. If an ISP or public resolver returns RFC1918 addresses (rare but not impossible), those answers are blocked. Forward zones configured by the admin are automatically exempted via `private-domain` directives, so split-horizon DNS (e.g., `corp.internal → 10.1.1.1`) works as expected. Custom rules (`local-data`) are unaffected because they are local, not forwarded.
+
+**Proper fix:** Acceptable as-is. The only unprotected case is a user who configures `upstream_dns` to point at a private DNS server that returns RFC1918 answers for the root zone (`.`). This is uncommon and can be worked around by adding a forward zone for the specific domain instead of using the catch-all upstream.
+
 ## 97. Blocklist file permissions not restricted
 
 **What:** Files under `/var/lib/hermitshell/unbound/blocklists/` are written with default permissions (typically 0644). No explicit `chmod` is applied.

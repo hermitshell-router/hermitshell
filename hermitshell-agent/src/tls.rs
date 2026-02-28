@@ -4,6 +4,7 @@ use instant_acme::{
     LetsEncrypt, NewAccount, NewOrder, OrderStatus,
 };
 use tracing::{error, info, warn};
+use zeroize::Zeroizing;
 
 use crate::db::Db;
 
@@ -138,9 +139,9 @@ pub async fn provision_acme_dns01(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
         (
             db.get_config("acme_domain").ok().flatten().unwrap_or_default(),
             db.get_config("acme_contact_email").ok().flatten().unwrap_or_default(),
-            db.get_config("acme_cf_api_token").ok().flatten().unwrap_or_default(),
+            Zeroizing::new(db.get_config("acme_cf_api_token").ok().flatten().unwrap_or_default()),
             db.get_config("acme_cf_zone_id").ok().flatten().unwrap_or_default(),
-            db.get_config("acme_account_key").ok().flatten(),
+            db.get_config("acme_account_key").ok().flatten().map(Zeroizing::new),
         )
     };
 

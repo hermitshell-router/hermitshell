@@ -732,7 +732,7 @@ pub(super) fn handle_get_runzero_config(_req: &Request, db: &Arc<Mutex<Db>>) -> 
     let url = db.get_config("runzero_url").ok().flatten().unwrap_or_default();
     let sync_interval = db.get_config("runzero_sync_interval").ok().flatten().unwrap_or_else(|| "3600".to_string());
     let enabled = db.get_config_bool("runzero_enabled", false);
-    let has_token = db.get_config("runzero_token").ok().flatten().map(|t| !t.is_empty()).unwrap_or(false);
+    let has_token = db.get_config("runzero_token").ok().flatten().map(|t| !Zeroizing::new(t).is_empty()).unwrap_or(false);
     let has_ca_cert = db.get_config("runzero_ca_cert").ok().flatten().map(|c| !c.is_empty()).unwrap_or(false);
     let mut resp = Response::ok();
     resp.runzero_config = Some(serde_json::json!({
@@ -794,7 +794,7 @@ pub(super) fn handle_sync_runzero(_req: &Request, db: &Arc<Mutex<Db>>) -> Respon
     let (url, token, ca_cert) = {
         let db = db.lock().unwrap();
         let url = db.get_config("runzero_url").ok().flatten().unwrap_or_default();
-        let token = db.get_config("runzero_token").ok().flatten().unwrap_or_default();
+        let token = Zeroizing::new(db.get_config("runzero_token").ok().flatten().unwrap_or_default());
         let ca_cert = db.get_config("runzero_ca_cert").ok().flatten()
             .filter(|c| !c.is_empty());
         (url, token, ca_cert)
