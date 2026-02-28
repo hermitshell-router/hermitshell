@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
 use crate::components::toast::ErrorToast;
-use crate::server_fns::{AddPortForward, RemovePortForward, ToggleUpnp};
+use crate::server_fns::{AddPortForward, RemovePortForward, ToggleUpnp, TogglePortForward, AddIpv6Pinhole, RemoveIpv6Pinhole};
 
 #[component]
 pub fn PortForwarding() -> impl IntoView {
@@ -36,6 +36,7 @@ pub fn PortForwarding() -> impl IntoView {
                                         <th>"Internal Port"</th>
                                         <th>"Description"</th>
                                         <th>"Source"</th>
+                                        <th>"Enabled"</th>
                                         <th>"Actions"</th>
                                     </tr>
                                 </thead>
@@ -61,6 +62,20 @@ pub fn PortForwarding() -> impl IntoView {
                                                     "pcp" => "PCP",
                                                     _ => "Manual",
                                                 }}</td>
+                                                <td>
+                                                    {let toggle_action = ServerAction::<TogglePortForward>::new();
+                                                    let toggle_val = if fwd.enabled { "false" } else { "true" };
+                                                    let toggle_label = if fwd.enabled { "Disable" } else { "Enable" };
+                                                    let btn_class = if fwd.enabled { "btn btn-sm" } else { "btn btn-primary btn-sm" };
+                                                    view! {
+                                                        <ActionForm action=toggle_action attr:style="display:inline">
+                                                            <input type="hidden" name="id" value={id.to_string()} />
+                                                            <input type="hidden" name="enabled" value={toggle_val} />
+                                                            <button type="submit" class={btn_class}>{toggle_label}</button>
+                                                        </ActionForm>
+                                                        <ErrorToast value=toggle_action.value() />
+                                                    }}
+                                                </td>
                                                 <td>
                                                     <ActionForm action=remove_action attr:style="display:inline">
                                                         <input type="hidden" name="id" value={id.to_string()} />
@@ -131,6 +146,86 @@ pub fn PortForwarding() -> impl IntoView {
                     Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
                 })}
             </Suspense>
+
+            {
+                let pinholes = Resource::new(|| (), |_| async { client::list_ipv6_pinholes() });
+                let add_pinhole_action = ServerAction::<AddIpv6Pinhole>::new();
+                view! {
+                    <h2 class="section-header">"IPv6 Pinholes"</h2>
+                    <Suspense fallback=move || view! { <p>"Loading..."</p> }>
+                        {move || pinholes.get().map(|result| match result {
+                            Ok(list) => {
+                                view! {
+                                    <table class="data-table">
+                                        <thead>
+                                            <tr>
+                                                <th>"Device MAC"</th>
+                                                <th>"Protocol"</th>
+                                                <th>"Port Start"</th>
+                                                <th>"Port End"</th>
+                                                <th>"Description"</th>
+                                                <th>"Actions"</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {list.iter().map(|ph| {
+                                                let mac = ph.get("mac").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                                let protocol = ph.get("protocol").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                                let port_start = ph.get("port_start").and_then(|v| v.as_i64()).unwrap_or(0);
+                                                let port_end = ph.get("port_end").and_then(|v| v.as_i64()).unwrap_or(0);
+                                                let description = ph.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                                let id = ph.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+                                                let remove_action = ServerAction::<RemoveIpv6Pinhole>::new();
+                                                view! {
+                                                    <tr>
+                                                        <td>{mac}</td>
+                                                        <td>{protocol}</td>
+                                                        <td>{port_start}</td>
+                                                        <td>{port_end}</td>
+                                                        <td>{description}</td>
+                                                        <td>
+                                                            <ActionForm action=remove_action attr:style="display:inline">
+                                                                <input type="hidden" name="id" value={id.to_string()} />
+                                                                <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
+                                                            </ActionForm>
+                                                            <ErrorToast value=remove_action.value() />
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            }).collect_view()}
+                                        </tbody>
+                                    </table>
+                                }.into_any()
+                            }
+                            Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
+                        })}
+                    </Suspense>
+
+                    <h2 class="section-header">"Add Pinhole"</h2>
+                    <ActionForm action=add_pinhole_action attr:class="form-inline">
+                        <label>"Device MAC"
+                            <input type="text" name="device_mac" placeholder="AA:BB:CC:DD:EE:FF" required />
+                        </label>
+                        <label>"Protocol"
+                            <select name="protocol">
+                                <option value="tcp">"TCP"</option>
+                                <option value="udp">"UDP"</option>
+                            </select>
+                        </label>
+                        <label>"Port Start"
+                            <input type="number" name="port_start" min="1" max="65535" required />
+                        </label>
+                        <label>"Port End"
+                            <input type="number" name="port_end" min="1" max="65535" required />
+                        </label>
+                        <label>"Description"
+                            <input type="text" name="description" placeholder="optional" />
+                        </label>
+                        <button type="submit" class="btn btn-primary">"Add"</button>
+                    </ActionForm>
+                    <ErrorToast value=add_pinhole_action.value() />
+                }
+            }
         </Layout>
     }
 }

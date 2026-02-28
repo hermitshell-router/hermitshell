@@ -17,6 +17,7 @@ use pages::devices::DeviceList;
 use pages::dns::Dns;
 use pages::groups::Groups;
 use pages::login::Login;
+use pages::logs::Logs;
 use pages::settings::Settings;
 use pages::setup::{Setup, SetupStep1, SetupStep2, SetupStep3, SetupStep4, SetupStep5, SetupStep6, SetupStep7, SetupStep8};
 use pages::traffic::Traffic;
@@ -42,6 +43,7 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/wifi") view=Wifi />
                     <Route path=path!("/settings") view=Settings />
                     <Route path=path!("/audit") view=Audit />
+                    <Route path=path!("/logs") view=Logs />
                     <Route path=path!("/login") view=Login />
                     <Route path=path!("/setup") view=Setup />
                     <Route path=path!("/setup/1") view=SetupStep1 />
