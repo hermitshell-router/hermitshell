@@ -1,6 +1,11 @@
 use super::*;
 use zeroize::Zeroizing;
 
+const MAX_IMPORT_DEVICES: usize = 10_000;
+const MAX_IMPORT_PORT_FORWARDS: usize = 1_000;
+const MAX_IMPORT_PINHOLES: usize = 1_000;
+const MAX_IMPORT_WIFI_PROVIDERS: usize = 100;
+
 pub(super) fn handle_get_config(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let Some(ref key) = req.key else { return Response::err("key required"); };
     if is_blocked_config_key(key) {
@@ -245,6 +250,28 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
         }
     };
 
+    // Count limits
+    if let Some(devices) = parsed.get("devices").and_then(|v| v.as_array()) {
+        if devices.len() > MAX_IMPORT_DEVICES {
+            return Response::err(&format!("too many devices ({}, max {})", devices.len(), MAX_IMPORT_DEVICES));
+        }
+    }
+    if let Some(forwards) = parsed.get("port_forwards").and_then(|v| v.as_array()) {
+        if forwards.len() > MAX_IMPORT_PORT_FORWARDS {
+            return Response::err(&format!("too many port forwards ({}, max {})", forwards.len(), MAX_IMPORT_PORT_FORWARDS));
+        }
+    }
+    if let Some(pinholes) = parsed.get("ipv6_pinholes").and_then(|v| v.as_array()) {
+        if pinholes.len() > MAX_IMPORT_PINHOLES {
+            return Response::err(&format!("too many IPv6 pinholes ({}, max {})", pinholes.len(), MAX_IMPORT_PINHOLES));
+        }
+    }
+    if let Some(providers) = parsed.get("wifi_providers").and_then(|v| v.as_array()) {
+        if providers.len() > MAX_IMPORT_WIFI_PROVIDERS {
+            return Response::err(&format!("too many WiFi providers ({}, max {})", providers.len(), MAX_IMPORT_WIFI_PROVIDERS));
+        }
+    }
+
     // Validation pass: devices
     if let Some(devices) = parsed.get("devices").and_then(|v| v.as_array()) {
         for dev in devices {
@@ -323,7 +350,8 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
                     }
                 }
                 if let Some(nickname) = dev.get("nickname").and_then(|v| v.as_str()) {
-                    let clean: String = nickname.chars().filter(|c| !c.is_control()).collect();
+                    let mut clean: String = nickname.chars().filter(|c| !c.is_control()).collect();
+                    clean.truncate(256);
                     let _ = db.set_device_nickname(mac, &clean);
                 }
                 device_count += 1;
