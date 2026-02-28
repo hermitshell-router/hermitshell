@@ -18,7 +18,7 @@ async fn serve_css() -> impl IntoResponse {
 }
 
 async fn handle_backup_config(
-    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+    axum::extract::Form(params): axum::extract::Form<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let include_secrets = params.get("secrets").map(|v| v == "1").unwrap_or(false);
     let passphrase = params.get("passphrase").cloned();
@@ -248,7 +248,7 @@ async fn rate_limit_middleware(
 
     let ip = match ip {
         Some(ip) => ip,
-        None => return next.run(req).await, // fail-open if no IP available
+        None => return (axum::http::StatusCode::FORBIDDEN, "Unable to determine client address").into_response(),
     };
 
     // Check cooldown for this IP
@@ -306,7 +306,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/style.css", axum::routing::get(serve_css))
-        .route("/api/backup/config", axum::routing::get(handle_backup_config))
+        .route("/api/backup/config", axum::routing::post(handle_backup_config))
         .route("/api/restore/config", axum::routing::post(handle_restore_config))
         .leptos_routes(&leptos_options, routes, App)
         .layer(axum::middleware::from_fn(auth_middleware))

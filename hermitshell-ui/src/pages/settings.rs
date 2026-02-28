@@ -90,7 +90,7 @@ pub fn Settings() -> impl IntoView {
                                 <div class="actions-bar" style="flex-direction:column;gap:1rem;align-items:flex-start">
                                     <div>
                                         <h4 style="margin:0 0 0.5rem 0">"Download Backup"</h4>
-                                        <form method="get" action="/api/backup/config" style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center">
+                                        <form method="post" action="/api/backup/config" style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center">
                                             <label style="display:flex;align-items:center;gap:0.25rem">
                                                 <input type="checkbox" name="secrets" value="1" id="backup-secrets-cb" />
                                                 " Include secrets"
