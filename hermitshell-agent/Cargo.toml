@@ -42,6 +42,7 @@ zeroize = "1"
 simple-dns = "0.9"
 uuid = { version = "1", features = ["v4"] }
 axum = "0.8"
+dhcproto = "0.12"
 
 [package.metadata.deb]
 name = "hermitshell"

@@ -1215,6 +1215,7 @@ dependencies = [
  "async-trait",
  "axum",
  "base64",
+ "dhcproto",
  "flate2",
  "hermitshell-common",
  "hex",
