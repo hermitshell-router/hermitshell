@@ -1,3 +1,4 @@
+pub mod config_validate;
 pub mod subnet;
 
 pub fn sanitize_hostname(raw: &str) -> String {
