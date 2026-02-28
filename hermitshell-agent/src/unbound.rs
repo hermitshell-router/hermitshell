@@ -73,6 +73,14 @@ impl UnboundManager {
         std::fs::create_dir_all(UNBOUND_CONFIG_DIR)?;
         std::fs::create_dir_all(UNBOUND_BLOCKLIST_DIR)?;
 
+        let cfg = self.generate_config_string(db)?;
+        std::fs::write(UNBOUND_CONFIG_PATH, &cfg)?;
+        debug!(path = UNBOUND_CONFIG_PATH, "wrote unbound config");
+        Ok(())
+    }
+
+    /// Generate the full unbound.conf content as a string, without writing to disk.
+    pub fn generate_config_string(&self, db: &Arc<Mutex<Db>>) -> Result<String> {
         // Read all DB state under a single lock, then drop it.
         let (
             devices,
@@ -255,9 +263,7 @@ impl UnboundManager {
             cfg.push_str("\n");
         }
 
-        std::fs::write(UNBOUND_CONFIG_PATH, &cfg)?;
-        debug!(path = UNBOUND_CONFIG_PATH, "wrote unbound config");
-        Ok(())
+        Ok(cfg)
     }
 
     pub fn start(&mut self) -> Result<()> {
@@ -416,6 +422,11 @@ pub fn validate_domain(domain: &str) -> Result<()> {
 /// Download a hosts-format blocklist and convert to Unbound local-zone config.
 fn download_and_convert_blocklist(url: &str, tag: &str) -> Result<String> {
     let body = http_download(url).context("blocklist download failed")?;
+    Ok(convert_blocklist_body(&body, tag))
+}
+
+/// Parse a hosts-file body into Unbound local-zone config lines.
+fn convert_blocklist_body(body: &str, tag: &str) -> String {
     let mut out = String::new();
     for line in body.lines() {
         let line = line.trim();
@@ -444,7 +455,7 @@ fn download_and_convert_blocklist(url: &str, tag: &str) -> Result<String> {
         out.push_str(&format!("local-zone: \"{}\" always_refuse\n", domain));
         out.push_str(&format!("local-zone-tag: \"{}\" \"{}\"\n", domain, tag));
     }
-    Ok(out)
+    out
 }
 
 /// Simple HTTP(S)-unaware download using TCP. Follows one redirect.
@@ -537,4 +548,259 @@ fn http_download_curl(url: &str) -> Result<String> {
         bail!("curl failed for {}: {}", url, stderr);
     }
     String::from_utf8(output.stdout).context("blocklist response is not valid UTF-8")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- validate_domain tests ---
+
+    #[test]
+    fn test_validate_domain_valid() {
+        assert!(validate_domain("example.com").is_ok());
+        assert!(validate_domain("sub.example.com").is_ok());
+        assert!(validate_domain("a-b.example.com").is_ok());
+        assert!(validate_domain("x").is_ok());
+    }
+
+    #[test]
+    fn test_validate_domain_empty() {
+        assert!(validate_domain("").is_err());
+    }
+
+    #[test]
+    fn test_validate_domain_too_long() {
+        let long = "a".repeat(254);
+        assert!(validate_domain(&long).is_err());
+    }
+
+    #[test]
+    fn test_validate_domain_invalid_chars() {
+        assert!(validate_domain("example .com").is_err());
+        assert!(validate_domain("exam!ple.com").is_err());
+        assert!(validate_domain("exam_ple.com").is_err());
+    }
+
+    #[test]
+    fn test_validate_domain_hyphen_rules() {
+        assert!(validate_domain("-example.com").is_err());
+        assert!(validate_domain("example-.com").is_err());
+    }
+
+    #[test]
+    fn test_validate_domain_empty_label() {
+        assert!(validate_domain("example..com").is_err());
+        assert!(validate_domain(".example.com").is_err());
+    }
+
+    #[test]
+    fn test_validate_domain_long_label() {
+        let label = "a".repeat(64);
+        let domain = format!("{}.com", label);
+        assert!(validate_domain(&domain).is_err());
+    }
+
+    // --- blocklist parsing tests ---
+
+    #[test]
+    fn test_convert_blocklist_hosts_format() {
+        let body = "\
+# comment line
+0.0.0.0 ads.example.com
+127.0.0.1 tracker.example.com
+0.0.0.0 localhost
+";
+        let out = convert_blocklist_body(body, "ads");
+        assert!(out.contains("local-zone: \"ads.example.com\" always_refuse"));
+        assert!(out.contains("local-zone-tag: \"ads.example.com\" \"ads\""));
+        assert!(out.contains("local-zone: \"tracker.example.com\" always_refuse"));
+        assert!(!out.contains("localhost"));
+    }
+
+    #[test]
+    fn test_convert_blocklist_bare_domains() {
+        let body = "malware.example.com\nphishing.example.net\n";
+        let out = convert_blocklist_body(body, "custom");
+        assert!(out.contains("local-zone: \"malware.example.com\" always_refuse"));
+        assert!(out.contains("local-zone: \"phishing.example.net\" always_refuse"));
+        assert!(out.contains("local-zone-tag: \"malware.example.com\" \"custom\""));
+    }
+
+    #[test]
+    fn test_convert_blocklist_skips_blanks_and_comments() {
+        let body = "\n# header\n\n# another comment\n0.0.0.0 bad.com\n";
+        let out = convert_blocklist_body(body, "ads");
+        // Only one domain should appear
+        assert_eq!(out.matches("local-zone:").count(), 1);
+        assert!(out.contains("bad.com"));
+    }
+
+    #[test]
+    fn test_convert_blocklist_skips_no_dot() {
+        let body = "0.0.0.0 localhostonly\nbare\n0.0.0.0 real.domain.com\n";
+        let out = convert_blocklist_body(body, "ads");
+        assert!(!out.contains("localhostonly"));
+        assert!(!out.contains("\"bare\""));
+        assert!(out.contains("real.domain.com"));
+    }
+
+    // --- generate_config_string tests ---
+
+    #[test]
+    fn test_generate_config_basic() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Arc::new(Mutex::new(Db::open(db_path.to_str().unwrap()).unwrap()));
+
+        let mgr = UnboundManager::new(
+            5354,
+            "10.0.0.1".to_string(),
+            Some("fd00::1".to_string()),
+            None,
+            None,
+        );
+        let config = mgr.generate_config_string(&db).unwrap();
+
+        assert!(config.contains("server:"));
+        assert!(config.contains("interface: 0.0.0.0@5354"));
+        assert!(config.contains("remote-control:"));
+        assert!(config.contains("define-tag:"));
+        assert!(config.contains("log-queries: yes"));
+        assert!(config.contains("hide-identity: yes"));
+    }
+
+    #[test]
+    fn test_generate_config_with_tls() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Arc::new(Mutex::new(Db::open(db_path.to_str().unwrap()).unwrap()));
+
+        let mgr = UnboundManager::new(
+            5354,
+            "10.0.0.1".to_string(),
+            None,
+            Some("/tmp/cert.pem".to_string()),
+            Some("/tmp/key.pem".to_string()),
+        );
+        let config = mgr.generate_config_string(&db).unwrap();
+
+        assert!(config.contains("tls-port: 853"));
+        assert!(config.contains("tls-service-key: \"/tmp/key.pem\""));
+        assert!(config.contains("tls-service-pem: \"/tmp/cert.pem\""));
+    }
+
+    #[test]
+    fn test_generate_config_forward_zone() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Arc::new(Mutex::new(Db::open(db_path.to_str().unwrap()).unwrap()));
+
+        {
+            let db_guard = db.lock().unwrap();
+            db_guard
+                .add_dns_forward_zone("corp.local", "10.1.1.1")
+                .unwrap();
+        }
+
+        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, None, None);
+        let config = mgr.generate_config_string(&db).unwrap();
+
+        assert!(config.contains("forward-zone:"));
+        assert!(config.contains("name: \"corp.local\""));
+        assert!(config.contains("forward-addr: 10.1.1.1"));
+    }
+
+    #[test]
+    fn test_generate_config_custom_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Arc::new(Mutex::new(Db::open(db_path.to_str().unwrap()).unwrap()));
+
+        {
+            let db_guard = db.lock().unwrap();
+            db_guard
+                .add_dns_custom_rule("myhost.home", "A", "10.0.1.50")
+                .unwrap();
+        }
+
+        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, None, None);
+        let config = mgr.generate_config_string(&db).unwrap();
+
+        assert!(config.contains("local-data: \"myhost.home IN A 10.0.1.50\""));
+    }
+
+    #[test]
+    fn test_generate_config_upstream_dns_forwarding() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Arc::new(Mutex::new(Db::open(db_path.to_str().unwrap()).unwrap()));
+
+        {
+            let db_guard = db.lock().unwrap();
+            db_guard.set_config("upstream_dns", "1.1.1.1,8.8.8.8").unwrap();
+        }
+
+        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, None, None);
+        let config = mgr.generate_config_string(&db).unwrap();
+
+        assert!(config.contains("name: \".\""));
+        assert!(config.contains("forward-addr: 1.1.1.1"));
+        assert!(config.contains("forward-addr: 8.8.8.8"));
+    }
+
+    #[test]
+    fn test_generate_config_doh_blocking() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Arc::new(Mutex::new(Db::open(db_path.to_str().unwrap()).unwrap()));
+
+        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, None, None);
+        let config = mgr.generate_config_string(&db).unwrap();
+
+        // DoH domains should be blocked by default (ad_blocking_enabled defaults to true)
+        assert!(config.contains("local-zone: \"dns.google\" always_refuse"));
+        assert!(config.contains("local-zone: \"dns.cloudflare.com\" always_refuse"));
+    }
+
+    #[test]
+    fn test_generate_config_blocking_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Arc::new(Mutex::new(Db::open(db_path.to_str().unwrap()).unwrap()));
+
+        {
+            let db_guard = db.lock().unwrap();
+            db_guard.set_config("ad_blocking_enabled", "false").unwrap();
+        }
+
+        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, None, None);
+        let config = mgr.generate_config_string(&db).unwrap();
+
+        // With blocking disabled, no DoH blocking or blocklist includes
+        assert!(!config.contains("local-zone: \"dns.google\" always_refuse"));
+    }
+
+    #[test]
+    fn test_generate_config_rate_limits() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Arc::new(Mutex::new(Db::open(db_path.to_str().unwrap()).unwrap()));
+
+        {
+            let db_guard = db.lock().unwrap();
+            db_guard
+                .set_config("dns_ratelimit_per_client", "100")
+                .unwrap();
+            db_guard
+                .set_config("dns_ratelimit_per_domain", "50")
+                .unwrap();
+        }
+
+        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, None, None);
+        let config = mgr.generate_config_string(&db).unwrap();
+
+        assert!(config.contains("ip-ratelimit: 100"));
+        assert!(config.contains("ratelimit: 50"));
+    }
 }
