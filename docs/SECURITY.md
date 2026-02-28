@@ -508,3 +508,77 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** Low. During the 2-second window, a request to the new UI could reach the old agent. Since the API is backwards-compatible between adjacent versions, this is unlikely to cause issues. If the UI restart fails, the agent still restarts, which the rollback script handles.
 
 **Proper fix:** Poll `systemctl is-active hermitshell-ui` instead of sleeping, with a timeout.
+
+---
+
+## DNS / Unbound
+
+## 92. Blocklist downloads allow HTTP (no integrity verification)
+
+**What:** `http_download()` in `unbound.rs` accepts both HTTP and HTTPS blocklist URLs. HTTP downloads use raw TCP with no TLS. Downloaded content is written directly to Unbound config files with no checksum or signature verification.
+
+**Why:** Some blocklist providers only serve HTTP. Supporting both maximizes compatibility with third-party lists.
+
+**Risk:** Medium. A MITM attacker can intercept HTTP blocklist downloads and inject entries — either blocking legitimate domains (DoS) or removing blocked domains (filter bypass). The poisoned entries are written to `/var/lib/hermitshell/unbound/blocklists/*.conf` and loaded by Unbound on reload.
+
+**Proper fix:** Enforce HTTPS-only for blocklist URLs. Add optional SHA256 checksum verification (store expected hash in DB alongside URL).
+
+## 93. Unbound config injection via custom DNS rules
+
+**What:** Custom DNS rule values are interpolated into `local-data: "{domain} IN {type} {value}"` directives without escaping quotes or special characters. The same issue applies to upstream DNS `forward-addr` values.
+
+**Why:** Input validation in `socket/dns.rs` checks domain format and record type, but does not sanitize the value for Unbound config syntax.
+
+**Risk:** Medium. A user (or attacker with socket access) can craft a value like `10.0.0.1"; malicious_directive "` to break out of the local-data line and inject arbitrary Unbound config. This could disable filtering, redirect queries, or crash Unbound.
+
+**Proper fix:** Escape `"` and `\` in values before interpolation. Reject values containing newlines. For A/AAAA records, re-validate as IP at config write time. Consider using `unbound-control local_data` instead of config file generation.
+
+## 94. No IPv6 DoH blocking
+
+**What:** The `doh_block_v4` nftables set only contains IPv4 addresses of well-known DoH resolvers. No `doh_block_v6` set exists. DoT port 853 blocking also only applies to IPv4 destinations.
+
+**Why:** Initial implementation focused on IPv4. IPv6 DoH blocking was deferred.
+
+**Risk:** Medium. Devices with IPv6 connectivity can bypass DNS content filtering using IPv6 DoH endpoints (e.g., `2606:4700:4700::1111` for Cloudflare, `2001:4860:4860::8888` for Google). With dual-stack enabled, this is a practical bypass vector.
+
+**Proper fix:** Add a `doh_block_v6` set with IPv6 addresses of the same providers. Apply matching `ip6 daddr @doh_block_v6 tcp dport 443 drop` rules in all `*_fwd` chains.
+
+## 95. Hardcoded DoH resolver IPs may go stale
+
+**What:** `DOH_RESOLVER_IPS_V4` contains 14 static IPs for well-known DoH providers. New providers or IP changes are not reflected without an agent update.
+
+**Why:** Hardcoding avoids external dependencies and provides a fail-closed default.
+
+**Risk:** Low-medium. If a provider changes IPs, the old IPs remain in the block set (harmless) but the new IPs are not blocked (bypass). New DoH services that emerge after the release are not blocked at all.
+
+**Proper fix:** Make the IP list admin-configurable via DB. Provide a built-in default that can be updated via the update checker.
+
+## 96. Unbound runs unsandboxed as root
+
+**What:** Unbound is spawned as a bare child process via `Command::new("unbound")` with no seccomp, AppArmor, chroot, or user separation. It inherits the agent's root privileges.
+
+**Why:** The agent runs as root for nftables management. Unbound needs to read its config and bind to port 5354. Adding sandboxing was deferred.
+
+**Risk:** Medium. An Unbound remote code execution vulnerability would grant full root access to the router. Unbound has a strong security track record, but zero-days are possible.
+
+**Proper fix:** Run Unbound as a dedicated non-root user (`--username unbound`). Apply seccomp or AppArmor profiles. Consider chroot with `chroot: /var/lib/hermitshell/unbound`.
+
+## 97. Blocklist file permissions not restricted
+
+**What:** Files under `/var/lib/hermitshell/unbound/blocklists/` are written with default permissions (typically 0644). No explicit `chmod` is applied.
+
+**Why:** The files are non-secret config data in a root-owned directory.
+
+**Risk:** Low-medium. World-readable blocklists reveal which domains are filtered. If directory permissions are misconfigured, a non-root user could write malicious blocklist files.
+
+**Proper fix:** Set file permissions to 0640 at write time. Verify parent directory is 0750 or more restrictive.
+
+## 98. DNS log client IPs not validated
+
+**What:** `parse_unbound_log_line()` in `dns_log.rs` extracts the client IP from Unbound log lines and checks only for `.` or `:` presence, not valid IP format.
+
+**Why:** Unbound logs are trusted local output. Strict parsing was deferred.
+
+**Risk:** Low. Corrupt or malformed log lines could store invalid IPs in the dns_logs table, polluting analytics.
+
+**Proper fix:** Validate with `parse::<IpAddr>()` before storing. Skip entries with invalid IPs.
