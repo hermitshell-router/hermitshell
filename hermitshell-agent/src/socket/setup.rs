@@ -202,3 +202,82 @@ pub(super) fn handle_set_timezone(req: &Request, db: &Arc<Mutex<Db>>) -> Respons
     let _ = db.log_audit("set_timezone", tz);
     Response::ok()
 }
+
+pub(super) fn handle_setup_set_dns(req: &Request, db: &Arc<Mutex<Db>>, blocky: &Arc<Mutex<BlockyManager>>) -> Response {
+    let db_guard = db.lock().unwrap();
+    if db_guard.get_config("admin_password_hash").ok().flatten().is_some() {
+        // Allow DNS config during post-password setup steps too
+        if db_guard.get_config("setup_complete").ok().flatten().as_deref() == Some("true") {
+            return Response::err("DNS config during setup only");
+        }
+    }
+
+    // Store upstream DNS preference
+    if let Some(ref dns) = req.value {
+        if dns != "auto" {
+            // Validate each IP
+            for part in dns.split(',') {
+                if part.trim().parse::<std::net::Ipv4Addr>().is_err() {
+                    return Response::err(&format!("invalid DNS address: {}", part.trim()));
+                }
+            }
+            let _ = db_guard.set_config("upstream_dns", dns);
+        } else {
+            // Remove custom DNS, use auto-detected
+            let _ = db_guard.set_config("upstream_dns", "auto");
+        }
+    }
+
+    // Ad blocking toggle
+    if let Some(enabled) = req.enabled {
+        let _ = db_guard.set_config("ad_blocking_enabled", if enabled { "true" } else { "false" });
+        drop(db_guard);
+        let mgr = blocky.lock().unwrap();
+        let _ = mgr.set_blocking_enabled(enabled);
+    } else {
+        drop(db_guard);
+    }
+
+    let db_guard = db.lock().unwrap();
+    let _ = db_guard.set_config("setup_step", "5");
+    let _ = db_guard.log_audit("setup_set_dns", req.value.as_deref().unwrap_or("auto"));
+    Response::ok()
+}
+
+pub(super) fn handle_setup_get_summary(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let db = db.lock().unwrap();
+    let wan_iface = db.get_config("wan_iface").ok().flatten().unwrap_or_default();
+    let lan_iface = db.get_config("lan_iface").ok().flatten().unwrap_or_default();
+    let wan_mode = db.get_config("wan_mode").ok().flatten().unwrap_or_else(|| "dhcp".to_string());
+    let hostname = db.get_config("router_hostname").ok().flatten().unwrap_or_else(|| "hermitshell".to_string());
+    let timezone = db.get_config("timezone").ok().flatten().unwrap_or_else(|| "UTC".to_string());
+    let upstream_dns = db.get_config("upstream_dns").ok().flatten().unwrap_or_else(|| "auto".to_string());
+    let ad_blocking = db.get_config_bool("ad_blocking_enabled", true);
+
+    let summary = serde_json::json!({
+        "wan_iface": wan_iface,
+        "lan_iface": lan_iface,
+        "wan_mode": wan_mode,
+        "hostname": hostname,
+        "timezone": timezone,
+        "upstream_dns": upstream_dns,
+        "ad_blocking": ad_blocking,
+    });
+
+    let mut resp = Response::ok();
+    resp.config_value = Some(summary.to_string());
+    resp
+}
+
+pub(super) fn handle_finalize_setup(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let db = db.lock().unwrap();
+    if db.get_config("admin_password_hash").ok().flatten().is_none() {
+        return Response::err("password must be set before finalizing");
+    }
+    if let Err(e) = db.set_config("setup_complete", "true") {
+        return Response::err(&format!("failed to finalize: {}", e));
+    }
+    let _ = db.set_config("setup_step", "8");
+    let _ = db.log_audit("finalize_setup", "complete");
+    Response::ok()
+}
