@@ -1,10 +1,11 @@
-use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, UdpSocket};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use dhcproto::v4::{self, DhcpOption, Decodable, Decoder, Encodable, Encoder, MessageType, OptionCode};
+use dhcproto::v6;
 use rand::Rng;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use tracing::{error, info, warn};
@@ -656,9 +657,250 @@ async fn dhcp4_renew_loop(
     bail!("DHCP lease expired without successful renewal")
 }
 
-/// Placeholder for DHCPv6 Prefix Delegation (implemented in a later task).
-async fn dhcp6_pd(_wan_iface: &str) -> Option<String> {
-    None
+/// Read the interface index from sysfs.
+fn get_iface_index(iface: &str) -> Result<u32> {
+    let path = format!("/sys/class/net/{}/ifindex", iface);
+    let contents = std::fs::read_to_string(&path)
+        .with_context(|| format!("reading ifindex from {}", path))?;
+    contents
+        .trim()
+        .parse::<u32>()
+        .with_context(|| format!("parsing ifindex: {}", contents.trim()))
+}
+
+/// Build a DUID-LL (type 3, link-layer) from a MAC address.
+/// Format: [type=3 (u16be), htype=1/Ethernet (u16be), mac[0..6]]
+fn build_duid_ll(mac: &[u8; 6]) -> Vec<u8> {
+    let mut duid = Vec::with_capacity(10);
+    duid.extend_from_slice(&0x0003u16.to_be_bytes()); // DUID type 3 = link-layer
+    duid.extend_from_slice(&0x0001u16.to_be_bytes()); // hardware type 1 = Ethernet
+    duid.extend_from_slice(mac);
+    duid
+}
+
+/// Perform DHCPv6 Prefix Delegation SOLICIT-ADVERTISE-REQUEST-REPLY (blocking).
+/// Returns `Some("prefix/len")` on success, `None` on timeout or failure.
+fn dhcp6_pd_blocking(wan_iface: &str) -> Option<String> {
+    let mac = match get_mac(wan_iface) {
+        Ok(m) => m,
+        Err(e) => {
+            warn!(error = %e, "DHCPv6-PD: failed to read MAC");
+            return None;
+        }
+    };
+
+    let ifindex = match get_iface_index(wan_iface) {
+        Ok(i) => i,
+        Err(e) => {
+            warn!(error = %e, "DHCPv6-PD: failed to read interface index");
+            return None;
+        }
+    };
+
+    // Create UDP6 socket bound to [::]:546 on the WAN interface
+    let sock = match Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP)) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!(error = %e, "DHCPv6-PD: failed to create socket");
+            return None;
+        }
+    };
+    if let Err(e) = sock.set_reuse_address(true) {
+        warn!(error = %e, "DHCPv6-PD: failed to set SO_REUSEADDR");
+        return None;
+    }
+    if let Err(e) = sock.bind_device(Some(wan_iface.as_bytes())) {
+        warn!(error = %e, "DHCPv6-PD: failed to bind to device");
+        return None;
+    }
+    let bind_addr = std::net::SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 546, 0, 0);
+    if let Err(e) = sock.bind(&SockAddr::from(bind_addr)) {
+        warn!(error = %e, "DHCPv6-PD: failed to bind to [::]:546");
+        return None;
+    }
+    sock.set_nonblocking(false).ok();
+
+    // Join the all-DHCP-servers multicast group (ff02::1:2) on the WAN interface
+    let mcast_addr: Ipv6Addr = "ff02::1:2".parse().unwrap();
+    if let Err(e) = sock.join_multicast_v6(&mcast_addr, ifindex) {
+        warn!(error = %e, "DHCPv6-PD: failed to join multicast group");
+        return None;
+    }
+
+    let udp_sock: std::net::UdpSocket = sock.into();
+    let timeout = Duration::from_secs(5);
+
+    let duid = build_duid_ll(&mac);
+    let dest = std::net::SocketAddrV6::new(mcast_addr, 547, 0, ifindex);
+
+    // --- SOLICIT ---
+    let mut solicit = v6::Message::new(v6::MessageType::Solicit);
+    let xid = solicit.xid();
+    solicit.opts_mut().insert(v6::DhcpOption::ClientId(duid.clone()));
+    solicit.opts_mut().insert(v6::DhcpOption::ElapsedTime(0));
+    solicit.opts_mut().insert(v6::DhcpOption::IAPD(v6::IAPD {
+        id: 1,
+        t1: 0,
+        t2: 0,
+        opts: v6::DhcpOptions::new(),
+    }));
+
+    let mut buf = Vec::new();
+    let mut enc = v6::Encoder::new(&mut buf);
+    if let Err(e) = solicit.encode(&mut enc) {
+        warn!(error = %e, "DHCPv6-PD: failed to encode SOLICIT");
+        return None;
+    }
+
+    if let Err(e) = udp_sock.send_to(&buf, dest) {
+        warn!(error = %e, "DHCPv6-PD: failed to send SOLICIT");
+        return None;
+    }
+    info!("DHCPv6-PD: sent SOLICIT");
+
+    // --- Wait for ADVERTISE ---
+    udp_sock.set_read_timeout(Some(timeout)).ok();
+    let mut recv_buf = [0u8; 1500];
+    let (server_id, iapd_opts) = loop {
+        let n = match udp_sock.recv(&mut recv_buf) {
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
+                || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                info!("DHCPv6-PD: SOLICIT timed out (ISP may not offer prefix delegation)");
+                return None;
+            }
+            Err(e) => {
+                warn!(error = %e, "DHCPv6-PD: recv error waiting for ADVERTISE");
+                return None;
+            }
+        };
+
+        let msg = match v6::Message::decode(&mut v6::Decoder::new(&recv_buf[..n])) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        if msg.xid() != xid {
+            continue;
+        }
+
+        if msg.msg_type() != v6::MessageType::Advertise {
+            continue;
+        }
+
+        // Extract Server ID
+        let sid = match msg.opts().get(v6::OptionCode::ServerId) {
+            Some(v6::DhcpOption::ServerId(s)) => s.clone(),
+            _ => {
+                warn!("DHCPv6-PD: ADVERTISE missing Server ID");
+                continue;
+            }
+        };
+
+        // Extract IA_PD
+        let ia_pd = match msg.opts().get(v6::OptionCode::IAPD) {
+            Some(v6::DhcpOption::IAPD(pd)) => pd.clone(),
+            _ => {
+                warn!("DHCPv6-PD: ADVERTISE missing IA_PD");
+                continue;
+            }
+        };
+
+        info!("DHCPv6-PD: received ADVERTISE");
+        break (sid, ia_pd);
+    };
+
+    // --- REQUEST ---
+    let mut request = v6::Message::new_with_id(v6::MessageType::Request, xid);
+    request.opts_mut().insert(v6::DhcpOption::ClientId(duid.clone()));
+    request.opts_mut().insert(v6::DhcpOption::ServerId(server_id));
+    request.opts_mut().insert(v6::DhcpOption::ElapsedTime(0));
+    request.opts_mut().insert(v6::DhcpOption::IAPD(iapd_opts));
+
+    let mut buf = Vec::new();
+    let mut enc = v6::Encoder::new(&mut buf);
+    if let Err(e) = request.encode(&mut enc) {
+        warn!(error = %e, "DHCPv6-PD: failed to encode REQUEST");
+        return None;
+    }
+
+    if let Err(e) = udp_sock.send_to(&buf, dest) {
+        warn!(error = %e, "DHCPv6-PD: failed to send REQUEST");
+        return None;
+    }
+    info!("DHCPv6-PD: sent REQUEST");
+
+    // --- Wait for REPLY ---
+    udp_sock.set_read_timeout(Some(timeout)).ok();
+    loop {
+        let n = match udp_sock.recv(&mut recv_buf) {
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
+                || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                warn!("DHCPv6-PD: REQUEST timed out waiting for REPLY");
+                return None;
+            }
+            Err(e) => {
+                warn!(error = %e, "DHCPv6-PD: recv error waiting for REPLY");
+                return None;
+            }
+        };
+
+        let msg = match v6::Message::decode(&mut v6::Decoder::new(&recv_buf[..n])) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        if msg.xid() != xid {
+            continue;
+        }
+
+        if msg.msg_type() != v6::MessageType::Reply {
+            continue;
+        }
+
+        // Extract IA_PD from REPLY
+        let ia_pd = match msg.opts().get(v6::OptionCode::IAPD) {
+            Some(v6::DhcpOption::IAPD(pd)) => pd,
+            _ => {
+                warn!("DHCPv6-PD: REPLY missing IA_PD");
+                return None;
+            }
+        };
+
+        // Extract IAPrefix from within IA_PD options
+        let prefix = match ia_pd.opts.get(v6::OptionCode::IAPrefix) {
+            Some(v6::DhcpOption::IAPrefix(p)) => p,
+            _ => {
+                warn!("DHCPv6-PD: REPLY IA_PD missing IAPrefix");
+                return None;
+            }
+        };
+
+        let result = format!("{}/{}", prefix.prefix_ip, prefix.prefix_len);
+        info!(
+            prefix = %result,
+            preferred_lifetime = prefix.preferred_lifetime,
+            valid_lifetime = prefix.valid_lifetime,
+            "DHCPv6-PD: prefix delegated"
+        );
+        return Some(result);
+    }
+}
+
+/// Attempt DHCPv6 Prefix Delegation on the WAN interface.
+/// Returns `Some("prefix/len")` on success, `None` if unavailable or timed out.
+async fn dhcp6_pd(wan_iface: &str) -> Option<String> {
+    let iface = wan_iface.to_string();
+    match tokio::task::spawn_blocking(move || dhcp6_pd_blocking(&iface)).await {
+        Ok(result) => result,
+        Err(e) => {
+            warn!(error = %e, "DHCPv6-PD task panicked");
+            None
+        }
+    }
 }
 
 /// Run the DHCP client on the WAN interface.
