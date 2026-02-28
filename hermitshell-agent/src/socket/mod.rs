@@ -1,6 +1,7 @@
 mod auth;
 mod config;
 mod devices;
+mod dns;
 mod logs;
 mod network;
 mod wireguard;
@@ -87,6 +88,10 @@ const WEB_ALLOWED_METHODS: &[&str] = &[
     "run_bandwidth_rollup",
     "run_analysis",
     "list_mdns_services",
+    "get_dns_config", "set_dns_config",
+    "list_dns_forwards", "add_dns_forward", "remove_dns_forward",
+    "list_dns_rules", "add_dns_rule", "remove_dns_rule",
+    "list_dns_blocklists", "add_dns_blocklist", "remove_dns_blocklist",
 ];
 
 const SESSION_IDLE_TIMEOUT_SECS: u64 = 1800;     // 30 minutes
@@ -270,6 +275,16 @@ struct Response {
     top_destinations: Option<Vec<crate::db::TopDestination>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     mdns_services: Option<Vec<hermitshell_common::MdnsService>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dns_config: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dns_forward_zones: Option<Vec<hermitshell_common::DnsForwardZone>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dns_custom_rules: Option<Vec<hermitshell_common::DnsCustomRule>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dns_blocklists: Option<Vec<hermitshell_common::DnsBlocklist>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -511,6 +526,17 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "get_top_destinations" => logs::handle_get_top_destinations(&req, db),
         "run_bandwidth_rollup" => logs::handle_run_bandwidth_rollup(&req, db),
         "list_mdns_services" => devices::handle_list_mdns_services(&req, db, mdns_registry),
+        "get_dns_config" => dns::handle_get_dns_config(&req, db),
+        "set_dns_config" => dns::handle_set_dns_config(&req, db, unbound),
+        "list_dns_forwards" => dns::handle_list_dns_forwards(&req, db),
+        "add_dns_forward" => dns::handle_add_dns_forward(&req, db, unbound),
+        "remove_dns_forward" => dns::handle_remove_dns_forward(&req, db, unbound),
+        "list_dns_rules" => dns::handle_list_dns_rules(&req, db),
+        "add_dns_rule" => dns::handle_add_dns_rule(&req, db, unbound),
+        "remove_dns_rule" => dns::handle_remove_dns_rule(&req, db, unbound),
+        "list_dns_blocklists" => dns::handle_list_dns_blocklists(&req, db),
+        "add_dns_blocklist" => dns::handle_add_dns_blocklist(&req, db, unbound),
+        "remove_dns_blocklist" => dns::handle_remove_dns_blocklist(&req, db, unbound),
         _ => Response::err("unknown method"),
     }
 }
