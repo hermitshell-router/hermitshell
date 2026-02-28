@@ -18,6 +18,7 @@ mod tls_client;
 mod update;
 mod upnp;
 mod runzero;
+mod wan;
 mod wifi;
 mod wireguard;
 
