@@ -547,6 +547,61 @@ pub fn set_interfaces(wan: &str, lan: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub fn setup_wan_config(mode: &str, static_ip: Option<&str>, gateway: Option<&str>, dns: Option<&str>) -> Result<(), String> {
+    let mut req = json!({"method": "setup_wan_config", "value": mode});
+    if let Some(ip) = static_ip {
+        req["key"] = serde_json::Value::String(ip.to_string());
+    }
+    if let Some(gw) = gateway {
+        req["name"] = serde_json::Value::String(gw.to_string());
+    }
+    if let Some(d) = dns {
+        req["description"] = serde_json::Value::String(d.to_string());
+    }
+    ok_or_err(send(req)?)?;
+    Ok(())
+}
+
+pub fn set_router_hostname(hostname: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "set_hostname", "value": hostname}))?)?;
+    Ok(())
+}
+
+pub fn set_timezone(tz: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "set_timezone", "value": tz}))?)?;
+    Ok(())
+}
+
+pub fn setup_set_dns(upstream: &str, ad_blocking: bool) -> Result<(), String> {
+    ok_or_err(send(json!({
+        "method": "setup_set_dns",
+        "value": upstream,
+        "enabled": ad_blocking,
+    }))?)?;
+    Ok(())
+}
+
+pub fn setup_get_summary() -> Result<serde_json::Value, String> {
+    let resp = ok_or_err(send(json!({"method": "setup_get_summary"}))?)?;
+    let s = resp.config_value.unwrap_or_else(|| "{}".to_string());
+    serde_json::from_str(&s).map_err(|e| e.to_string())
+}
+
+pub fn finalize_setup() -> Result<(), String> {
+    ok_or_err(send(json!({"method": "finalize_setup"}))?)?;
+    Ok(())
+}
+
+pub fn is_setup_complete() -> Result<bool, String> {
+    let resp = ok_or_err(send(json!({"method": "get_config", "key": "setup_complete"}))?)?;
+    Ok(resp.config_value.as_deref() == Some("true"))
+}
+
+pub fn get_setup_step() -> Result<u32, String> {
+    let resp = ok_or_err(send(json!({"method": "get_config", "key": "setup_step"}))?)?;
+    Ok(resp.config_value.and_then(|s| s.parse().ok()).unwrap_or(1))
+}
+
 pub fn check_update() -> Result<serde_json::Value, String> {
     let resp = ok_or_err(send(json!({"method": "check_update"}))?)?;
     resp.update_info.ok_or_else(|| "no update_info in response".to_string())
