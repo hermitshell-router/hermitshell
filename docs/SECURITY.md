@@ -595,3 +595,43 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Set file permissions to 0640 at write time. Verify parent directory is 0750 or more restrictive.
 
+## 101. Session secret and HMAC key generated with thread_rng
+
+**What:** The one-time session secret (`main.rs`) and per-password HMAC signing key (`socket/auth.rs`) are generated with `rand::thread_rng()` instead of `rand::rngs::OsRng`. Password hashing (Argon2 salt) correctly uses `OsRng`.
+
+**Why:** `thread_rng()` is the default convenience RNG in the `rand` crate. It is seeded from OS entropy and is cryptographically secure in practice, but the seeding happens once per thread and the CSPRNG state lives in userspace afterward.
+
+**Risk:** Low. If the userspace CSPRNG state were somehow leaked or the initial seeding were weak, all session tokens signed with that key could be forged. In practice this is unlikely on modern Linux with a healthy entropy pool.
+
+**Proper fix:** Replace `rand::thread_rng()` with `rand::rngs::OsRng` for the two call sites that generate cryptographic key material. The operations run once (secret generation) or rarely (password change), so performance is irrelevant.
+
+## 102. Tarball extraction does not reject symlinks
+
+**What:** The update installer (`update.rs`) validates that tarball entry paths have no absolute components or `..` segments, then calls `entry.unpack_in(staging)`. It does not check whether an entry is a symlink.
+
+**Why:** The `tar` crate's `unpack_in` resolves symlinks relative to the target directory, which mitigates simple escapes. The path traversal check catches the most common attack vector.
+
+**Risk:** Low. A crafted tarball could include a symlink entry pointing to an arbitrary path (e.g., `link → /etc/shadow`), then a subsequent regular entry with the same name that overwrites the symlink target. However, the tarball must already be compromised to contain such entries, and unsigned tarballs are already documented as issue #86.
+
+**Proper fix:** Skip or reject entries where `entry.header().entry_type()` is `Symlink` or `Link`. Alternatively, use `tar::Archive::set_preserve_permissions(false)` and manually filter entry types before unpacking.
+
+## 103. Update version tag stored in DB before validation
+
+**What:** The `check_for_update` function stores the raw `tag_name` string from the GitHub Releases API into the config DB (`update_latest_version`) at line 82 of `update.rs`. The `validate_version()` check only runs later, during `apply_update`, at line 146.
+
+**Why:** The check loop and apply logic are separate code paths. The check loop stores the version for the web UI to display; the apply path validates it before downloading.
+
+**Risk:** Low. A compromised or spoofed GitHub API response could inject an arbitrary string into `update_latest_version`, which is displayed in the web UI. Leptos auto-escapes HTML output, preventing XSS. The string cannot cause code execution because `validate_version()` gates the download path.
+
+**Proper fix:** Call `validate_version()` in `check_for_update` before storing the tag. Reject tags that don't match the expected `v\d+\.\d+\.\d+` pattern.
+
+## 104. DHCP transaction IDs use thread_rng
+
+**What:** The WAN DHCP client (`wan.rs`) generates DHCPv4 and DHCPv6 transaction IDs (xid) with `rand::thread_rng()` instead of `OsRng`.
+
+**Why:** Same convenience pattern as issue #101. Transaction IDs are 32-bit values used to match requests to responses, not long-lived secrets.
+
+**Risk:** Very low. An attacker on the WAN segment who can observe DHCP requests and predict XIDs could inject forged DHCP responses. This requires Layer 2 adjacency to the WAN interface. The `rand` crate's `thread_rng` is cryptographically secure in practice.
+
+**Proper fix:** Use `OsRng` for XID generation to comply with RFC 2131 guidance on strong randomness. The cost is negligible (one syscall per DHCP transaction).
+
