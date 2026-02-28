@@ -2,7 +2,12 @@ use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
 use crate::components::toast::ErrorToast;
-use crate::server_fns::ToggleAdBlocking;
+use crate::server_fns::{
+    ToggleAdBlocking, SetDnsSettings,
+    AddDnsBlocklist, RemoveDnsBlocklist,
+    AddDnsForwardZone, RemoveDnsForwardZone,
+    AddDnsCustomRule, RemoveDnsCustomRule,
+};
 
 #[component]
 pub fn Dns() -> impl IntoView {
@@ -29,6 +34,7 @@ pub fn Dns() -> impl IntoView {
 
     view! {
         <Layout title="DNS & Ad Blocking" active_page="dns">
+            // Ad Blocking section
             <Suspense fallback=move || view! { <p>"Loading..."</p> }>
                 {move || data.get().map(|result| match result {
                     Ok(status) => {
@@ -66,7 +72,7 @@ pub fn Dns() -> impl IntoView {
                 })}
             </Suspense>
 
-            // DNS Config (rate limits)
+            // DNS Configuration (rate limits) - editable form
             <Suspense fallback=move || view! { <p>"Loading DNS config..."</p> }>
                 {move || dns_config.get().map(|result| match result {
                     Ok(config) => {
@@ -84,6 +90,8 @@ pub fn Dns() -> impl IntoView {
                             .unwrap_or("0")
                             .to_string();
 
+                        let dns_action = ServerAction::<SetDnsSettings>::new();
+
                         view! {
                             <div class="settings-section">
                                 <h3>"DNS Configuration"</h3>
@@ -91,14 +99,26 @@ pub fn Dns() -> impl IntoView {
                                     <span class="settings-label">"Mode"</span>
                                     <span class="settings-value">{mode}</span>
                                 </div>
-                                <div class="settings-row">
-                                    <span class="settings-label">"Rate Limit (per client)"</span>
-                                    <span class="settings-value">{per_client}" qps"</span>
-                                </div>
-                                <div class="settings-row">
-                                    <span class="settings-label">"Rate Limit (per domain)"</span>
-                                    <span class="settings-value">{per_domain}" qps"</span>
-                                </div>
+                                <ActionForm action=dns_action>
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Rate Limit (per client)"</span>
+                                        <span class="settings-value">
+                                            <input type="number" name="ratelimit_per_client" min="0" value={per_client} />
+                                            " qps"
+                                        </span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Rate Limit (per domain)"</span>
+                                        <span class="settings-value">
+                                            <input type="number" name="ratelimit_per_domain" min="0" value={per_domain} />
+                                            " qps"
+                                        </span>
+                                    </div>
+                                    <div class="actions-bar">
+                                        <button type="submit" class="btn btn-primary btn-sm">"Save"</button>
+                                    </div>
+                                </ActionForm>
+                                <ErrorToast value=dns_action.value() />
                             </div>
                         }.into_any()
                     }
@@ -106,27 +126,72 @@ pub fn Dns() -> impl IntoView {
                 })}
             </Suspense>
 
-            // Blocklists
+            // Block Lists - table with remove + add form
             <Suspense fallback=move || view! { <p>"Loading blocklists..."</p> }>
                 {move || blocklists.get().map(|result| match result {
                     Ok(lists) => {
+                        let add_bl_action = ServerAction::<AddDnsBlocklist>::new();
+
                         view! {
                             <div class="settings-section">
                                 <h3>"Block Lists"</h3>
                                 {if lists.is_empty() {
                                     view! { <p class="settings-empty">"No blocklists configured"</p> }.into_any()
                                 } else {
-                                    lists.into_iter().map(|bl| {
-                                        let status = if bl.enabled { "Active" } else { "Disabled" };
-                                        let status_class = if bl.enabled { "settings-value success" } else { "settings-value warning" };
-                                        view! {
-                                            <div class="settings-row">
-                                                <span class="settings-label">{bl.name}</span>
-                                                <span class={status_class}>{status}</span>
-                                            </div>
-                                        }
-                                    }).collect_view().into_any()
+                                    view! {
+                                        <table class="data-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>"Name"</th>
+                                                    <th>"URL"</th>
+                                                    <th>"Tag"</th>
+                                                    <th>"Enabled"</th>
+                                                    <th>"Actions"</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {lists.iter().map(|bl| {
+                                                    let id = bl.id;
+                                                    let remove_action = ServerAction::<RemoveDnsBlocklist>::new();
+                                                    view! {
+                                                        <tr>
+                                                            <td>{bl.name.clone()}</td>
+                                                            <td>{bl.url.clone()}</td>
+                                                            <td>{bl.tag.clone()}</td>
+                                                            <td>{if bl.enabled { "Yes" } else { "No" }}</td>
+                                                            <td>
+                                                                <ActionForm action=remove_action attr:style="display:inline">
+                                                                    <input type="hidden" name="id" value={id.to_string()} />
+                                                                    <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
+                                                                </ActionForm>
+                                                                <ErrorToast value=remove_action.value() />
+                                                            </td>
+                                                        </tr>
+                                                    }
+                                                }).collect_view()}
+                                            </tbody>
+                                        </table>
+                                    }.into_any()
                                 }}
+
+                                <h4>"Add Blocklist"</h4>
+                                <ActionForm action=add_bl_action attr:class="form-inline">
+                                    <label>"Name"
+                                        <input type="text" name="name" required />
+                                    </label>
+                                    <label>"URL"
+                                        <input type="text" name="url" placeholder="https://..." required />
+                                    </label>
+                                    <label>"Tag"
+                                        <select name="tag">
+                                            <option value="ads">"ads"</option>
+                                            <option value="custom">"custom"</option>
+                                            <option value="strict">"strict"</option>
+                                        </select>
+                                    </label>
+                                    <button type="submit" class="btn btn-primary">"Add"</button>
+                                </ActionForm>
+                                <ErrorToast value=add_bl_action.value() />
                             </div>
                         }.into_any()
                     }
@@ -134,25 +199,61 @@ pub fn Dns() -> impl IntoView {
                 })}
             </Suspense>
 
-            // Forward Zones
+            // Forward Zones - table with remove + add form
             <Suspense fallback=move || view! { <p>"Loading forward zones..."</p> }>
                 {move || forwards.get().map(|result| match result {
                     Ok(zones) => {
+                        let add_fz_action = ServerAction::<AddDnsForwardZone>::new();
+
                         view! {
                             <div class="settings-section">
                                 <h3>"Forward Zones"</h3>
                                 {if zones.is_empty() {
                                     view! { <p class="settings-empty">"No forward zones configured"</p> }.into_any()
                                 } else {
-                                    zones.into_iter().map(|fz| {
-                                        view! {
-                                            <div class="settings-row">
-                                                <span class="settings-label">{fz.domain}</span>
-                                                <span class="settings-value">{fz.forward_addr}</span>
-                                            </div>
-                                        }
-                                    }).collect_view().into_any()
+                                    view! {
+                                        <table class="data-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>"Domain"</th>
+                                                    <th>"Forward Address"</th>
+                                                    <th>"Actions"</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {zones.iter().map(|fz| {
+                                                    let id = fz.id;
+                                                    let remove_action = ServerAction::<RemoveDnsForwardZone>::new();
+                                                    view! {
+                                                        <tr>
+                                                            <td>{fz.domain.clone()}</td>
+                                                            <td>{fz.forward_addr.clone()}</td>
+                                                            <td>
+                                                                <ActionForm action=remove_action attr:style="display:inline">
+                                                                    <input type="hidden" name="id" value={id.to_string()} />
+                                                                    <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
+                                                                </ActionForm>
+                                                                <ErrorToast value=remove_action.value() />
+                                                            </td>
+                                                        </tr>
+                                                    }
+                                                }).collect_view()}
+                                            </tbody>
+                                        </table>
+                                    }.into_any()
                                 }}
+
+                                <h4>"Add Forward Zone"</h4>
+                                <ActionForm action=add_fz_action attr:class="form-inline">
+                                    <label>"Domain"
+                                        <input type="text" name="domain" placeholder="example.local" required />
+                                    </label>
+                                    <label>"Forward Address"
+                                        <input type="text" name="forward_addr" placeholder="10.0.0.1" required />
+                                    </label>
+                                    <button type="submit" class="btn btn-primary">"Add"</button>
+                                </ActionForm>
+                                <ErrorToast value=add_fz_action.value() />
                             </div>
                         }.into_any()
                     }
@@ -160,26 +261,72 @@ pub fn Dns() -> impl IntoView {
                 })}
             </Suspense>
 
-            // Custom DNS Rules
+            // Custom DNS Rules - table with remove + add form
             <Suspense fallback=move || view! { <p>"Loading custom rules..."</p> }>
                 {move || rules.get().map(|result| match result {
                     Ok(rules) => {
+                        let add_rule_action = ServerAction::<AddDnsCustomRule>::new();
+
                         view! {
                             <div class="settings-section">
                                 <h3>"Custom DNS Rules"</h3>
                                 {if rules.is_empty() {
                                     view! { <p class="settings-empty">"No custom rules configured"</p> }.into_any()
                                 } else {
-                                    rules.into_iter().map(|rule| {
-                                        let label = format!("{} ({})", rule.domain, rule.record_type);
-                                        view! {
-                                            <div class="settings-row">
-                                                <span class="settings-label">{label}</span>
-                                                <span class="settings-value">{rule.value}</span>
-                                            </div>
-                                        }
-                                    }).collect_view().into_any()
+                                    view! {
+                                        <table class="data-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>"Domain"</th>
+                                                    <th>"Type"</th>
+                                                    <th>"Value"</th>
+                                                    <th>"Actions"</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {rules.iter().map(|rule| {
+                                                    let id = rule.id;
+                                                    let remove_action = ServerAction::<RemoveDnsCustomRule>::new();
+                                                    view! {
+                                                        <tr>
+                                                            <td>{rule.domain.clone()}</td>
+                                                            <td>{rule.record_type.clone()}</td>
+                                                            <td>{rule.value.clone()}</td>
+                                                            <td>
+                                                                <ActionForm action=remove_action attr:style="display:inline">
+                                                                    <input type="hidden" name="id" value={id.to_string()} />
+                                                                    <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
+                                                                </ActionForm>
+                                                                <ErrorToast value=remove_action.value() />
+                                                            </td>
+                                                        </tr>
+                                                    }
+                                                }).collect_view()}
+                                            </tbody>
+                                        </table>
+                                    }.into_any()
                                 }}
+
+                                <h4>"Add Rule"</h4>
+                                <ActionForm action=add_rule_action attr:class="form-inline">
+                                    <label>"Domain"
+                                        <input type="text" name="domain" placeholder="example.com" required />
+                                    </label>
+                                    <label>"Type"
+                                        <select name="record_type">
+                                            <option value="A">"A"</option>
+                                            <option value="AAAA">"AAAA"</option>
+                                            <option value="CNAME">"CNAME"</option>
+                                            <option value="MX">"MX"</option>
+                                            <option value="TXT">"TXT"</option>
+                                        </select>
+                                    </label>
+                                    <label>"Value"
+                                        <input type="text" name="value" placeholder="10.0.0.1" required />
+                                    </label>
+                                    <button type="submit" class="btn btn-primary">"Add"</button>
+                                </ActionForm>
+                                <ErrorToast value=add_rule_action.value() />
                             </div>
                         }.into_any()
                     }
