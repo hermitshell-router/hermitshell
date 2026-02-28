@@ -48,6 +48,45 @@ fn is_blocked_config_key(key: &str) -> bool {
 /// "blocked" is excluded -- use block_device/unblock_device instead.
 const USER_ASSIGNABLE_GROUPS: &[&str] = &["quarantine", "trusted", "iot", "guest", "servers"];
 
+/// Methods accessible to non-root callers (web UI, tests).
+/// Root (UID 0) callers bypass this check — they have full access.
+const WEB_ALLOWED_METHODS: &[&str] = &[
+    "list_devices", "get_device", "get_status",
+    "set_device_group", "block_device", "unblock_device", "set_device_nickname",
+    "list_dhcp_reservations", "set_dhcp_reservation", "remove_dhcp_reservation",
+    "has_password", "verify_password", "setup_password",
+    "create_session", "verify_session", "refresh_session",
+    "get_tls_config", "get_tls_status", "set_tls_cert", "set_tls_mode", "set_acme_config",
+    "get_wireguard", "set_wireguard_enabled", "add_wg_peer", "remove_wg_peer", "set_wg_peer_group",
+    "list_port_forwards", "add_port_forward", "remove_port_forward", "set_port_forward_enabled",
+    "get_dmz", "set_dmz",
+    "add_ipv6_pinhole", "remove_ipv6_pinhole", "list_ipv6_pinholes",
+    "get_upnp_config", "set_upnp_config",
+    "get_config", "set_config",
+    "get_ad_blocking", "set_ad_blocking",
+    "export_config", "import_config", "backup_database",
+    "get_log_config", "set_log_config",
+    "get_runzero_config", "set_runzero_config", "sync_runzero",
+    "get_analyzer_status",
+    "get_qos_config", "set_qos_config", "set_qos_test_url",
+    "run_speed_test", "get_speed_test_result",
+    "list_connection_logs", "list_dns_logs",
+    "list_alerts", "get_alert", "acknowledge_alert", "acknowledge_all_alerts",
+    "log_audit", "list_audit_logs",
+    "wifi_list_aps", "wifi_list_providers", "wifi_add_provider", "wifi_remove_provider",
+    "wifi_set_provider_ca_cert", "wifi_get_clients",
+    "wifi_get_ssids", "wifi_set_ssid", "wifi_delete_ssid",
+    "wifi_get_radios", "wifi_set_radio",
+    "check_update", "apply_update",
+    "setup_wan_config", "set_hostname", "set_timezone", "setup_set_dns",
+    "setup_get_summary", "finalize_setup",
+    "list_interfaces", "set_interfaces",
+    "get_bandwidth_history", "get_bandwidth_realtime", "get_top_destinations",
+    "run_bandwidth_rollup",
+    "run_analysis",
+    "list_mdns_services",
+];
+
 const SESSION_IDLE_TIMEOUT_SECS: u64 = 1800;     // 30 minutes
 const SESSION_ABSOLUTE_TIMEOUT_SECS: u64 = 28800; // 8 hours
 
@@ -284,6 +323,14 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
     let conn_limit = Arc::new(Semaphore::new(100));
     loop {
         let (stream, _) = listener.accept().await?;
+        // Check peer credentials (SO_PEERCRED) — unforgeable kernel-provided UID
+        let caller_uid = match stream.peer_cred() {
+            Ok(cred) => cred.uid(),
+            Err(e) => {
+                warn!(error = %e, "failed to get peer credentials, rejecting connection");
+                continue;
+            }
+        };
         let permit = match conn_limit.clone().try_acquire_owned() {
             Ok(p) => p,
             Err(_) => {
@@ -310,14 +357,14 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
         let pm = portmap.clone();
         tokio::spawn(async move {
             let _permit = permit; // held until task completes
-            if let Err(e) = handle_client(stream, db, start, blocky, wan, lan, ltx, lrl, pwl, brt, sts, mreg, pm).await {
+            if let Err(e) = handle_client(stream, db, start, blocky, wan, lan, ltx, lrl, pwl, brt, sts, mreg, pm, caller_uid).await {
                 warn!(error = %e, "client error");
             }
         });
     }
 }
 
-async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: LoginRateLimit, password_lock: PasswordLock, bandwidth_rt: BandwidthRealtimeMap, speed_test_state: SpeedTestState, mdns_registry: crate::mdns::SharedRegistry, portmap: crate::portmap::SharedRegistry) -> Result<()> {
+async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, blocky: Arc<Mutex<BlockyManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: LoginRateLimit, password_lock: PasswordLock, bandwidth_rt: BandwidthRealtimeMap, speed_test_state: SpeedTestState, mdns_registry: crate::mdns::SharedRegistry, portmap: crate::portmap::SharedRegistry, caller_uid: u32) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
@@ -328,7 +375,11 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
         }
         let response = match serde_json::from_str::<Request>(&line) {
             Ok(req) => {
-                if let Some(ref mac) = req.mac {
+                // Enforce method allowlist for non-root callers
+                if caller_uid != 0 && !WEB_ALLOWED_METHODS.contains(&req.method.as_str()) {
+                    warn!(method = %req.method, uid = caller_uid, "access denied: method not allowed for non-root caller");
+                    Response::err("access denied")
+                } else if let Some(ref mac) = req.mac {
                     if let Err(e) = nftables::validate_mac(mac) {
                         Response::err(&e.to_string())
                     } else {
