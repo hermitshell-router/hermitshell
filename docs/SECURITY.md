@@ -635,3 +635,37 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Use `OsRng` for XID generation to comply with RFC 2131 guidance on strong randomness. The cost is negligible (one syscall per DHCP transaction).
 
+---
+
+## Post-Wizard Settings
+
+## 105. Interface and WAN config changes are DB-only with no live apply
+
+**What:** `update_interfaces` and `update_wan_config` write the new values to the config DB but do not reconfigure the running system. The `wan_iface` and `lan_iface` are read once at agent startup (`main.rs:347-357`) and passed as owned strings to nftables, DHCP, QoS, WAN client, port forwarding, RA sender, mDNS, and UPnP. After a change, the DB says one thing while every subsystem uses the old values.
+
+**Why:** Live interface swaps require tearing down and rebuilding nftables rules, restarting the DHCP server, rebinding the WAN client, reconfiguring QoS, and updating every subsystem that holds a copy of the interface name. This is complex and error-prone to do atomically. The wizard versions had the same limitation but it was masked by the fact that the agent had not yet started its main loop when those values were set.
+
+**Risk:** The admin changes interfaces or WAN mode in the UI, gets a success message, but the router continues operating on the old config. No indication that a restart is needed. If the admin does not restart the agent, the firewall rules, NAT, DHCP, and QoS are all mismatched with the DB — a split-brain state that could cause traffic to be routed incorrectly or firewall rules to apply to the wrong interface.
+
+**Proper fix:** Either (a) trigger an agent restart after interface/WAN config changes and display a "restarting..." banner in the UI, or (b) refactor subsystems to accept interface names via `Arc<RwLock<String>>` so they can be updated at runtime. Option (a) is simpler and sufficient.
+
+## 106. update_wan_config has partial write on validation failure
+
+**What:** `handle_update_wan_config` stores `wan_mode` in the DB (line 395) before validating the static IP fields (lines 400-425). If the mode is set to "static" and the gateway or DNS validation fails, the DB is left with `wan_mode=static` but potentially stale or missing `wan_static_gateway` / `wan_static_dns` values from a prior configuration.
+
+**Why:** The wizard version (`handle_setup_wan_config`) has the same bug. The post-wizard version was copied from it.
+
+**Risk:** Low. On the next agent restart, the WAN client reads `wan_mode=static` and attempts to configure the interface with whatever static fields are in the DB. If the gateway is missing or stale, WAN connectivity fails. The admin would need to re-submit a valid static config or switch back to DHCP.
+
+**Proper fix:** Validate all fields before writing any of them to the DB. Collect the validated values into local variables first, then write them all in a batch. This applies to both the wizard and post-wizard versions.
+
+## 107. Post-wizard interface change can lock out the admin
+
+**What:** The wizard's `handle_set_interfaces` can only run before a password is set — meaning before the admin has a management session and before real traffic flows. The post-wizard `handle_update_interfaces` has no such guard. An admin can swap WAN and LAN assignments on a live router.
+
+**Why:** The whole point of the post-wizard settings is to allow reconfiguration after setup. Blocking interface changes would defeat the purpose.
+
+**Risk:** If the admin swaps WAN and LAN (or assigns the management interface as WAN), the next agent restart applies the new assignment. The firewall rules flip, the DHCP server binds to the wrong interface, and the admin's management connection drops. Recovery requires console access or physical presence to fix the config DB.
+
+**Proper fix:** Display a confirmation warning in the UI when the new interface assignment differs from the current running config: "Changing interfaces requires an agent restart. You may lose management access if your current connection is on the interface being reassigned. Continue?" Consider a watchdog timer that reverts the change if the admin does not confirm via a second request within 60 seconds (similar to display resolution change dialogs).
+
