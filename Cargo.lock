@@ -1241,6 +1241,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-native-tls",
+ "toml 0.8.23",
  "tracing",
  "tracing-subscriber",
  "urlencoding",
