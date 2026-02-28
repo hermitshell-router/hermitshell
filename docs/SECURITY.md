@@ -86,6 +86,26 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** DHCP authentication (RFC 3118) is rarely deployed. In practice, the WAN segment is between the router and the ISP — if that's compromised, DHCP auth wouldn't help.
 
+## 92. No DHCPRELEASE sent on agent shutdown
+
+**What:** When the agent stops or the WAN lease expires, the IP is flushed from the interface but no DHCP RELEASE message is sent to the server.
+
+**Why:** Implementing graceful shutdown signaling adds complexity. The DHCP protocol handles this — the server's own lease timer will reclaim the address.
+
+**Risk:** The server holds the IP allocation until its timer expires, wasting addresses in the pool. No security impact.
+
+**Proper fix:** Send DHCPRELEASE on `SIGTERM`/`SIGINT` before exiting. Low priority since ISP DHCP pools are large and leases expire naturally.
+
+## 93. DHCPv6-PD prefix not independently renewed
+
+**What:** The DHCPv6 delegated prefix is acquired once after DHCPv4 lease acquisition. It is re-acquired on full DORA restart but not independently renewed if its lifetime expires before the DHCPv4 lease.
+
+**Why:** DHCPv6 prefix lifetimes are typically long (hours to days) and aligned with DHCPv4 lease times. Independent renewal adds significant complexity for a rare edge case.
+
+**Risk:** If the prefix lifetime is shorter than the DHCPv4 lease, the stale prefix remains configured in the DB and advertised to LAN clients. IPv6 connectivity would break until the next DHCPv4 re-acquire.
+
+**Proper fix:** Track prefix valid lifetime and run an independent DHCPv6 RENEW timer. Alternatively, re-run DHCPv6-PD after each DHCPv4 renewal.
+
 ---
 
 ## Config Key Protection
