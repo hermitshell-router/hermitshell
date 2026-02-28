@@ -415,6 +415,7 @@ pub async fn set_wifi_radio(
 pub async fn setup_interfaces(wan: String, lan: String) -> Result<(), ServerFnError> {
     crate::client::set_interfaces(&wan, &lan)
         .map_err(|e| ServerFnError::new(e))?;
+    leptos_axum::redirect("/setup/3");
     Ok(())
 }
 
@@ -439,5 +440,108 @@ pub async fn set_auto_update(enabled: String) -> Result<(), ServerFnError> {
         .map_err(|e| ServerFnError::new(e))?;
     let _ = crate::client::log_audit("set_auto_update", &enabled.to_string());
     leptos_axum::redirect("/settings");
+    Ok(())
+}
+
+#[server]
+pub async fn setup_wan_config(
+    wan_mode: String,
+    static_ip: Option<String>,
+    gateway: Option<String>,
+    dns: Option<String>,
+) -> Result<(), ServerFnError> {
+    let mode = if wan_mode == "static" { "static" } else { "dhcp" };
+    crate::client::setup_wan_config(
+        mode,
+        static_ip.as_deref().filter(|s| !s.is_empty()),
+        gateway.as_deref().filter(|s| !s.is_empty()),
+        dns.as_deref().filter(|s| !s.is_empty()),
+    )
+    .map_err(|e| ServerFnError::new(e))?;
+    leptos_axum::redirect("/setup/4");
+    Ok(())
+}
+
+#[server]
+pub async fn setup_hostname_tz(hostname: String, timezone: String) -> Result<(), ServerFnError> {
+    if !hostname.is_empty() {
+        crate::client::set_router_hostname(&hostname)
+            .map_err(|e| ServerFnError::new(e))?;
+    }
+    if !timezone.is_empty() {
+        crate::client::set_timezone(&timezone)
+            .map_err(|e| ServerFnError::new(e))?;
+    }
+    leptos_axum::redirect("/setup/5");
+    Ok(())
+}
+
+#[server]
+pub async fn setup_dns(upstream_dns: String, ad_blocking: Option<String>) -> Result<(), ServerFnError> {
+    let ad_blocking_on = ad_blocking.as_deref() == Some("on");
+    let dns = match upstream_dns.as_str() {
+        "cloudflare" => "1.1.1.1,1.0.0.1",
+        "google" => "8.8.8.8,8.8.4.4",
+        "quad9" => "9.9.9.9,149.112.112.112",
+        _ => "auto",
+    };
+    crate::client::setup_set_dns(dns, ad_blocking_on)
+        .map_err(|e| ServerFnError::new(e))?;
+    leptos_axum::redirect("/setup/6");
+    Ok(())
+}
+
+#[server]
+pub async fn setup_password_step(password: String, confirm: String) -> Result<(), ServerFnError> {
+    if password != confirm || password.len() < 8 || password.len() > 128 {
+        return Err(ServerFnError::new("Passwords must match and be 8-128 characters"));
+    }
+    crate::client::setup_password(&password, None)
+        .map_err(|e| ServerFnError::new(e))?;
+    // Create session so steps 7-8 work (user is now authenticated)
+    let cookie = crate::client::create_session()
+        .map_err(|e| ServerFnError::new(e))?;
+    let response = expect_context::<leptos_axum::ResponseOptions>();
+    response.insert_header(
+        axum::http::header::SET_COOKIE,
+        axum::http::HeaderValue::from_str(
+            &format!("session={}; HttpOnly; Secure; SameSite=Strict; Path=/", cookie)
+        ).unwrap(),
+    );
+    leptos_axum::redirect("/setup/7");
+    Ok(())
+}
+
+#[server]
+pub async fn setup_wifi_provider(
+    provider_type: String,
+    name: String,
+    url: String,
+    username: String,
+    password: String,
+    site: Option<String>,
+    api_key: Option<String>,
+) -> Result<(), ServerFnError> {
+    crate::client::wifi_add_provider(
+        &provider_type,
+        &name,
+        &url,
+        &username,
+        &password,
+        None,
+        site.as_deref().filter(|s| !s.is_empty()),
+        api_key.as_deref().filter(|s| !s.is_empty()),
+    )
+    .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("wifi_add_provider", &format!("{}: {}", name, provider_type));
+    leptos_axum::redirect("/setup/8");
+    Ok(())
+}
+
+#[server]
+pub async fn setup_finalize() -> Result<(), ServerFnError> {
+    crate::client::finalize_setup()
+        .map_err(|e| ServerFnError::new(e))?;
+    leptos_axum::redirect("/");
     Ok(())
 }
