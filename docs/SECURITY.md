@@ -523,25 +523,13 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Enforce HTTPS-only for blocklist URLs. Add optional SHA256 checksum verification (store expected hash in DB alongside URL).
 
-## 93. Unbound config injection via custom DNS rules
+## ~~93. Unbound config injection via custom DNS rules~~ (RESOLVED)
 
-**What:** Custom DNS rule values are interpolated into `local-data: "{domain} IN {type} {value}"` directives without escaping quotes or special characters. The same issue applies to upstream DNS `forward-addr` values.
+**Status:** Fixed. `escape_unbound_value()` in `unbound.rs` now escapes `"` and `\` and strips newlines before interpolating values into `local-data:` directives. A/AAAA values are already validated as IPs in `socket/dns.rs`; CNAME/MX are validated as domains. Only TXT values were vulnerable.
 
-**Why:** Input validation in `socket/dns.rs` checks domain format and record type, but does not sanitize the value for Unbound config syntax.
+## ~~94. No IPv6 DoH blocking~~ (RESOLVED)
 
-**Risk:** Medium. A user (or attacker with socket access) can craft a value like `10.0.0.1"; malicious_directive "` to break out of the local-data line and inject arbitrary Unbound config. This could disable filtering, redirect queries, or crash Unbound.
-
-**Proper fix:** Escape `"` and `\` in values before interpolation. Reject values containing newlines. For A/AAAA records, re-validate as IP at config write time. Consider using `unbound-control local_data` instead of config file generation.
-
-## 94. No IPv6 DoH blocking
-
-**What:** The `doh_block_v4` nftables set only contains IPv4 addresses of well-known DoH resolvers. No `doh_block_v6` set exists. DoT port 853 blocking also only applies to IPv4 destinations.
-
-**Why:** Initial implementation focused on IPv4. IPv6 DoH blocking was deferred.
-
-**Risk:** Medium. Devices with IPv6 connectivity can bypass DNS content filtering using IPv6 DoH endpoints (e.g., `2606:4700:4700::1111` for Cloudflare, `2001:4860:4860::8888` for Google). With dual-stack enabled, this is a practical bypass vector.
-
-**Proper fix:** Add a `doh_block_v6` set with IPv6 addresses of the same providers. Apply matching `ip6 daddr @doh_block_v6 tcp dport 443 drop` rules in all `*_fwd` chains.
+**Status:** Fixed. Added `doh_block_v6` nftables set with IPv6 addresses of Cloudflare, Google, Quad9, OpenDNS, AdGuard, and CleanBrowsing. Applied `ip6 daddr @doh_block_v6 tcp dport 443 drop` rules in `quarantine_fwd`, `iot_fwd`, and `servers_fwd` chains.
 
 ## 95. Hardcoded DoH resolver IPs may go stale
 
@@ -573,12 +561,6 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Set file permissions to 0640 at write time. Verify parent directory is 0750 or more restrictive.
 
-## 98. DNS log client IPs not validated
+## ~~98. DNS log client IPs not validated~~ (RESOLVED)
 
-**What:** `parse_unbound_log_line()` in `dns_log.rs` extracts the client IP from Unbound log lines and checks only for `.` or `:` presence, not valid IP format.
-
-**Why:** Unbound logs are trusted local output. Strict parsing was deferred.
-
-**Risk:** Low. Corrupt or malformed log lines could store invalid IPs in the dns_logs table, polluting analytics.
-
-**Proper fix:** Validate with `parse::<IpAddr>()` before storing. Skip entries with invalid IPs.
+**Status:** Fixed. `ingest_once()` in `dns_log.rs` now validates client IPs with `parse::<IpAddr>()` before storing. Entries with invalid IPs are skipped.

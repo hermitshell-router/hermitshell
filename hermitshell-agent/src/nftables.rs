@@ -126,6 +126,11 @@ table inet filter {{
         elements = {{ 1.1.1.1, 1.0.0.1, 8.8.8.8, 8.8.4.4, 9.9.9.9, 149.112.112.112, 208.67.222.222, 208.67.220.220, 94.140.14.14, 94.140.15.15, 185.228.168.168, 185.228.169.168, 45.90.28.0, 45.90.30.0 }}
     }}
 
+    set doh_block_v6 {{
+        type ipv6_addr
+        elements = {{ 2606:4700:4700::1111, 2606:4700:4700::1001, 2001:4860:4860::8888, 2001:4860:4860::8844, 2620:fe::fe, 2620:fe::9, 2620:119:35::35, 2620:119:53::53, 2a10:50c0::ad1:ff, 2a10:50c0::ad2:ff, 2a0d:2a00:1::1, 2a0d:2a00:2::1 }}
+    }}
+
     chain input {{
         type filter hook input priority 0; policy drop;
         ct state established,related accept
@@ -161,6 +166,7 @@ table inet filter {{
     chain quarantine_fwd {{
         tcp dport 853 drop
         ip daddr @doh_block_v4 tcp dport 443 drop
+        ip6 daddr @doh_block_v6 tcp dport 443 drop
         oifname "{wan_iface}" accept
         drop
     }}
@@ -170,6 +176,7 @@ table inet filter {{
     chain iot_fwd {{
         tcp dport 853 drop
         ip daddr @doh_block_v4 tcp dport 443 drop
+        ip6 daddr @doh_block_v6 tcp dport 443 drop
         oifname "{wan_iface}" accept
         drop
     }}
@@ -180,6 +187,7 @@ table inet filter {{
     chain servers_fwd {{
         tcp dport 853 drop
         ip daddr @doh_block_v4 tcp dport 443 drop
+        ip6 daddr @doh_block_v6 tcp dport 443 drop
         oifname "{wan_iface}" accept
         drop
     }}
@@ -760,6 +768,14 @@ mod tests {
         assert!(rules.contains("eth1"));
         assert!(rules.contains("eth2"));
         assert!(rules.contains("dnat to 10.0.0.1:53"));
+    }
+
+    #[test]
+    fn test_build_base_ruleset_has_doh_block_v6() {
+        let rules = build_base_ruleset("eth1", "eth2", "10.0.0.1");
+        assert!(rules.contains("set doh_block_v6"));
+        assert!(rules.contains("2606:4700:4700::1111"));
+        assert!(rules.contains("ip6 daddr @doh_block_v6 tcp dport 443 drop"));
     }
 
     #[test]

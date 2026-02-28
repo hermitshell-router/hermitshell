@@ -1,6 +1,7 @@
 use crate::db::Db;
 use crate::log_export::LogEvent;
 
+use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, error, warn};
@@ -66,13 +67,12 @@ pub fn ingest_once(db: &Arc<Mutex<Db>>, tx: &UnboundedSender<LogEvent>) {
 
     for line in contents.lines() {
         if let Some(entry) = parse_unbound_log_line(line) {
-            let device_ip = if !entry.client_ip.is_empty()
+            let device_ip = if entry.client_ip.parse::<IpAddr>().is_ok()
                 && entry.client_ip != "0.0.0.0"
-                && (entry.client_ip.contains('.') || entry.client_ip.contains(':'))
             {
                 entry.client_ip.to_string()
             } else {
-                String::new()
+                continue;
             };
 
             // Insert into database

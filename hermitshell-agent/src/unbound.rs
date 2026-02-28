@@ -29,6 +29,22 @@ pub const DOH_RESOLVER_IPS_V4: &[&str] = &[
     "45.90.30.0", // NextDNS
 ];
 
+/// Well-known DoH resolver IPv6 addresses to block in nftables (for bypass prevention).
+pub const DOH_RESOLVER_IPS_V6: &[&str] = &[
+    "2606:4700:4700::1111",
+    "2606:4700:4700::1001", // Cloudflare
+    "2001:4860:4860::8888",
+    "2001:4860:4860::8844", // Google
+    "2620:fe::fe",
+    "2620:fe::9", // Quad9
+    "2620:119:35::35",
+    "2620:119:53::53", // OpenDNS
+    "2a10:50c0::ad1:ff",
+    "2a10:50c0::ad2:ff", // AdGuard
+    "2a0d:2a00:1::1",
+    "2a0d:2a00:2::1", // CleanBrowsing
+];
+
 /// Well-known DoH resolver domains to block in Unbound.
 pub const DOH_RESOLVER_DOMAINS: &[&str] = &[
     "dns.google",
@@ -225,9 +241,10 @@ impl UnboundManager {
         // Custom DNS rules
         for rule in &custom_rules {
             if rule.enabled {
+                let safe_value = escape_unbound_value(&rule.value);
                 cfg.push_str(&format!(
                     "    local-data: \"{} IN {} {}\"\n",
-                    rule.domain, rule.record_type, rule.value
+                    rule.domain, rule.record_type, safe_value
                 ));
             }
         }
@@ -385,6 +402,21 @@ impl Drop for UnboundManager {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+/// Escape a value for interpolation into Unbound config quoted strings.
+/// Removes newlines (which would break config syntax) and escapes `\` and `"`.
+fn escape_unbound_value(v: &str) -> String {
+    let mut out = String::with_capacity(v.len());
+    for ch in v.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' | '\r' => {} // strip newlines
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 /// Validate that a domain is well-formed: alphanumeric, hyphens, dots only.
@@ -645,6 +677,31 @@ mod tests {
         assert!(out.contains("real.domain.com"));
     }
 
+    // --- escape_unbound_value tests ---
+
+    #[test]
+    fn test_escape_unbound_value_plain() {
+        assert_eq!(escape_unbound_value("10.0.0.1"), "10.0.0.1");
+    }
+
+    #[test]
+    fn test_escape_unbound_value_quotes() {
+        assert_eq!(
+            escape_unbound_value(r#"10.0.0.1"; malicious"#),
+            r#"10.0.0.1\"; malicious"#
+        );
+    }
+
+    #[test]
+    fn test_escape_unbound_value_backslash() {
+        assert_eq!(escape_unbound_value(r"foo\bar"), r"foo\\bar");
+    }
+
+    #[test]
+    fn test_escape_unbound_value_newlines() {
+        assert_eq!(escape_unbound_value("line1\nline2\rline3"), "line1line2line3");
+    }
+
     // --- generate_config_string tests ---
 
     #[test]
@@ -728,6 +785,28 @@ mod tests {
         let config = mgr.generate_config_string(&db).unwrap();
 
         assert!(config.contains("local-data: \"myhost.home IN A 10.0.1.50\""));
+    }
+
+    #[test]
+    fn test_generate_config_custom_rule_escapes_txt() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Arc::new(Mutex::new(Db::open(db_path.to_str().unwrap()).unwrap()));
+
+        {
+            let db_guard = db.lock().unwrap();
+            db_guard
+                .add_dns_custom_rule("test.home", "TXT", r#"v=spf1"; malicious"#)
+                .unwrap();
+        }
+
+        let mgr = UnboundManager::new(5354, "10.0.0.1".to_string(), None, None, None);
+        let config = mgr.generate_config_string(&db).unwrap();
+
+        // The quotes must be escaped in the output
+        assert!(config.contains(r#"local-data: "test.home IN TXT v=spf1\"; malicious""#));
+        // Must NOT contain an unescaped quote that breaks out of local-data
+        assert!(!config.contains(r#"local-data: "test.home IN TXT v=spf1"; malicious""#));
     }
 
     #[test]
