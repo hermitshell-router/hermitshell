@@ -133,15 +133,12 @@ async fn run_static(
         .args(["link", "set", wan_iface, "up"])
         .status();
 
-    // Add default route via gateway
-    let _ = Command::new("/usr/sbin/ip")
-        .args(["route", "del", "default"])
-        .status();
+    // Set default route via gateway (replace atomically)
     let status = Command::new("/usr/sbin/ip")
-        .args(["route", "add", "default", "via", &gateway_str, "dev", wan_iface])
+        .args(["route", "replace", "default", "via", &gateway_str, "dev", wan_iface])
         .status()?;
     if !status.success() {
-        warn!(gateway = %gateway_str, "failed to add default route");
+        warn!(gateway = %gateway_str, "failed to set default route");
     }
 
     // Derive subnet mask from prefix length
@@ -164,8 +161,8 @@ async fn run_static(
         gateway,
         dns_servers: dns_servers.clone(),
         lease_time: u32::MAX, // static — never expires
-        renew_at: now + std::time::Duration::from_secs(u64::MAX / 2),
-        rebind_at: now + std::time::Duration::from_secs(u64::MAX / 2),
+        renew_at: now + Duration::from_secs(365 * 24 * 3600),
+        rebind_at: now + Duration::from_secs(365 * 24 * 3600),
         delegated_prefix: None,
         prefix_valid_lifetime: None,
     };
@@ -934,7 +931,7 @@ async fn run_dhcp(
             };
 
         let mut cur_gw = gateways.first().copied().unwrap_or(server_ip);
-        let cur_dns = dns_servers;
+        let mut cur_dns = dns_servers;
 
         // --- Apply IP to interface ---
         if let Err(e) = apply_wan_ip(wan_iface, cur_ip, cur_mask, cur_gw) {
@@ -951,6 +948,21 @@ async fn run_dhcp(
             info!(prefix = %prefix, "IPv6 prefix delegated");
             let db_guard = db.lock().unwrap();
             let _ = db_guard.set_config("ipv6_delegated_prefix", prefix);
+        }
+
+        // Store upstream DNS from lease in DB for Unbound
+        if !cur_dns.is_empty() {
+            let dns_csv: String = cur_dns
+                .iter()
+                .map(|ip| ip.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            let db_guard = db.lock().unwrap();
+            let current = db_guard.get_config("upstream_dns").ok().flatten().unwrap_or_default();
+            if current.is_empty() || current == "auto" {
+                let _ = db_guard.set_config("upstream_dns", &dns_csv);
+                info!(servers = %dns_csv, "upstream DNS from WAN lease");
+            }
         }
 
         // --- Populate shared lease ---
@@ -1020,10 +1032,23 @@ async fn run_dhcp(
                         });
                     }
 
+                    // Update upstream DNS in DB if changed
+                    if new_dns != cur_dns {
+                        let dns_csv: String = new_dns
+                            .iter()
+                            .map(|ip| ip.to_string())
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        let db_guard = db.lock().unwrap();
+                        let _ = db_guard.set_config("upstream_dns", &dns_csv);
+                        info!(servers = %dns_csv, "upstream DNS updated from renewal");
+                    }
+
                     // Update current state for next renewal cycle
                     cur_ip = new_ip;
                     cur_mask = new_mask;
                     cur_gw = new_gw;
+                    cur_dns = new_dns;
                     cur_lease_secs = new_lease;
 
                     info!(ip = %cur_ip, lease_secs = cur_lease_secs, "lease renewed, continuing");

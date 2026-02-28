@@ -25,7 +25,6 @@ use hermitshell_common::subnet;
 
 use anyhow::Result;
 use std::io::{BufRead, BufReader, Write};
-use std::net::Ipv4Addr;
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error, info, warn};
@@ -634,25 +633,6 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-            }
-        }
-    }
-
-    // Store WAN DHCP DNS servers as upstream_dns if user hasn't set custom ones
-    {
-        let db_guard = db.lock().unwrap();
-        let current = db_guard.get_config("upstream_dns").ok().flatten().unwrap_or_default();
-        if current.is_empty() || current == "auto" {
-            let dns_from_lease: Vec<Ipv4Addr> = wan_lease
-                .lock()
-                .unwrap()
-                .as_ref()
-                .map(|l| l.dns_servers.clone())
-                .unwrap_or_default();
-            if !dns_from_lease.is_empty() {
-                let dns_csv: String = dns_from_lease.iter().map(|ip: &Ipv4Addr| ip.to_string()).collect::<Vec<_>>().join(",");
-                let _ = db_guard.set_config("upstream_dns", &dns_csv);
-                info!(servers = %dns_csv, "upstream DNS from WAN lease");
             }
         }
     }
