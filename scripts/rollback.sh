@@ -5,7 +5,7 @@
 MARKER="/run/hermitshell/update-pending"
 ROLLBACK_DIR="/opt/hermitshell/rollback"
 INSTALL_DIR="/opt/hermitshell"
-BINARIES="hermitshell-agent hermitshell-dhcp hermitshell blocky"
+BINARIES="hermitshell-agent hermitshell-dhcp hermitshell"
 
 # If no marker, this was a normal stop — do nothing.
 [ -f "$MARKER" ] || exit 0

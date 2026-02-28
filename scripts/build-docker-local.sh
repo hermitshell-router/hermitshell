@@ -13,7 +13,6 @@ mkdir -p "docker-ctx/$DOCKER_ARCH"
 cp target/release/hermitshell-agent "docker-ctx/$DOCKER_ARCH/"
 cp target/release/hermitshell-dhcp "docker-ctx/$DOCKER_ARCH/"
 cp target/release/hermitshell "docker-ctx/$DOCKER_ARCH/"
-cp target/release/blocky "docker-ctx/$DOCKER_ARCH/"
 
 docker build --build-arg TARGETARCH="$DOCKER_ARCH" --build-arg S6_ARCH="$S6_ARCH" -t hermitshell:latest .
 

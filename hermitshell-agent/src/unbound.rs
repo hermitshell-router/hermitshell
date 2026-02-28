@@ -466,7 +466,7 @@ fn http_download(url: &str) -> Result<String> {
         return http_download_curl(url);
     }
 
-    // Plain HTTP via raw TcpStream (matches blocky.rs pattern)
+    // Plain HTTP via raw TcpStream
     let url_no_scheme = url.strip_prefix("http://").unwrap_or(url);
     let (host, path) = match url_no_scheme.find('/') {
         Some(i) => (&url_no_scheme[..i], &url_no_scheme[i..]),

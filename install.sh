@@ -99,7 +99,8 @@ do_install() {
 
     # Install system dependencies
     apt-get update -qq
-    apt-get install -y -qq nftables conntrack wireguard-tools iproute2 curl >/dev/null
+    apt-get install -y -qq nftables conntrack wireguard-tools iproute2 curl unbound >/dev/null
+    unbound-control-setup 2>/dev/null || true
 
     # On Ubuntu, install ifupdown (replaces Netplan for interface management)
     . /etc/os-release
@@ -135,7 +136,7 @@ do_install() {
         rm -rf "$tmp"
     fi
     chmod +x "$INSTALL_DIR"/hermitshell-agent "$INSTALL_DIR"/hermitshell-dhcp \
-              "$INSTALL_DIR"/hermitshell "$INSTALL_DIR"/blocky
+              "$INSTALL_DIR"/hermitshell
 
     # Install rollback script
     if [ -f "$SCRIPT_DIR/scripts/rollback.sh" ]; then
@@ -145,7 +146,7 @@ do_install() {
     mkdir -p "$INSTALL_DIR/rollback"
 
     # Create data and runtime directories
-    mkdir -p "$DATA_DIR/blocky" "$RUN_DIR"
+    mkdir -p "$DATA_DIR/unbound" "$DATA_DIR/unbound/blocklists" "$RUN_DIR"
 
     # Create hermitshell user for web UI (if not exists)
     if ! id hermitshell &>/dev/null; then
@@ -275,7 +276,7 @@ do_upgrade() {
     systemctl stop hermitshell-ui hermitshell-agent
     tar -xzf "$tmp/$tarball" -C "$INSTALL_DIR" --strip-components=1
     chmod +x "$INSTALL_DIR"/hermitshell-agent "$INSTALL_DIR"/hermitshell-dhcp \
-              "$INSTALL_DIR"/hermitshell "$INSTALL_DIR"/blocky
+              "$INSTALL_DIR"/hermitshell
     rm -rf "$tmp"
     systemctl start hermitshell-agent hermitshell-ui
 

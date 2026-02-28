@@ -48,18 +48,13 @@ pub(super) fn handle_get_ad_blocking(_req: &Request, db: &Arc<Mutex<Db>>) -> Res
     resp
 }
 
-pub(super) fn handle_set_ad_blocking(req: &Request, db: &Arc<Mutex<Db>>, blocky: &Arc<Mutex<BlockyManager>>) -> Response {
+pub(super) fn handle_set_ad_blocking(req: &Request, db: &Arc<Mutex<Db>>, unbound: &Arc<Mutex<UnboundManager>>) -> Response {
     let Some(enabled) = req.enabled else {
         return Response::err("enabled required");
     };
-    let db = db.lock().unwrap();
-    if let Err(e) = db.set_config("ad_blocking_enabled", if enabled { "true" } else { "false" }) {
-        return Response::err(&format!("failed to update config: {}", e));
-    }
-    drop(db);
-    let mgr = blocky.lock().unwrap();
-    if let Err(e) = mgr.set_blocking_enabled(enabled) {
-        return Response::err(&format!("failed to update blocky: {}", e));
+    let mgr = unbound.lock().unwrap();
+    if let Err(e) = mgr.set_blocking_enabled(db, enabled) {
+        return Response::err(&format!("failed to update blocking: {}", e));
     }
     let mut resp = Response::ok();
     resp.ad_blocking_enabled = Some(enabled);

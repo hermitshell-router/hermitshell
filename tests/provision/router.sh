@@ -74,11 +74,15 @@ ip route del default via 192.168.121.1 dev eth0 2>/dev/null || true
 ip route add default via 192.168.100.2 dev eth1 2>/dev/null || true
 
 # Create directories for agent
-mkdir -p /var/lib/hermitshell/blocky
+mkdir -p /var/lib/hermitshell/unbound/blocklists
 mkdir -p /run/hermitshell
 
-# Custom blocklist for test domains
-echo "0.0.0.0 ads.test.hermitshell" > /var/lib/hermitshell/blocky/custom-blocklist.txt
+# Install unbound (DNS resolver replaces blocky)
+apt-get install -y -qq unbound 2>/dev/null || true
+# Stop system unbound — agent manages its own instance
+systemctl stop unbound 2>/dev/null || true
+systemctl disable unbound 2>/dev/null || true
+unbound-control-setup 2>/dev/null || true
 
 # Run hermitshell-agent as daemon (nohup prevents SIGHUP on session close)
 if [ -f /opt/hermitshell/hermitshell-agent ]; then
