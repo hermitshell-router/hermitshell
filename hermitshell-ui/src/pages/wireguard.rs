@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
 use crate::components::toast::ErrorToast;
-use crate::server_fns::ToggleWireguard;
+use crate::server_fns::{ToggleWireguard, AddWgPeer, RemoveWgPeer, SetWgPeerGroup};
 
 #[component]
 pub fn Wireguard() -> impl IntoView {
@@ -61,17 +61,40 @@ pub fn Wireguard() -> impl IntoView {
                                                     <th>"IP"</th>
                                                     <th>"Group"</th>
                                                     <th>"Public Key"</th>
+                                                    <th>"Actions"</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 {wg.peers.iter().map(|peer| {
-                                                    let short_key = format!("{}...", &peer.public_key[..12]);
+                                                    let pk = peer.public_key.clone();
+                                                    let pk2 = peer.public_key.clone();
+                                                    let short_key = format!("{}...", &peer.public_key[..12.min(peer.public_key.len())]);
+                                                    let group_action = ServerAction::<SetWgPeerGroup>::new();
+                                                    let remove_action = ServerAction::<RemoveWgPeer>::new();
                                                     view! {
                                                         <tr>
                                                             <td>{peer.name.clone()}</td>
                                                             <td>{peer.ip.clone()}</td>
                                                             <td><span class="group-badge">{peer.device_group.clone()}</span></td>
                                                             <td style="font-family:monospace;font-size:0.85em">{short_key}</td>
+                                                            <td>
+                                                                <ActionForm action=group_action attr:style="display:inline">
+                                                                    <input type="hidden" name="public_key" value={pk.clone()} />
+                                                                    <select name="group">
+                                                                        <option value="trusted">"trusted"</option>
+                                                                        <option value="iot">"iot"</option>
+                                                                        <option value="guest">"guest"</option>
+                                                                        <option value="servers">"servers"</option>
+                                                                    </select>
+                                                                    <button type="submit" class="btn btn-sm">"Move"</button>
+                                                                </ActionForm>
+                                                                <ErrorToast value=group_action.value() />
+                                                                <ActionForm action=remove_action attr:style="display:inline">
+                                                                    <input type="hidden" name="public_key" value={pk2} />
+                                                                    <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
+                                                                </ActionForm>
+                                                                <ErrorToast value=remove_action.value() />
+                                                            </td>
                                                         </tr>
                                                     }
                                                 }).collect_view()}
@@ -79,6 +102,34 @@ pub fn Wireguard() -> impl IntoView {
                                         </table>
                                     }.into_any()
                                 }}
+
+                                <h4 style="margin-top:1.5em">"Add Peer"</h4>
+                                {
+                                    let add_action = ServerAction::<AddWgPeer>::new();
+                                    view! {
+                                        <ActionForm action=add_action>
+                                            <div class="settings-row">
+                                                <label class="settings-label" for="peer-name">"Peer Name"</label>
+                                                <input type="text" id="peer-name" name="name" required class="settings-input" />
+                                            </div>
+                                            <div class="settings-row">
+                                                <label class="settings-label" for="peer-pubkey">"Public Key"</label>
+                                                <input type="text" id="peer-pubkey" name="public_key" required class="settings-input" style="font-family:monospace" />
+                                            </div>
+                                            <div class="settings-row">
+                                                <label class="settings-label" for="peer-group">"Device Group"</label>
+                                                <select id="peer-group" name="group" class="settings-input">
+                                                    <option value="trusted">"trusted"</option>
+                                                    <option value="iot">"iot"</option>
+                                                    <option value="guest">"guest"</option>
+                                                    <option value="servers">"servers"</option>
+                                                </select>
+                                            </div>
+                                            <button type="submit" class="btn">"Add Peer"</button>
+                                        </ActionForm>
+                                        <ErrorToast value=add_action.value() />
+                                    }
+                                }
                             </div>
                         }.into_any()
                     }
