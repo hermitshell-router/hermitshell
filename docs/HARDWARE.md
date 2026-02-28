@@ -10,7 +10,7 @@ HermitShell runs on commodity x86_64 or aarch64 hardware with two network interf
 | **RAM** | 1 GB | Enough for routing + DNS + web UI |
 | **Storage** | 2 GB | SQLite DB, logs, Blocky lists |
 | **NICs** | 2 Ethernet ports | One WAN, one LAN |
-| **OS** | Debian 12 or Raspbian | Installer checks for Debian/Raspbian |
+| **OS** | Any Linux (Debian/Ubuntu for APT; any distro via Docker or static binaries) | Install script checks for Debian/Ubuntu/Raspbian; Docker and binaries are distro-agnostic |
 
 ## Recommended Specs
 
@@ -51,7 +51,11 @@ Old thin clients or small-form-factor desktops with an added PCIe NIC work. Chec
 
 ## What About WiFi?
 
-HermitShell is a wired router. For WiFi, connect an access point to the LAN port. HermitShell can manage TP-Link EAP720 APs directly; other APs work fine but are managed through their own interface.
+HermitShell is a wired router. For WiFi, connect one or more access points to the LAN port (via a switch if needed).
+
+HermitShell can manage **UniFi** APs (via UniFi OS or legacy controllers, including UDM, UDR, and Cloud Key) and **TP-Link EAP** APs (standalone mode) directly from the web UI — SSID configuration, radio tuning, client lists with signal strength, and client kick/block.
+
+Other AP brands work fine on the network but are managed through their own interface.
 
 A typical setup: mini PC (HermitShell) → Ethernet switch → WiFi access point(s).
 

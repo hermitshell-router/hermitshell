@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: x86_64-unknown-linux-musl
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        env:
+          LEPTOS_OUTPUT_NAME: hermitshell
+        run: cargo build --workspace --target x86_64-unknown-linux-musl
+
+      - name: Clippy
+        env:
+          LEPTOS_OUTPUT_NAME: hermitshell
+        run: cargo clippy --workspace --target x86_64-unknown-linux-musl -- -D warnings
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: EmbarkStudios/cargo-deny-action@v2

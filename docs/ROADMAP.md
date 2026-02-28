@@ -16,7 +16,7 @@
 | 10 | QoS bufferbloat prevention (CAKE, DSCP) | 2026-02-20 |
 | 11 | runZero asset sync | 2026-02-20 |
 | 12 | TLS certificate management (self-signed, custom, Tailscale, ACME DNS-01) | 2026-02-23 |
-| 13 | WiFi AP management (TP-Link EAP standalone) | 2026-02-23 |
+| 13 | WiFi AP management (TP-Link EAP standalone, UniFi controllers) | 2026-02-23 |
 | 14 | Production readiness (setup wizard, update checker, encrypted WiFi creds) | 2026-02-24 |
 | 15 | Backup/restore (v2 export, optional encrypted secrets) | 2026-02-24 |
 | 16 | Multi-AP management UI (inline SSID/radio config, per-AP clients) | 2026-02-25 |
@@ -38,6 +38,11 @@
 - [ ] Scheduled automatic backups
 - [ ] Multi-admin accounts (#11)
 - [ ] Metrics / Prometheus endpoint
+
+### WiFi
+
+- [x] Multi-vendor support (UniFi OS + legacy controllers, TP-Link EAP standalone)
+- [ ] Additional AP vendor support
 
 ### Networking
 
