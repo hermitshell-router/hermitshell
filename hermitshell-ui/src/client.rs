@@ -46,6 +46,10 @@ pub struct Response {
     pub bandwidth_realtime: Option<Vec<hermitshell_common::BandwidthRealtime>>,
     pub top_destinations: Option<Vec<hermitshell_common::TopDestination>>,
     pub mdns_services: Option<Vec<hermitshell_common::MdnsService>>,
+    pub dns_config: Option<serde_json::Value>,
+    pub dns_forward_zones: Option<Vec<hermitshell_common::DnsForwardZone>>,
+    pub dns_custom_rules: Option<Vec<hermitshell_common::DnsCustomRule>>,
+    pub dns_blocklists: Option<Vec<hermitshell_common::DnsBlocklist>>,
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
@@ -644,6 +648,46 @@ pub fn apply_update() -> Result<String, String> {
 pub fn set_auto_update(enabled: bool) -> Result<(), String> {
     let value = if enabled { "true" } else { "false" };
     ok_or_err(send(json!({"method": "set_config", "key": "auto_update_enabled", "value": value}))?)?;
+    Ok(())
+}
+
+pub fn get_dns_config() -> Result<serde_json::Value, String> {
+    let resp = ok_or_err(send(json!({"method": "get_dns_config"}))?)?;
+    resp.dns_config.ok_or_else(|| "no dns_config in response".into())
+}
+
+pub fn list_dns_blocklists() -> Result<Vec<hermitshell_common::DnsBlocklist>, String> {
+    let resp = ok_or_err(send(json!({"method": "list_dns_blocklists"}))?)?;
+    Ok(resp.dns_blocklists.unwrap_or_default())
+}
+
+pub fn list_dns_forwards() -> Result<Vec<hermitshell_common::DnsForwardZone>, String> {
+    let resp = ok_or_err(send(json!({"method": "list_dns_forwards"}))?)?;
+    Ok(resp.dns_forward_zones.unwrap_or_default())
+}
+
+pub fn list_dns_rules() -> Result<Vec<hermitshell_common::DnsCustomRule>, String> {
+    let resp = ok_or_err(send(json!({"method": "list_dns_rules"}))?)?;
+    Ok(resp.dns_custom_rules.unwrap_or_default())
+}
+
+pub fn add_dns_forward(domain: &str, forward_addr: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "add_dns_forward", "name": domain, "value": forward_addr}))?)?;
+    Ok(())
+}
+
+pub fn remove_dns_forward(id: i64) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "remove_dns_forward", "id": id}))?)?;
+    Ok(())
+}
+
+pub fn add_dns_rule(domain: &str, record_type: &str, value: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "add_dns_rule", "name": domain, "key": record_type, "value": value}))?)?;
+    Ok(())
+}
+
+pub fn remove_dns_rule(id: i64) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "remove_dns_rule", "id": id}))?)?;
     Ok(())
 }
 
