@@ -50,6 +50,7 @@ pub struct Response {
     pub dns_forward_zones: Option<Vec<hermitshell_common::DnsForwardZone>>,
     pub dns_custom_rules: Option<Vec<hermitshell_common::DnsCustomRule>>,
     pub dns_blocklists: Option<Vec<hermitshell_common::DnsBlocklist>>,
+    pub ipv6_pinholes: Option<Vec<serde_json::Value>>,
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
@@ -694,6 +695,88 @@ pub fn add_dns_rule(domain: &str, record_type: &str, value: &str) -> Result<(), 
 
 pub fn remove_dns_rule(id: i64) -> Result<(), String> {
     ok_or_err(send(json!({"method": "remove_dns_rule", "id": id}))?)?;
+    Ok(())
+}
+
+pub fn update_hostname(hostname: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "update_hostname", "value": hostname}))?)?;
+    Ok(())
+}
+
+pub fn update_timezone(tz: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "update_timezone", "value": tz}))?)?;
+    Ok(())
+}
+
+pub fn update_upstream_dns(dns: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "update_upstream_dns", "value": dns}))?)?;
+    Ok(())
+}
+
+pub fn update_wan_config(mode: &str, static_ip: Option<&str>, gateway: Option<&str>, dns: Option<&str>) -> Result<(), String> {
+    let mut req = json!({"method": "update_wan_config", "value": mode});
+    if let Some(ip) = static_ip {
+        req["key"] = serde_json::Value::String(ip.to_string());
+    }
+    if let Some(gw) = gateway {
+        req["name"] = serde_json::Value::String(gw.to_string());
+    }
+    if let Some(d) = dns {
+        req["description"] = serde_json::Value::String(d.to_string());
+    }
+    ok_or_err(send(req)?)?;
+    Ok(())
+}
+
+pub fn update_interfaces(wan: &str, lan: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "update_interfaces", "key": wan, "value": lan}))?)?;
+    Ok(())
+}
+
+pub fn add_dns_blocklist(name: &str, url: &str, tag: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "add_dns_blocklist", "name": name, "url": url, "key": tag}))?)?;
+    Ok(())
+}
+
+pub fn remove_dns_blocklist(id: i64) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "remove_dns_blocklist", "id": id}))?)?;
+    Ok(())
+}
+
+pub fn set_dns_config(config: &serde_json::Value) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "set_dns_config", "value": config.to_string()}))?)?;
+    Ok(())
+}
+
+pub fn set_port_forward_enabled(id: i64, enabled: bool) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "set_port_forward_enabled", "id": id, "enabled": enabled}))?)?;
+    Ok(())
+}
+
+pub fn list_ipv6_pinholes() -> Result<Vec<serde_json::Value>, String> {
+    let resp = ok_or_err(send(json!({"method": "list_ipv6_pinholes"}))?)?;
+    Ok(resp.ipv6_pinholes.unwrap_or_default())
+}
+
+pub fn add_ipv6_pinhole(mac: &str, protocol: &str, port_start: u16, port_end: u16, description: &str) -> Result<(), String> {
+    ok_or_err(send(json!({
+        "method": "add_ipv6_pinhole",
+        "mac": mac,
+        "protocol": protocol,
+        "port_start": port_start,
+        "port_end": port_end,
+        "description": description,
+    }))?)?;
+    Ok(())
+}
+
+pub fn remove_ipv6_pinhole(id: i64) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "remove_ipv6_pinhole", "id": id}))?)?;
+    Ok(())
+}
+
+pub fn set_wg_peer_group(public_key: &str, group: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "set_wg_peer_group", "public_key": public_key, "group": group}))?)?;
     Ok(())
 }
 
