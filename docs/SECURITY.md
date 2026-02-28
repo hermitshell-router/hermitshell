@@ -290,12 +290,6 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Always use `--encrypt` with a strong passphrase. The encrypted backup uses Argon2id key derivation (m=64MB, t=3) + AES-256-GCM, making brute-force impractical with a decent passphrase. Store backup files with restricted permissions (0600) and on encrypted storage. Consider requiring a passphrase for any export that includes secrets.
 
-## ~~63. Backup passphrase in URL query parameter~~ (RESOLVED)
-
-**Status:** Fixed. The backup endpoint was changed from GET to POST. The passphrase is now sent in the POST body via an HTML form, not in the URL. Browser history, proxy logs, and `Referer` headers no longer expose the passphrase.
-
-**Original issue:** The endpoint accepted the passphrase as a URL query parameter (`?secrets=1&passphrase=...`), which could appear in browser history and logs.
-
 ---
 
 ## Performance and Resource Management
@@ -523,14 +517,6 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Enforce HTTPS-only for blocklist URLs. Add optional SHA256 checksum verification (store expected hash in DB alongside URL).
 
-## ~~93. Unbound config injection via custom DNS rules~~ (RESOLVED)
-
-**Status:** Fixed. `escape_unbound_value()` in `unbound.rs` now escapes `"` and `\` and strips newlines before interpolating values into `local-data:` directives. A/AAAA values are already validated as IPs in `socket/dns.rs`; CNAME/MX are validated as domains. Only TXT values were vulnerable.
-
-## ~~94. No IPv6 DoH blocking~~ (RESOLVED)
-
-**Status:** Fixed. Added `doh_block_v6` nftables set with IPv6 addresses of Cloudflare, Google, Quad9, OpenDNS, AdGuard, and CleanBrowsing. Applied `ip6 daddr @doh_block_v6 tcp dport 443 drop` rules in `quarantine_fwd`, `iot_fwd`, and `servers_fwd` chains.
-
 ## 95. Hardcoded DoH resolver IPs may go stale
 
 **What:** `DOH_RESOLVER_IPS_V4` contains 14 static IPs for well-known DoH providers. New providers or IP changes are not reflected without an agent update.
@@ -561,6 +547,3 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Set file permissions to 0640 at write time. Verify parent directory is 0750 or more restrictive.
 
-## ~~98. DNS log client IPs not validated~~ (RESOLVED)
-
-**Status:** Fixed. `ingest_once()` in `dns_log.rs` now validates client IPs with `parse::<IpAddr>()` before storing. Entries with invalid IPs are skipped.
