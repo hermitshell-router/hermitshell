@@ -78,6 +78,9 @@ pub(super) fn handle_export_config(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
         .collect();
     let wifi_aps = db.list_wifi_aps().unwrap_or_default();
     let wifi_providers = db.list_wifi_providers().unwrap_or_default();
+    let dns_forwards = db.list_dns_forward_zones().unwrap_or_default();
+    let dns_rules = db.list_dns_custom_rules().unwrap_or_default();
+    let dns_blocklists = db.list_dns_blocklists().unwrap_or_default();
 
     // v2 expanded config allowlist
     let config_keys = [
@@ -91,6 +94,10 @@ pub(super) fn handle_export_config(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
         "alert_rule_dns_beaconing", "alert_rule_dns_volume_spike",
         "alert_rule_new_dest_spike", "alert_rule_suspicious_ports",
         "alert_rule_bandwidth_spike", "wan_iface", "lan_iface",
+        "dns_ratelimit_per_client", "dns_ratelimit_per_domain",
+        "dns_bypass_allowed_trusted", "dns_bypass_allowed_guest",
+        "dns_bypass_allowed_quarantine", "dns_bypass_allowed_iot",
+        "dns_bypass_allowed_servers",
     ];
     let mut config_map = serde_json::Map::new();
     for key in &config_keys {
@@ -192,6 +199,9 @@ pub(super) fn handle_export_config(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
                 "provider_id": ap.provider_id,
             })
         }).collect::<Vec<_>>(),
+        "dns_forward_zones": dns_forwards,
+        "dns_custom_rules": dns_rules,
+        "dns_blocklists": dns_blocklists,
         "config": config_map,
         "secrets": secrets_value,
         "secrets_encrypted": secrets_encrypted,
@@ -548,6 +558,56 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
         }
     }
 
+    // Import DNS forward zones
+    let _ = db.conn_exec("DELETE FROM dns_forward_zones");
+    if let Some(zones) = parsed.get("dns_forward_zones").and_then(|v| v.as_array()) {
+        for z in zones {
+            let domain = z.get("domain").and_then(|v| v.as_str()).unwrap_or("");
+            let forward_addr = z.get("forward_addr").and_then(|v| v.as_str()).unwrap_or("");
+            if !domain.is_empty() && !forward_addr.is_empty() {
+                if crate::unbound::validate_domain(domain).is_ok()
+                    && forward_addr.parse::<std::net::IpAddr>().is_ok()
+                {
+                    let _ = db.add_dns_forward_zone(domain, forward_addr);
+                }
+            }
+        }
+    }
+
+    // Import DNS custom rules
+    let _ = db.conn_exec("DELETE FROM dns_custom_rules");
+    if let Some(rules) = parsed.get("dns_custom_rules").and_then(|v| v.as_array()) {
+        let valid_types = ["A", "AAAA", "CNAME", "MX", "TXT"];
+        for r in rules {
+            let domain = r.get("domain").and_then(|v| v.as_str()).unwrap_or("");
+            let record_type = r.get("record_type").and_then(|v| v.as_str()).unwrap_or("");
+            let value = r.get("value").and_then(|v| v.as_str()).unwrap_or("");
+            if !domain.is_empty() && !value.is_empty() && valid_types.contains(&record_type) {
+                if crate::unbound::validate_domain(domain).is_ok() {
+                    let _ = db.add_dns_custom_rule(domain, record_type, value);
+                }
+            }
+        }
+    }
+
+    // Import DNS blocklists
+    let _ = db.conn_exec("DELETE FROM dns_blocklists");
+    if let Some(lists) = parsed.get("dns_blocklists").and_then(|v| v.as_array()) {
+        let valid_tags = ["ads", "custom", "strict"];
+        for bl in lists {
+            let name = bl.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let url = bl.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            let tag = bl.get("tag").and_then(|v| v.as_str()).unwrap_or("ads");
+            if !name.is_empty() && !url.is_empty() && valid_tags.contains(&tag) {
+                if let Ok(parsed_url) = reqwest::Url::parse(url) {
+                    if parsed_url.scheme() == "http" || parsed_url.scheme() == "https" {
+                        let _ = db.add_dns_blocklist(name, url, tag);
+                    }
+                }
+            }
+        }
+    }
+
     // Import config keys (expanded allowlist for v2).
     if let Some(config) = parsed.get("config").and_then(|v| v.as_object()) {
         for (key, val) in config {
@@ -560,7 +620,11 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
                 | "wg_enabled" | "tls_mode" | "analyzer_enabled"
                 | "alert_rule_dns_beaconing" | "alert_rule_dns_volume_spike"
                 | "alert_rule_new_dest_spike" | "alert_rule_suspicious_ports"
-                | "alert_rule_bandwidth_spike" | "wan_iface" | "lan_iface" => {
+                | "alert_rule_bandwidth_spike" | "wan_iface" | "lan_iface"
+                | "dns_ratelimit_per_client" | "dns_ratelimit_per_domain"
+                | "dns_bypass_allowed_trusted" | "dns_bypass_allowed_guest"
+                | "dns_bypass_allowed_quarantine" | "dns_bypass_allowed_iot"
+                | "dns_bypass_allowed_servers" => {
                     if let Some(v) = val.as_str() {
                         let _ = db.set_config(key, v);
                     }
