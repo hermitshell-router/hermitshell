@@ -29,22 +29,22 @@ assert_match "$after" '10\.0\.' "Device IP preserved after restart"
 # Verify LAN client can still reach WAN (nftables rules restored)
 assert_success "LAN can reach WAN after restart" vm_exec lan "ping -c1 -W3 192.168.100.2"
 
-# Verify blocky is running again
-wait_for 10 "Blocky restarted" deploy_check_blocky_running
+# Verify DNS is running again
+wait_for 10 "DNS restarted" deploy_check_dns_running
 
-blocky_ok() {
-    deploy_check_blocky_running
+dns_ok() {
+    deploy_check_dns_running
 }
-assert_success "Blocky process running after restart" blocky_ok
+assert_success "DNS process running after restart" dns_ok
 
 # Verify DHCP process is running
 wait_for 10 "DHCP process running after restart" deploy_check_dhcp_running
 
-# Verify DNS resolution works through blocky
+# Verify DNS resolution works through unbound
 dns_works() {
     vm_exec router "dig +short +time=1 +tries=1 @10.0.0.1 example.com" | grep -q '[0-9]'
 }
 wait_for 10 "DNS resolution works after restart" dns_works
 
 dns=$(vm_exec router "dig +short @10.0.0.1 example.com" || echo "")
-assert_match "$dns" "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" "Blocky resolves DNS after restart"
+assert_match "$dns" "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" "Unbound resolves DNS after restart"

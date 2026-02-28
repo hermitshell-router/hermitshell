@@ -9,7 +9,7 @@ const INSTALL_DIR: &str = "/opt/hermitshell";
 const ROLLBACK_DIR: &str = "/opt/hermitshell/rollback";
 const STAGING_DIR: &str = "/opt/hermitshell/staging";
 const UPDATE_MARKER: &str = "/run/hermitshell/update-pending";
-const BINARIES: &[&str] = &["hermitshell-agent", "hermitshell-dhcp", "hermitshell", "blocky"];
+const BINARIES: &[&str] = &["hermitshell-agent", "hermitshell-dhcp", "hermitshell"];
 
 /// Poll GitHub releases API for the latest release tag.
 async fn check_for_update() -> anyhow::Result<Option<String>> {

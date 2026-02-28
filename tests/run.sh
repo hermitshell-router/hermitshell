@@ -53,7 +53,7 @@ vm_sudo lan "dhclient -r eth1 2>/dev/null; dhclient eth1 2>/dev/null" || true
 
 # Batch readiness polling: check all services in parallel per iteration
 echo "Waiting for services..."
-agent_sock=false; agent_ok=false; blocky_ok=false; docker_ok=false; lan_ok=false
+agent_sock=false; agent_ok=false; dns_ok=false; docker_ok=false; lan_ok=false
 for i in $(seq 1 45); do
     if ! $agent_sock; then
         if vm_exec router "test -S /run/hermitshell/agent.sock" 2>/dev/null; then
@@ -67,9 +67,9 @@ for i in $(seq 1 45); do
             agent_ok=true
         fi
     fi
-    if ! $blocky_ok; then
+    if ! $dns_ok; then
         if vm_exec router "dig +short +time=1 +tries=1 @10.0.0.1 example.com" 2>/dev/null | grep -q '[0-9]'; then
-            blocky_ok=true
+            dns_ok=true
         fi
     fi
     if ! $docker_ok; then
@@ -82,7 +82,7 @@ for i in $(seq 1 45); do
             lan_ok=true
         fi
     fi
-    if $agent_sock && $agent_ok && $blocky_ok && $docker_ok && $lan_ok; then
+    if $agent_sock && $agent_ok && $dns_ok && $docker_ok && $lan_ok; then
         echo "All services ready."
         break
     fi
@@ -195,7 +195,7 @@ run_phase "deploy-check" \
 # All tests run serially to avoid vagrant SSH contention.
 # Parallel groups cause intermittent empty socat/curl responses.
 run_phase "all" \
-    "cases/01-wan-connectivity.sh cases/02-lan-dhcp.sh cases/45-dhcpv6-neigh-mac.sh cases/03-lan-internet.sh cases/04-agent-socket.sh cases/05-device-discovery.sh cases/06-bandwidth-tracking.sh cases/10-subnet-assignment.sh cases/18-hostname-capture.sh cases/33-dhcp-hardening.sh cases/07-web-ui.sh cases/21-auth-https.sh cases/38-setup-wizard.sh cases/12-ad-blocking.sh cases/13-dns-redirect.sh cases/23-connection-logging.sh cases/24-dns-query-logging.sh cases/25-log-export-config.sh cases/08-device-quarantine.sh cases/09-device-approval.sh cases/11-device-block.sh cases/15-device-groups.sh cases/16-wireguard-setup.sh cases/17-wireguard-peer-traffic.sh cases/22-backup-restore.sh cases/26-config-key-protection.sh cases/27-runzero-config.sh cases/28-behavioral-analysis.sh cases/44-mac-spoof-defense.sh cases/19-port-forwarding.sh cases/20-dhcp-reservation.sh cases/36-tls-management.sh cases/37-wifi-management.sh cases/39-update-check.sh cases/40-bandwidth-dashboard.sh cases/41-input-validation.sh cases/14-agent-restart.sh"
+    "cases/01-wan-connectivity.sh cases/02-lan-dhcp.sh cases/45-dhcpv6-neigh-mac.sh cases/03-lan-internet.sh cases/04-agent-socket.sh cases/05-device-discovery.sh cases/06-bandwidth-tracking.sh cases/10-subnet-assignment.sh cases/18-hostname-capture.sh cases/33-dhcp-hardening.sh cases/07-web-ui.sh cases/21-auth-https.sh cases/38-setup-wizard.sh cases/12-ad-blocking.sh cases/13-dns-redirect.sh cases/23-connection-logging.sh cases/24-dns-query-logging.sh cases/25-log-export-config.sh cases/08-device-quarantine.sh cases/09-device-approval.sh cases/11-device-block.sh cases/15-device-groups.sh cases/16-wireguard-setup.sh cases/17-wireguard-peer-traffic.sh cases/22-backup-restore.sh cases/26-config-key-protection.sh cases/27-runzero-config.sh cases/28-behavioral-analysis.sh cases/44-mac-spoof-defense.sh cases/19-port-forwarding.sh cases/20-dhcp-reservation.sh cases/36-tls-management.sh cases/37-wifi-management.sh cases/39-update-check.sh cases/40-bandwidth-dashboard.sh cases/41-input-validation.sh cases/49-dns-forward-zones.sh cases/50-dns-custom-rules.sh cases/51-dot-doh-bypass.sh cases/14-agent-restart.sh"
 
 # Ensure socket is accessible after restart
 vm_sudo router "chmod 666 /run/hermitshell/agent.sock" || true

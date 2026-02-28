@@ -157,11 +157,11 @@ require_docker() {
     wait_for 30 "Web UI running" _check_ready
 }
 
-require_blocky() {
+require_dns() {
     _check_ready() {
         vm_exec router "dig +short +time=1 +tries=1 @10.0.0.1 example.com" 2>/dev/null | grep -q '[0-9]'
     }
-    wait_for 15 "Blocky DNS ready" _check_ready
+    wait_for 15 "DNS ready" _check_ready
 }
 
 # Run nft on router — uses container nft in docker mode (host nft may be incompatible)

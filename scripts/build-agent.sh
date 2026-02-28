@@ -17,19 +17,6 @@ echo "Agent built: target/release/hermitshell-agent (statically linked)"
 echo "DHCP built: target/release/hermitshell-dhcp (statically linked)"
 echo "Web UI built: target/release/hermitshell (statically linked)"
 
-# Download blocky binary (cached)
-BLOCKY_VERSION="v0.24"
-BLOCKY_BIN="target/release/blocky"
-if [ ! -f "$BLOCKY_BIN" ]; then
-    echo "Downloading blocky ${BLOCKY_VERSION}..."
-    curl -sSL "https://github.com/0xERR0R/blocky/releases/download/${BLOCKY_VERSION}/blocky_${BLOCKY_VERSION}_Linux_x86_64.tar.gz" \
-        | tar -xz -C target/release/ blocky
-    chmod +x "$BLOCKY_BIN"
-    echo "Downloaded: $BLOCKY_BIN"
-else
-    echo "Blocky already cached: $BLOCKY_BIN"
-fi
-
 cp systemd/hermitshell-agent.service target/release/
 cp install.sh target/release/
 
@@ -38,7 +25,6 @@ mkdir -p target/release/hermitshell-pkg
 cp target/release/hermitshell-agent target/release/hermitshell-pkg/
 cp target/release/hermitshell-dhcp target/release/hermitshell-pkg/
 cp target/release/hermitshell target/release/hermitshell-pkg/
-cp target/release/blocky target/release/hermitshell-pkg/
 tar -czf target/release/hermitshell-local.tar.gz -C target/release hermitshell-pkg
 rm -rf target/release/hermitshell-pkg
 echo "Install tarball: target/release/hermitshell-local.tar.gz"

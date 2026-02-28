@@ -32,14 +32,14 @@ assert_success "DHCP binary at /opt/hermitshell/" \
     vm_exec router "test -x /opt/hermitshell/hermitshell-dhcp"
 assert_success "Web UI binary at /opt/hermitshell/" \
     vm_exec router "test -x /opt/hermitshell/hermitshell"
-assert_success "Blocky binary at /opt/hermitshell/" \
-    vm_exec router "test -x /opt/hermitshell/blocky"
+assert_success "Unbound config at /opt/hermitshell/" \
+    vm_exec router "test -d /opt/hermitshell/unbound"
 
 # Data directories exist
 assert_success "Data directory exists" \
     vm_exec router "test -d /var/lib/hermitshell"
-assert_success "Blocky data directory exists" \
-    vm_exec router "test -d /var/lib/hermitshell/blocky"
+assert_success "Unbound data directory exists" \
+    vm_exec router "test -d /var/lib/hermitshell/unbound"
 
 # Web UI responds (running as native systemd service, not Docker)
 # Use port 8443 directly — nftables 443->8443 redirect only applies to LAN-sourced traffic

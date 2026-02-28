@@ -121,6 +121,11 @@ table inet filter {{
         type ipv6_addr : verdict;
     }}
 
+    set doh_block_v4 {{
+        type ipv4_addr
+        elements = {{ 1.1.1.1, 1.0.0.1, 8.8.8.8, 8.8.4.4, 9.9.9.9, 149.112.112.112, 208.67.222.222, 208.67.220.220, 94.140.14.14, 94.140.15.15, 185.228.168.168, 185.228.169.168, 45.90.28.0, 45.90.30.0 }}
+    }}
+
     chain input {{
         type filter hook input priority 0; policy drop;
         ct state established,related accept
@@ -130,6 +135,7 @@ table inet filter {{
         iifname "{lan_iface}" udp dport 67 accept
         iifname {{ "{lan_iface}", "wg0" }} tcp dport {{ 53, 5354 }} accept
         iifname {{ "{lan_iface}", "wg0" }} udp dport {{ 53, 5354 }} accept
+        iifname {{ "{lan_iface}", "wg0" }} tcp dport 853 accept
         iifname "{lan_iface}" udp dport 5353 accept
         iifname "{lan_iface}" udp dport {{ 546, 547 }} accept
         iifname {{ "{lan_iface}", "tailscale0", "wg0" }} icmp type echo-request accept
@@ -153,6 +159,8 @@ table inet filter {{
     }}
 
     chain quarantine_fwd {{
+        tcp dport 853 drop
+        ip daddr @doh_block_v4 tcp dport 443 drop
         oifname "{wan_iface}" accept
         drop
     }}
@@ -160,6 +168,8 @@ table inet filter {{
         accept
     }}
     chain iot_fwd {{
+        tcp dport 853 drop
+        ip daddr @doh_block_v4 tcp dport 443 drop
         oifname "{wan_iface}" accept
         drop
     }}
@@ -168,6 +178,8 @@ table inet filter {{
         drop
     }}
     chain servers_fwd {{
+        tcp dport 853 drop
+        ip daddr @doh_block_v4 tcp dport 443 drop
         oifname "{wan_iface}" accept
         drop
     }}

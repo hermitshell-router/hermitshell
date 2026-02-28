@@ -8,9 +8,6 @@ permissions:
   contents: write
   packages: write
 
-env:
-  BLOCKY_VERSION: v0.24
-
 jobs:
   build:
     strategy:
@@ -18,11 +15,9 @@ jobs:
         include:
           - target: x86_64-unknown-linux-musl
             arch: x86_64
-            blocky_arch: x86_64
             docker_platform: linux/amd64
           - target: aarch64-unknown-linux-musl
             arch: aarch64
-            blocky_arch: aarch64
             docker_platform: linux/arm64
     runs-on: ubuntu-latest
     steps:
@@ -47,11 +42,6 @@ jobs:
             cargo build --release -p hermitshell-agent -p hermitshell-dhcp -p hermitshell --target ${{ matrix.target }}
           fi
 
-      - name: Download Blocky
-        run: |
-          curl -fsSL "https://github.com/0xERR0R/blocky/releases/download/${{ env.BLOCKY_VERSION }}/blocky_${{ env.BLOCKY_VERSION }}_Linux_${{ matrix.blocky_arch }}.tar.gz" \
-            | tar -xz blocky
-
       - name: Package tarball
         run: |
           VERSION="${GITHUB_REF_NAME}"
@@ -60,17 +50,11 @@ jobs:
           cp target/${{ matrix.target }}/release/hermitshell-agent "$DIR/"
           cp target/${{ matrix.target }}/release/hermitshell-dhcp "$DIR/"
           cp target/${{ matrix.target }}/release/hermitshell "$DIR/"
-          cp blocky "$DIR/"
           tar -czf "${DIR}.tar.gz" "$DIR"
           sha256sum "${DIR}.tar.gz" > "${DIR}.tar.gz.sha256"
 
       - name: Install cargo-deb
         run: cargo install cargo-deb
-
-      - name: Stage blocky for cargo-deb
-        run: |
-          mkdir -p target/${{ matrix.target }}/release
-          cp blocky target/${{ matrix.target }}/release/
 
       - name: Build .deb package
         run: cargo deb -p hermitshell-agent --no-build --target ${{ matrix.target }}
