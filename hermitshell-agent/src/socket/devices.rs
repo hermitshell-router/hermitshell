@@ -171,7 +171,7 @@ pub(super) fn handle_set_device_nickname(req: &Request, db: &Arc<Mutex<Db>>) -> 
         .filter(|c| !c.is_control())
         .collect();
     if nickname.len() > 256 {
-        return Response::err("nickname too long (max 256 characters)");
+        return Response::err("nickname too long (max 256 bytes)");
     }
     let db = db.lock().unwrap();
     match db.set_device_nickname(mac, &nickname) {

@@ -351,7 +351,13 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
                 }
                 if let Some(nickname) = dev.get("nickname").and_then(|v| v.as_str()) {
                     let mut clean: String = nickname.chars().filter(|c| !c.is_control()).collect();
-                    clean.truncate(256);
+                    if clean.len() > 256 {
+                        let mut end = 256;
+                        while !clean.is_char_boundary(end) {
+                            end -= 1;
+                        }
+                        clean.truncate(end);
+                    }
                     let _ = db.set_device_nickname(mac, &clean);
                 }
                 device_count += 1;

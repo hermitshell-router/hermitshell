@@ -20,12 +20,13 @@ result=$(vm_exec router 'echo "{\"method\":\"ingest_dns_logs\"}" | socat - UNIX-
 assert_contains "$result" '"ok":false' "non-root cannot call ingest_dns_logs"
 assert_contains "$result" "access denied" "ingest_dns_logs returns access denied"
 
-# --- Test 3: Root caller can access admin-only methods ---
+# --- Test 3: Root caller bypasses allowlist for admin-only methods ---
 result=$(vm_sudo router 'echo "{\"method\":\"dhcp_discover\",\"mac\":\"aa:bb:cc:dd:ee:ff\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
-# This should succeed (or fail for other reasons, but NOT "access denied")
+# Root should not get "access denied" — method may return other errors since
+# dhcp_discover is handled on the DHCP IPC socket, not the main agent socket
 if echo "$result" | grep -q "access denied"; then
     echo -e "${RED}FAIL${NC}: root caller got access denied for dhcp_discover"
     exit 1
 else
-    echo -e "${GREEN}PASS${NC}: root caller can call dhcp_discover"
+    echo -e "${GREEN}PASS${NC}: root caller bypasses allowlist for dhcp_discover"
 fi
