@@ -53,7 +53,7 @@ vm_sudo lan "dhclient -r eth1 2>/dev/null; dhclient eth1 2>/dev/null" || true
 
 # Batch readiness polling: check all services in parallel per iteration
 echo "Waiting for services..."
-agent_sock=false; agent_ok=false; blocky_ok=false; docker_ok=false; lan_ok=false
+agent_sock=false; agent_ok=false; dns_ok=false; docker_ok=false; lan_ok=false
 for i in $(seq 1 45); do
     if ! $agent_sock; then
         if vm_exec router "test -S /run/hermitshell/agent.sock" 2>/dev/null; then
@@ -67,9 +67,9 @@ for i in $(seq 1 45); do
             agent_ok=true
         fi
     fi
-    if ! $blocky_ok; then
+    if ! $dns_ok; then
         if vm_exec router "dig +short +time=1 +tries=1 @10.0.0.1 example.com" 2>/dev/null | grep -q '[0-9]'; then
-            blocky_ok=true
+            dns_ok=true
         fi
     fi
     if ! $docker_ok; then
@@ -82,7 +82,7 @@ for i in $(seq 1 45); do
             lan_ok=true
         fi
     fi
-    if $agent_sock && $agent_ok && $blocky_ok && $docker_ok && $lan_ok; then
+    if $agent_sock && $agent_ok && $dns_ok && $docker_ok && $lan_ok; then
         echo "All services ready."
         break
     fi

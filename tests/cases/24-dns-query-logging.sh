@@ -3,7 +3,7 @@ source "$(dirname "$0")/../lib/helpers.sh"
 
 require_agent
 require_lan_ip
-require_blocky
+require_dns
 
 # Get LAN device IP
 device_ip=$(vm_exec lan "ip -4 addr show eth1 | grep inet | awk '{print \$2}' | cut -d/ -f1")
@@ -19,7 +19,7 @@ dns_logged() {
 }
 wait_for 10 "DNS query logged in database" dns_logged
 
-# Query DNS logs (unfiltered, since blocky v0.24 may not capture client IPs)
+# Query DNS logs (unfiltered)
 result=$(vm_exec router 'echo "{\"method\":\"list_dns_logs\",\"limit\":100}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_match "$result" '"ok":true' "list_dns_logs succeeds"
 assert_contains "$result" '"dns_logs"' "response has dns_logs field"

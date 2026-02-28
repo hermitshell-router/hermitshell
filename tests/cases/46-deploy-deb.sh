@@ -32,8 +32,8 @@ assert_success "DHCP binary at /opt/hermitshell/" \
     vm_exec router "test -x /opt/hermitshell/hermitshell-dhcp"
 assert_success "Web UI binary at /opt/hermitshell/" \
     vm_exec router "test -x /opt/hermitshell/hermitshell"
-assert_success "Blocky binary at /opt/hermitshell/" \
-    vm_exec router "test -x /opt/hermitshell/blocky"
+assert_success "Unbound config at /opt/hermitshell/" \
+    vm_exec router "test -d /opt/hermitshell/unbound"
 
 # Systemd units installed to correct location
 assert_success "Agent service unit in /lib/systemd/system/" \
@@ -52,8 +52,8 @@ assert_contains "$conffiles" "/etc/default/hermitshell" "/etc/default/hermitshel
 # Data directories exist
 assert_success "Data directory exists" \
     vm_exec router "test -d /var/lib/hermitshell"
-assert_success "Blocky data directory exists" \
-    vm_exec router "test -d /var/lib/hermitshell/blocky"
+assert_success "Unbound data directory exists" \
+    vm_exec router "test -d /var/lib/hermitshell/unbound"
 
 # hermitshell user exists
 user_check=$(vm_exec router "id hermitshell 2>&1")

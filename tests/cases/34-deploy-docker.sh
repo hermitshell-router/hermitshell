@@ -24,9 +24,9 @@ assert_match "$agent_pid" "^[0-9]+" "Agent running in container"
 dhcp_pid=$(vm_exec router "docker exec hermitshell-aio pgrep -f hermitshell-dhcp" 2>/dev/null || echo "")
 assert_match "$dhcp_pid" "^[0-9]+" "DHCP running in container"
 
-# Blocky running inside container
-blocky_pid=$(vm_exec router "docker exec hermitshell-aio pgrep blocky" 2>/dev/null || echo "")
-assert_match "$blocky_pid" "^[0-9]+" "Blocky running in container"
+# Unbound running inside container
+unbound_pid=$(vm_exec router "docker exec hermitshell-aio pgrep unbound" 2>/dev/null || echo "")
+assert_match "$unbound_pid" "^[0-9]+" "Unbound running in container"
 
 # Web UI running inside container
 ui_pid=$(vm_exec router "docker exec hermitshell-aio pgrep -f '/usr/local/bin/hermitshell$'" 2>/dev/null || echo "")

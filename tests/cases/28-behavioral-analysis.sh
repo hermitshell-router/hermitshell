@@ -4,7 +4,7 @@ source "$(dirname "$0")/../lib/helpers.sh"
 require_agent
 require_wan
 require_lan_ip
-require_blocky
+require_dns
 
 # Reset analyzer state (idempotency: prior run may have left it disabled or rules changed)
 vm_exec router 'echo "{\"method\":\"set_config\",\"key\":\"analyzer_enabled\",\"value\":\"true\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' >/dev/null 2>&1
