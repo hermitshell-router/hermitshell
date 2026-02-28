@@ -8,7 +8,6 @@ mod log_export;
 mod mdns;
 mod natpmp;
 mod nftables;
-mod pd;
 mod portmap;
 mod qos;
 mod ra;
@@ -26,6 +25,7 @@ use hermitshell_common::subnet;
 
 use anyhow::Result;
 use std::io::{BufRead, BufReader, Write};
+use std::net::Ipv4Addr;
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error, info, warn};
@@ -497,20 +497,18 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Try to obtain IPv6 prefix delegation from ISP
-    match crate::pd::request_prefix(&wan_iface) {
-        Ok(Some(prefix)) => {
-            info!(prefix = %prefix, "IPv6 prefix delegated");
-            let db_guard = db.lock().unwrap();
-            let _ = db_guard.set_config("ipv6_delegated_prefix", &prefix);
+    // Start WAN lifecycle (DHCP or static)
+    let wan_lease = wan::start(wan_iface.clone(), db.clone());
+    // Wait briefly for initial lease acquisition
+    for _ in 0..50 {
+        if wan_lease.lock().unwrap().is_some() {
+            break;
         }
-        Ok(None) => {
-            info!("no IPv6 prefix delegation, using ULA only");
-        }
-        Err(e) => {
-            warn!(error = %e, "DHCPv6-PD failed, using ULA only");
-        }
-    };
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    if wan_lease.lock().unwrap().is_none() {
+        warn!("WAN lease not yet acquired, continuing startup");
+    }
 
     // Restore state for previously assigned devices
     {
@@ -636,6 +634,25 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // Store WAN DHCP DNS servers as upstream_dns if user hasn't set custom ones
+    {
+        let db_guard = db.lock().unwrap();
+        let current = db_guard.get_config("upstream_dns").ok().flatten().unwrap_or_default();
+        if current.is_empty() || current == "auto" {
+            let dns_from_lease: Vec<Ipv4Addr> = wan_lease
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|l| l.dns_servers.clone())
+                .unwrap_or_default();
+            if !dns_from_lease.is_empty() {
+                let dns_csv: String = dns_from_lease.iter().map(|ip: &Ipv4Addr| ip.to_string()).collect::<Vec<_>>().join(",");
+                let _ = db_guard.set_config("upstream_dns", &dns_csv);
+                info!(servers = %dns_csv, "upstream DNS from WAN lease");
             }
         }
     }

@@ -907,7 +907,7 @@ async fn dhcp6_pd(wan_iface: &str) -> Option<String> {
 /// Acquires a lease, applies it, runs the renewal loop, and restarts on failure.
 async fn run_dhcp(
     wan_iface: &str,
-    _db: &Arc<Mutex<db::Db>>,
+    db: &Arc<Mutex<db::Db>>,
     lease: &SharedWanLease,
 ) -> Result<()> {
     let mac = get_mac(wan_iface)?;
@@ -944,6 +944,13 @@ async fn run_dhcp(
 
         // --- Try DHCPv6-PD ---
         let delegated_prefix = dhcp6_pd(wan_iface).await;
+
+        // Store delegated prefix in DB
+        if let Some(ref prefix) = delegated_prefix {
+            info!(prefix = %prefix, "IPv6 prefix delegated");
+            let db_guard = db.lock().unwrap();
+            let _ = db_guard.set_config("ipv6_delegated_prefix", prefix);
+        }
 
         // --- Populate shared lease ---
         let mut lease_start = Instant::now();
