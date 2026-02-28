@@ -18,7 +18,7 @@ use pages::dns::Dns;
 use pages::groups::Groups;
 use pages::login::Login;
 use pages::settings::Settings;
-use pages::setup::Setup;
+use pages::setup::{Setup, SetupStep1, SetupStep2, SetupStep3, SetupStep4, SetupStep5, SetupStep6, SetupStep7, SetupStep8};
 use pages::traffic::Traffic;
 use pages::port_forwarding::PortForwarding;
 use pages::wifi::Wifi;
@@ -44,6 +44,14 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/audit") view=Audit />
                     <Route path=path!("/login") view=Login />
                     <Route path=path!("/setup") view=Setup />
+                    <Route path=path!("/setup/1") view=SetupStep1 />
+                    <Route path=path!("/setup/2") view=SetupStep2 />
+                    <Route path=path!("/setup/3") view=SetupStep3 />
+                    <Route path=path!("/setup/4") view=SetupStep4 />
+                    <Route path=path!("/setup/5") view=SetupStep5 />
+                    <Route path=path!("/setup/6") view=SetupStep6 />
+                    <Route path=path!("/setup/7") view=SetupStep7 />
+                    <Route path=path!("/setup/8") view=SetupStep8 />
                 </Routes>
             </main>
         </Router>

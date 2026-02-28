@@ -180,23 +180,17 @@ async fn auth_middleware(
 ) -> axum::response::Response {
     let path = req.uri().path().to_string();
 
-    let is_setup_path = path.starts_with("/api/setup_interfaces")
-        || path.starts_with("/api/get_interfaces");
-
-    if path == "/login" || path == "/setup" || path == "/style.css"
-        || path.starts_with("/api/login") || path.starts_with("/api/setup_password")
+    // Always allow: login page, setup pages, CSS, and their server functions
+    if path == "/login" || path.starts_with("/setup") || path == "/style.css"
+        || path.starts_with("/api/login") || path.starts_with("/api/setup_")
+        || path.starts_with("/api/get_interfaces")
     {
-        return next.run(req).await;
-    }
-
-    // Setup endpoints only bypass auth before a password is set
-    if is_setup_path && !client::has_password().unwrap_or(true) {
         return next.run(req).await;
     }
 
     let has_password = client::has_password().unwrap_or(false);
     if !has_password {
-        return axum::response::Redirect::to("/setup").into_response();
+        return axum::response::Redirect::to("/setup/1").into_response();
     }
 
     let cookie_header = req.headers().get(axum::http::header::COOKIE)
@@ -213,6 +207,14 @@ async fn auth_middleware(
 
     if !client::verify_session(&session).unwrap_or(false) {
         return axum::response::Redirect::to("/login").into_response();
+    }
+
+    // If setup not complete, redirect authenticated users to resume wizard
+    let setup_complete = client::is_setup_complete().unwrap_or(true);
+    if !setup_complete {
+        let step = client::get_setup_step().unwrap_or(7);
+        let target = format!("/setup/{}", step);
+        return axum::response::Redirect::to(&target).into_response();
     }
 
     // Rolling refresh: update LAST_ACTIVE timestamp
