@@ -48,7 +48,6 @@ deploy_start() {
                 -e LAN_IFACE=eth2 \
                 -v /var/lib/hermitshell:/var/lib/hermitshell \
                 -v /run/hermitshell:/run/hermitshell \
-                -v /var/lib/dhcp:/var/lib/dhcp:ro \
                 hermitshell:latest"
             ;;
         install)
