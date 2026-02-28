@@ -688,7 +688,7 @@ pub(super) fn handle_get_full_config(_req: &Request, db: &Arc<Mutex<Db>>) -> Res
 }
 
 /// Build a HermitConfig from the current DB state.
-fn build_hermit_config(db: &Db) -> hermitshell_common::HermitConfig {
+pub fn build_hermit_config(db: &Db) -> hermitshell_common::HermitConfig {
     use hermitshell_common::*;
 
     let devices = db.list_devices().unwrap_or_default();
@@ -842,50 +842,64 @@ pub(super) fn handle_apply_config(
         Err(e) => return Response::err(&format!("invalid config JSON: {}", e)),
     };
 
+    match apply_hermit_config(&config, db, portmap, unbound) {
+        Ok(()) => Response::ok(),
+        Err(e) => Response::err(&e),
+    }
+}
+
+/// Apply a HermitConfig: validate, write to DB, and reconcile all subsystems.
+/// Shared by socket handler and REST API.
+pub fn apply_hermit_config(
+    config: &hermitshell_common::HermitConfig,
+    db: &Arc<Mutex<Db>>,
+    portmap: &crate::portmap::SharedRegistry,
+    unbound: &Arc<Mutex<UnboundManager>>,
+) -> Result<(), String> {
     // Structural validation
     let errors = config.validate();
     if !errors.is_empty() {
         let msg = errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; ");
-        return Response::err(&format!("validation failed: {}", msg));
+        return Err(format!("validation failed: {}", msg));
     }
 
     // Agent-level validation (nftables-specific checks)
     // Validate interfaces
     if let Some(ref iface) = config.network.wan_interface {
         if crate::nftables::validate_iface(iface).is_err() {
-            return Response::err(&format!("invalid WAN interface: {}", iface));
+            return Err(format!("invalid WAN interface: {}", iface));
         }
     }
     if let Some(ref iface) = config.network.lan_interface {
         if crate::nftables::validate_iface(iface).is_err() {
-            return Response::err(&format!("invalid LAN interface: {}", iface));
+            return Err(format!("invalid LAN interface: {}", iface));
         }
     }
     // Validate device MACs
     for dev in &config.devices {
         if crate::nftables::validate_mac(&dev.mac).is_err() {
-            return Response::err(&format!("invalid device MAC: {}", dev.mac));
+            return Err(format!("invalid device MAC: {}", dev.mac));
         }
     }
     // Validate port forward IPs
     for pf in &config.firewall.port_forwards {
         if crate::nftables::validate_ip(&pf.internal_ip).is_err() {
-            return Response::err(&format!("invalid port forward IP: {}", pf.internal_ip));
+            return Err(format!("invalid port forward IP: {}", pf.internal_ip));
         }
         if crate::nftables::is_gateway_ip(&pf.internal_ip) {
-            return Response::err("port forward cannot target the gateway address");
+            return Err("port forward cannot target the gateway address".to_string());
         }
     }
 
     // Count limits
     if config.devices.len() > MAX_IMPORT_DEVICES {
-        return Response::err(&format!("too many devices ({}, max {})", config.devices.len(), MAX_IMPORT_DEVICES));
+        return Err(format!("too many devices ({}, max {})", config.devices.len(), MAX_IMPORT_DEVICES));
     }
     if config.firewall.port_forwards.len() > MAX_IMPORT_PORT_FORWARDS {
-        return Response::err(&format!("too many port forwards ({}, max {})", config.firewall.port_forwards.len(), MAX_IMPORT_PORT_FORWARDS));
+        return Err(format!("too many port forwards ({}, max {})", config.firewall.port_forwards.len(), MAX_IMPORT_PORT_FORWARDS));
     }
     if config.firewall.ipv6_pinholes.len() > MAX_IMPORT_PINHOLES {
-        return Response::err(&format!("too many pinholes ({}, max {})", config.firewall.ipv6_pinholes.len(), MAX_IMPORT_PINHOLES));
+        return Err(format!("too many pinholes ({}, max {})", config.firewall.ipv6_pinholes.len(), MAX_IMPORT_PINHOLES));
     }
 
     let db_guard = db.lock().unwrap();
@@ -1050,7 +1064,34 @@ pub(super) fn handle_apply_config(
         let _ = mgr.reload();
     }
 
-    Response::ok()
+    Ok(())
+}
+
+/// Handle `set_api_key` socket command: hash a plaintext API key and store it.
+pub(super) fn handle_set_api_key(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref key) = req.value else {
+        return Response::err("value required (plaintext API key)");
+    };
+    if key.len() < 16 {
+        return Response::err("API key must be at least 16 characters");
+    }
+    if key.len() > 256 {
+        return Response::err("API key must be at most 256 characters");
+    }
+    let salt = SaltString::generate(&mut rand::rngs::OsRng);
+    let argon2 = Argon2::default();
+    let hash = match argon2.hash_password(key.as_bytes(), &salt) {
+        Ok(h) => h.to_string(),
+        Err(e) => return Response::err(&format!("failed to hash API key: {}", e)),
+    };
+    let db = db.lock().unwrap();
+    match db.set_config("api_key_hash", &hash) {
+        Ok(()) => {
+            let _ = db.log_audit("api_key_set", "API key updated");
+            Response::ok()
+        }
+        Err(e) => Response::err(&e.to_string()),
+    }
 }
 
 pub(super) fn handle_backup_database(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {

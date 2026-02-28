@@ -659,6 +659,16 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Validate all fields before writing any of them to the DB. Collect the validated values into local variables first, then write them all in a batch. This applies to both the wizard and post-wizard versions.
 
+## 108. REST API serves plaintext HTTP
+
+**What:** The REST API (`/api/v1/*`) listens on port 9080 using plaintext HTTP without TLS encryption. API keys are transmitted in the `Authorization: Bearer` header in cleartext.
+
+**Why:** The REST API is new and shares the agent process but not the web UI's TLS infrastructure. Adding TLS requires either duplicating the cert management (the web UI container currently handles TLS termination) or having the agent terminate TLS itself. Starting with plaintext allows the API to be built and tested before adding TLS complexity.
+
+**Risk:** An attacker on the LAN can eavesdrop on REST API traffic and capture the bearer token, then replay it to make authenticated requests (read config, apply changes, list devices). The API key hash is stored with argon2 so the plaintext key cannot be recovered from the DB, but capturing it in transit is trivial on the same L2 segment.
+
+**Proper fix:** Add TLS to the REST API server, either by reusing the agent's TLS cert from the DB or by binding the REST API to localhost only and fronting it with the web UI's HTTPS reverse proxy. Binding to `127.0.0.1` instead of `0.0.0.0` would also limit exposure to local-only access.
+
 ## 107. Post-wizard interface change can lock out the admin
 
 **What:** The wizard's `handle_set_interfaces` can only run before a password is set — meaning before the admin has a management session and before real traffic flows. The post-wizard `handle_update_interfaces` has no such guard. An admin can swap WAN and LAN assignments on a live router.
