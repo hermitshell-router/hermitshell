@@ -549,3 +549,247 @@ pub async fn setup_finalize() -> Result<(), ServerFnError> {
     leptos_axum::redirect("/");
     Ok(())
 }
+
+// --- Post-wizard settings ---
+
+#[server]
+pub async fn change_password(
+    current_password: String,
+    new_password: String,
+    confirm_password: String,
+) -> Result<(), ServerFnError> {
+    if new_password != confirm_password {
+        return Err(ServerFnError::new("Passwords do not match"));
+    }
+    if new_password.len() < 8 || new_password.len() > 128 {
+        return Err(ServerFnError::new("Password must be 8-128 characters"));
+    }
+    crate::client::setup_password(&new_password, Some(&current_password))
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("change_password", "");
+    leptos_axum::redirect("/settings");
+    Ok(())
+}
+
+#[server]
+pub async fn update_hostname(hostname: String) -> Result<(), ServerFnError> {
+    crate::client::update_hostname(&hostname)
+        .map_err(|e| ServerFnError::new(e))?;
+    leptos_axum::redirect("/settings");
+    Ok(())
+}
+
+#[server]
+pub async fn update_timezone(timezone: String) -> Result<(), ServerFnError> {
+    crate::client::update_timezone(&timezone)
+        .map_err(|e| ServerFnError::new(e))?;
+    leptos_axum::redirect("/settings");
+    Ok(())
+}
+
+#[server]
+pub async fn update_upstream_dns(upstream_dns: String, custom_dns: Option<String>) -> Result<(), ServerFnError> {
+    let dns = match upstream_dns.as_str() {
+        "cloudflare" => "1.1.1.1,1.0.0.1".to_string(),
+        "google" => "8.8.8.8,8.8.4.4".to_string(),
+        "quad9" => "9.9.9.9,149.112.112.112".to_string(),
+        "custom" => custom_dns.filter(|s| !s.is_empty()).unwrap_or_else(|| "auto".to_string()),
+        _ => "auto".to_string(),
+    };
+    crate::client::update_upstream_dns(&dns)
+        .map_err(|e| ServerFnError::new(e))?;
+    leptos_axum::redirect("/settings");
+    Ok(())
+}
+
+#[server]
+pub async fn update_wan_config(
+    wan_mode: String,
+    static_ip: Option<String>,
+    gateway: Option<String>,
+    dns: Option<String>,
+) -> Result<(), ServerFnError> {
+    let mode = if wan_mode == "static" { "static" } else { "dhcp" };
+    crate::client::update_wan_config(
+        mode,
+        static_ip.as_deref().filter(|s| !s.is_empty()),
+        gateway.as_deref().filter(|s| !s.is_empty()),
+        dns.as_deref().filter(|s| !s.is_empty()),
+    )
+    .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("update_wan_config", mode);
+    leptos_axum::redirect("/settings");
+    Ok(())
+}
+
+#[server]
+pub async fn update_interfaces(wan: String, lan: String) -> Result<(), ServerFnError> {
+    crate::client::update_interfaces(&wan, &lan)
+        .map_err(|e| ServerFnError::new(e))?;
+    leptos_axum::redirect("/settings");
+    Ok(())
+}
+
+// --- DNS CRUD ---
+
+#[server]
+pub async fn add_dns_blocklist(name: String, url: String, tag: String) -> Result<(), ServerFnError> {
+    crate::client::add_dns_blocklist(&name, &url, &tag)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("add_dns_blocklist", &name);
+    leptos_axum::redirect("/dns");
+    Ok(())
+}
+
+#[server]
+pub async fn remove_dns_blocklist(id: i64) -> Result<(), ServerFnError> {
+    crate::client::remove_dns_blocklist(id)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("remove_dns_blocklist", &id.to_string());
+    leptos_axum::redirect("/dns");
+    Ok(())
+}
+
+#[server]
+pub async fn add_dns_forward_zone(domain: String, forward_addr: String) -> Result<(), ServerFnError> {
+    crate::client::add_dns_forward(&domain, &forward_addr)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("add_dns_forward", &domain);
+    leptos_axum::redirect("/dns");
+    Ok(())
+}
+
+#[server]
+pub async fn remove_dns_forward_zone(id: i64) -> Result<(), ServerFnError> {
+    crate::client::remove_dns_forward(id)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("remove_dns_forward", &id.to_string());
+    leptos_axum::redirect("/dns");
+    Ok(())
+}
+
+#[server]
+pub async fn add_dns_custom_rule(domain: String, record_type: String, value: String) -> Result<(), ServerFnError> {
+    crate::client::add_dns_rule(&domain, &record_type, &value)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("add_dns_rule", &domain);
+    leptos_axum::redirect("/dns");
+    Ok(())
+}
+
+#[server]
+pub async fn remove_dns_custom_rule(id: i64) -> Result<(), ServerFnError> {
+    crate::client::remove_dns_rule(id)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("remove_dns_rule", &id.to_string());
+    leptos_axum::redirect("/dns");
+    Ok(())
+}
+
+#[server]
+pub async fn set_dns_settings(
+    ratelimit_per_client: String,
+    ratelimit_per_domain: String,
+) -> Result<(), ServerFnError> {
+    let config = serde_json::json!({
+        "ratelimit_per_client": ratelimit_per_client,
+        "ratelimit_per_domain": ratelimit_per_domain,
+    });
+    crate::client::set_dns_config(&config)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("set_dns_config", "");
+    leptos_axum::redirect("/dns");
+    Ok(())
+}
+
+// --- Port forwarding ---
+
+#[server]
+pub async fn toggle_port_forward(id: i64, enabled: String) -> Result<(), ServerFnError> {
+    let enabled = enabled == "true";
+    crate::client::set_port_forward_enabled(id, enabled)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("set_port_forward_enabled", &format!("{}={}", id, enabled));
+    leptos_axum::redirect("/port-forwarding");
+    Ok(())
+}
+
+#[server]
+pub async fn add_ipv6_pinhole(
+    device_mac: String,
+    protocol: String,
+    port_start: u16,
+    port_end: u16,
+    description: String,
+) -> Result<(), ServerFnError> {
+    crate::client::add_ipv6_pinhole(&device_mac, &protocol, port_start, port_end, &description)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("add_ipv6_pinhole", &format!("{}: {}/{}-{}", device_mac, protocol, port_start, port_end));
+    leptos_axum::redirect("/port-forwarding");
+    Ok(())
+}
+
+#[server]
+pub async fn remove_ipv6_pinhole(id: i64) -> Result<(), ServerFnError> {
+    crate::client::remove_ipv6_pinhole(id)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("remove_ipv6_pinhole", &id.to_string());
+    leptos_axum::redirect("/port-forwarding");
+    Ok(())
+}
+
+// --- WireGuard peer management ---
+
+#[server]
+pub async fn add_wg_peer(name: String, public_key: String, group: String) -> Result<(), ServerFnError> {
+    crate::client::add_wg_peer(&name, &public_key, &group)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("add_wg_peer", &name);
+    leptos_axum::redirect("/wireguard");
+    Ok(())
+}
+
+#[server]
+pub async fn remove_wg_peer(public_key: String) -> Result<(), ServerFnError> {
+    crate::client::remove_wg_peer(&public_key)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("remove_wg_peer", &public_key);
+    leptos_axum::redirect("/wireguard");
+    Ok(())
+}
+
+#[server]
+pub async fn set_wg_peer_group(public_key: String, group: String) -> Result<(), ServerFnError> {
+    crate::client::set_wg_peer_group(&public_key, &group)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("set_wg_peer_group", &format!("{}: {}", public_key, group));
+    leptos_axum::redirect("/wireguard");
+    Ok(())
+}
+
+// --- Behavioral analysis toggles ---
+
+#[server]
+pub async fn set_analyzer_enabled(enabled: String) -> Result<(), ServerFnError> {
+    let val = if enabled == "true" { "true" } else { "false" };
+    crate::client::set_config("analyzer_enabled", val)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("set_analyzer_enabled", val);
+    leptos_axum::redirect("/settings");
+    Ok(())
+}
+
+#[server]
+pub async fn set_alert_rule(rule: String, enabled: String) -> Result<(), ServerFnError> {
+    let valid_rules = ["dns_beaconing", "dns_volume_spike", "new_dest_spike", "suspicious_ports", "bandwidth_spike"];
+    if !valid_rules.contains(&rule.as_str()) {
+        return Err(ServerFnError::new("Invalid rule name"));
+    }
+    let val = if enabled == "true" { "enabled" } else { "disabled" };
+    let key = format!("alert_rule_{}", rule);
+    crate::client::set_config(&key, val)
+        .map_err(|e| ServerFnError::new(e))?;
+    let _ = crate::client::log_audit("set_alert_rule", &format!("{}={}", rule, val));
+    leptos_axum::redirect("/settings");
+    Ok(())
+}
