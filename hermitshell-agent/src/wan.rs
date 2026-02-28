@@ -4,6 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
+
+use crate::paths;
 use dhcproto::v4::{self, DhcpOption, Decodable, Decoder, Encodable, Encoder, MessageType, OptionCode};
 use dhcproto::v6;
 use rand::Rng;
@@ -63,7 +65,7 @@ async fn run_wan(
 
     match wan_mode.as_str() {
         "static" => run_static(wan_iface, db, lease).await,
-        "dhcp" | _ => run_dhcp(wan_iface, db, lease).await,
+        _ => run_dhcp(wan_iface, db, lease).await,
     }
 }
 
@@ -116,12 +118,12 @@ async fn run_static(
     };
 
     // Flush existing addresses on WAN interface
-    let _ = Command::new("/usr/sbin/ip")
+    let _ = Command::new(paths::ip())
         .args(["addr", "flush", "dev", wan_iface])
         .status();
 
     // Add static IP
-    let status = Command::new("/usr/sbin/ip")
+    let status = Command::new(paths::ip())
         .args(["addr", "add", &cidr, "dev", wan_iface])
         .status()?;
     if !status.success() {
@@ -129,12 +131,12 @@ async fn run_static(
     }
 
     // Bring interface up
-    let _ = Command::new("/usr/sbin/ip")
+    let _ = Command::new(paths::ip())
         .args(["link", "set", wan_iface, "up"])
         .status();
 
     // Set default route via gateway (replace atomically)
-    let status = Command::new("/usr/sbin/ip")
+    let status = Command::new(paths::ip())
         .args(["route", "replace", "default", "via", &gateway_str, "dev", wan_iface])
         .status()?;
     if !status.success() {
@@ -303,6 +305,7 @@ fn build_renew(xid: u32, mac: &[u8; 6], client_ip: Ipv4Addr) -> Vec<u8> {
 
 /// Extract lease parameters from a DHCP ACK message.
 /// Returns (ip, subnet_mask, gateway, dns_servers, lease_seconds).
+#[allow(clippy::type_complexity)]
 fn parse_lease_from_ack(
     msg: &v4::Message,
 ) -> Result<(Ipv4Addr, Ipv4Addr, Vec<Ipv4Addr>, Vec<Ipv4Addr>, u32)> {
@@ -339,13 +342,13 @@ fn apply_wan_ip(iface: &str, ip: Ipv4Addr, mask: Ipv4Addr, gateway: Ipv4Addr) ->
     let prefix_len = u32::from(mask).count_ones();
 
     // Flush existing addresses
-    let _ = Command::new("/usr/sbin/ip")
+    let _ = Command::new(paths::ip())
         .args(["addr", "flush", "dev", iface])
         .status();
 
     // Add new address
     let cidr = format!("{}/{}", ip, prefix_len);
-    let status = Command::new("/usr/sbin/ip")
+    let status = Command::new(paths::ip())
         .args(["addr", "add", &cidr, "dev", iface])
         .status()
         .context("ip addr add")?;
@@ -355,7 +358,7 @@ fn apply_wan_ip(iface: &str, ip: Ipv4Addr, mask: Ipv4Addr, gateway: Ipv4Addr) ->
 
     // Replace default route
     let gw_str = gateway.to_string();
-    let status = Command::new("/usr/sbin/ip")
+    let status = Command::new(paths::ip())
         .args(["route", "replace", "default", "via", &gw_str, "dev", iface])
         .status()
         .context("ip route replace default")?;
@@ -368,12 +371,13 @@ fn apply_wan_ip(iface: &str, ip: Ipv4Addr, mask: Ipv4Addr, gateway: Ipv4Addr) ->
 
 /// Perform DHCP DISCOVER-OFFER-REQUEST-ACK exchange (blocking).
 /// Returns (ip, subnet_mask, gateways, dns_servers, lease_secs, server_id).
+#[allow(clippy::type_complexity)]
 fn dhcp4_acquire_blocking(
     iface: &str,
     mac: &[u8; 6],
 ) -> Result<(Ipv4Addr, Ipv4Addr, Vec<Ipv4Addr>, Vec<Ipv4Addr>, u32, Ipv4Addr)> {
     // Bring interface up
-    let _ = Command::new("/usr/sbin/ip")
+    let _ = Command::new(paths::ip())
         .args(["link", "set", iface, "up"])
         .status();
 
@@ -529,6 +533,7 @@ async fn dhcp4_acquire(
 
 /// Perform DHCP lease renewal (blocking).
 /// Returns (ip, subnet_mask, gateways, dns_servers, lease_secs).
+#[allow(clippy::type_complexity)]
 fn dhcp4_renew_blocking(
     iface: &str,
     mac: &[u8; 6],
@@ -1009,11 +1014,10 @@ async fn run_dhcp(
                     let new_gw = new_gws.first().copied().unwrap_or(server_ip);
 
                     // Reapply if IP changed
-                    if new_ip != cur_ip || new_mask != cur_mask || new_gw != cur_gw {
-                        if let Err(e) = apply_wan_ip(wan_iface, new_ip, new_mask, new_gw) {
+                    if (new_ip != cur_ip || new_mask != cur_mask || new_gw != cur_gw)
+                        && let Err(e) = apply_wan_ip(wan_iface, new_ip, new_mask, new_gw) {
                             error!(error = %e, "failed to apply renewed WAN IP");
                         }
-                    }
 
                     lease_start = Instant::now();
                     let new_dur = Duration::from_secs(new_lease as u64);
@@ -1062,7 +1066,7 @@ async fn run_dhcp(
                         *guard = None;
                     }
                     // Flush IP before re-acquiring
-                    let _ = Command::new("/usr/sbin/ip")
+                    let _ = Command::new(paths::ip())
                         .args(["addr", "flush", "dev", wan_iface])
                         .status();
                     tokio::time::sleep(Duration::from_secs(10)).await;

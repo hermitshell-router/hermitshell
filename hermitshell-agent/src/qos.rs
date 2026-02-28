@@ -3,9 +3,11 @@ use std::net::IpAddr;
 use std::process::Command;
 use tracing::{debug, info};
 
+use crate::paths;
+
 /// Validate that bandwidth is within the supported range (1-1,000,000 Mbps).
 pub fn validate_bandwidth(mbps: u32) -> Result<()> {
-    if mbps < 1 || mbps > 1_000_000 {
+    if !(1..=1_000_000).contains(&mbps) {
         anyhow::bail!("bandwidth {} Mbps out of range (1-1000000)", mbps);
     }
     Ok(())
@@ -25,7 +27,7 @@ pub fn enable(wan_iface: &str, upload_mbps: u32, download_mbps: u32) -> Result<(
 
     // Upload shaping: CAKE on WAN egress
     let up_bw = format!("{}mbit", upload_mbps);
-    let status = Command::new("/usr/sbin/tc")
+    let status = Command::new(paths::tc())
         .args([
             "qdisc", "replace", "dev", wan_iface, "root", "cake",
             "bandwidth", &up_bw, "dual-srchost", "nat", "wash", "diffserv4",
@@ -38,19 +40,19 @@ pub fn enable(wan_iface: &str, upload_mbps: u32, download_mbps: u32) -> Result<(
 
     // Download shaping: IFB device + CAKE
     // Load ifb kernel module (may not be loaded by default)
-    let _ = Command::new("/usr/sbin/modprobe")
+    let _ = Command::new(paths::modprobe())
         .args(["ifb"])
         .status();
 
     // Create ifb0 device
-    let status = Command::new("/usr/sbin/ip")
+    let status = Command::new(paths::ip())
         .args(["link", "add", "ifb0", "type", "ifb"])
         .status()?;
     if !status.success() {
         anyhow::bail!("failed to create ifb0 device");
     }
 
-    let status = Command::new("/usr/sbin/ip")
+    let status = Command::new(paths::ip())
         .args(["link", "set", "ifb0", "up"])
         .status()?;
     if !status.success() {
@@ -58,7 +60,7 @@ pub fn enable(wan_iface: &str, upload_mbps: u32, download_mbps: u32) -> Result<(
     }
 
     // Add ingress qdisc on WAN to capture incoming traffic
-    let status = Command::new("/usr/sbin/tc")
+    let status = Command::new(paths::tc())
         .args(["qdisc", "add", "dev", wan_iface, "handle", "ffff:", "ingress"])
         .status()?;
     if !status.success() {
@@ -66,7 +68,7 @@ pub fn enable(wan_iface: &str, upload_mbps: u32, download_mbps: u32) -> Result<(
     }
 
     // Redirect all ingress traffic to ifb0
-    let status = Command::new("/usr/sbin/tc")
+    let status = Command::new(paths::tc())
         .args([
             "filter", "add", "dev", wan_iface, "parent", "ffff:",
             "protocol", "all", "u32", "match", "u32", "0", "0",
@@ -79,7 +81,7 @@ pub fn enable(wan_iface: &str, upload_mbps: u32, download_mbps: u32) -> Result<(
 
     // CAKE on ifb0 for download shaping
     let down_bw = format!("{}mbit", download_mbps);
-    let status = Command::new("/usr/sbin/tc")
+    let status = Command::new(paths::tc())
         .args([
             "qdisc", "replace", "dev", "ifb0", "root", "cake",
             "bandwidth", &down_bw, "dual-dsthost", "nat", "wash", "diffserv4", "ingress",
@@ -99,24 +101,24 @@ pub fn disable(wan_iface: &str) -> Result<()> {
     crate::nftables::validate_iface(wan_iface)?;
 
     // Remove root qdisc from WAN (removes CAKE upload shaping)
-    let _ = Command::new("/usr/sbin/tc")
+    let _ = Command::new(paths::tc())
         .args(["qdisc", "del", "dev", wan_iface, "root"])
         .status();
     debug!(iface = %wan_iface, "removed root qdisc (if any)");
 
     // Remove ingress qdisc from WAN
-    let _ = Command::new("/usr/sbin/tc")
+    let _ = Command::new(paths::tc())
         .args(["qdisc", "del", "dev", wan_iface, "ingress"])
         .status();
     debug!(iface = %wan_iface, "removed ingress qdisc (if any)");
 
     // Remove root qdisc from ifb0
-    let _ = Command::new("/usr/sbin/tc")
+    let _ = Command::new(paths::tc())
         .args(["qdisc", "del", "dev", "ifb0", "root"])
         .status();
 
     // Remove ifb0 device
-    let _ = Command::new("/usr/sbin/ip")
+    let _ = Command::new(paths::ip())
         .args(["link", "del", "ifb0"])
         .status();
     debug!("removed ifb0 device (if any)");
@@ -188,7 +190,7 @@ pub fn apply_dscp_rules(devices: &[(String, String)]) -> Result<()> {
     };
 
     let script = format!(
-        r#"#!/usr/sbin/nft -f
+        r#"#!{} -f
 table inet qos
 delete table inet qos
 table inet qos {{
@@ -203,13 +205,14 @@ table inet qos {{
         ip daddr @bulk_v4 ip dscp set cs1
     }}
 }}
-"#
+"#,
+        paths::nft()
     );
 
     let temp_path = "/tmp/hermitshell-dscp.nft";
     std::fs::write(temp_path, &script)?;
 
-    let status = Command::new("/usr/sbin/nft")
+    let status = Command::new(paths::nft())
         .args(["-f", temp_path])
         .status()?;
     if !status.success() {
@@ -264,7 +267,7 @@ pub async fn run_speed_test(url: &str) -> Result<u32> {
 /// Remove DSCP marking rules by deleting the `table inet qos`.
 /// Ignores errors if the table does not exist.
 pub fn remove_dscp_rules() -> Result<()> {
-    let _ = Command::new("/usr/sbin/nft")
+    let _ = Command::new(paths::nft())
         .args(["delete", "table", "inet", "qos"])
         .status();
     info!("DSCP marking rules removed");

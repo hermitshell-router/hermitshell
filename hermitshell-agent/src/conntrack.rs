@@ -19,6 +19,7 @@ pub struct ConntrackEvent {
     pub protocol: String,
     pub src_ip: String,
     pub dst_ip: String,
+    #[allow(dead_code)]
     pub src_port: u16,
     pub dst_port: u16,
     pub bytes_src: i64,
@@ -106,7 +107,7 @@ fn extract_protocol(line: &str) -> Option<String> {
 }
 
 /// Extract the first occurrence of `key=value` from the line.
-fn extract_first_value<'a>(line: &'a str, key: &str) -> Option<String> {
+fn extract_first_value(line: &str, key: &str) -> Option<String> {
     let prefix = format!("{}=", key);
     for token in line.split_whitespace() {
         if let Some(val) = token.strip_prefix(&prefix) {
@@ -121,11 +122,10 @@ fn extract_first_value<'a>(line: &'a str, key: &str) -> Option<String> {
 fn extract_bytes_pair(line: &str) -> (i64, i64) {
     let mut bytes_values = Vec::new();
     for token in line.split_whitespace() {
-        if let Some(val) = token.strip_prefix("bytes=") {
-            if let Ok(n) = val.parse::<i64>() {
+        if let Some(val) = token.strip_prefix("bytes=")
+            && let Ok(n) = val.parse::<i64>() {
                 bytes_values.push(n);
             }
-        }
     }
     let src = bytes_values.first().copied().unwrap_or(0);
     let dst = bytes_values.get(1).copied().unwrap_or(0);

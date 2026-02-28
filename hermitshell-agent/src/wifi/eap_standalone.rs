@@ -166,12 +166,11 @@ impl EapSession {
             mac: String::new(),
         };
 
-        if let Ok(status) = session.get_data_get("status.device.json").await {
-            if let Some(mac) = status.get("mac").and_then(|v| v.as_str()) {
+        if let Ok(status) = session.get_data_get("status.device.json").await
+            && let Some(mac) = status.get("mac").and_then(|v| v.as_str()) {
                 // Convert TP-Link format (XX-XX-XX-XX-XX-XX) to colon-separated
                 session.mac = mac.replace('-', ":");
             }
-        }
 
         Ok((session, tofu_pem))
     }
@@ -505,18 +504,16 @@ impl EapSession {
         );
 
         // Add PSK password if WPA-PSK
-        if security_mode == 1 {
-            if let Some(ref pw) = config.password {
+        if security_mode == 1
+            && let Some(ref pw) = config.password {
                 params.push_str(&format!("&psk_version=3&psk_cipher=3&psk_key={}", urlencoding::encode(pw)));
             }
-        }
 
         // Add old name for editing existing SSID
-        if let Some(idx) = ssid_index {
-            if let Some(old_name) = arr[idx].get("ssidname").and_then(|v| v.as_str()) {
+        if let Some(idx) = ssid_index
+            && let Some(old_name) = arr[idx].get("ssidname").and_then(|v| v.as_str()) {
                 params.push_str(&format!("&old_ssidname={}", urlencoding::encode(old_name)));
             }
-        }
 
         self.post_data_write("wireless.ssids.json", &params).await?;
         Ok(())
@@ -619,6 +616,7 @@ impl EapSession {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn kick_client_impl(&self, mac: &str) -> Result<()> {
         // The EAP720 doesn't expose a direct "deauth client" API in standalone mode.
         // The closest mechanism is adding the client to the MAC filter deny list temporarily,
@@ -631,6 +629,7 @@ impl EapSession {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn block_client_impl(&self, mac: &str) -> Result<()> {
         // Ensure MAC filtering is enabled in deny mode
         let filter_status = self.get_data_get("macFiltering.set.json").await?;
@@ -657,6 +656,7 @@ impl EapSession {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn unblock_client_impl(&self, mac: &str) -> Result<()> {
         let tp_mac = mac.replace(':', "-").to_uppercase();
 

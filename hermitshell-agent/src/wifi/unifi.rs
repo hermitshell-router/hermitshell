@@ -176,8 +176,8 @@ impl UnifiSession {
         });
 
         // ---- API key auth attempt ----
-        if let Some(key) = api_key {
-            if !key.is_empty() {
+        if let Some(key) = api_key
+            && !key.is_empty() {
                 // Build a second client with the API key as default header.
                 let key_client = {
                     let mut headers = HeaderMap::new();
@@ -205,8 +205,8 @@ impl UnifiSession {
                         "{}{}/api/s/{}/stat/device-basic",
                         base_url, prefix, site
                     );
-                    if let Ok(resp) = key_client.get(&probe_url).send().await {
-                        if resp.status().is_success() {
+                    if let Ok(resp) = key_client.get(&probe_url).send().await
+                        && resp.status().is_success() {
                             debug!(kind = ?kind, "UniFi API key auth succeeded");
                             return Ok((
                                 Self {
@@ -219,11 +219,9 @@ impl UnifiSession {
                                 tofu_pem,
                             ));
                         }
-                    }
                 }
                 debug!("API key auth failed, falling back to password");
             }
-        }
 
         // ---- Password auth ----
         let (kind, csrf) = Self::password_login(&client, &base_url, username, password).await?;
@@ -422,6 +420,7 @@ impl UnifiSession {
     }
 
     /// POST to `/cmd/stamgr` with a station management command.
+    #[allow(dead_code)]
     async fn stamgr_cmd(&self, cmd: &str, mac: &str) -> Result<()> {
         let url = self.site_url("cmd/stamgr");
         self.api_post(&url, &json!({ "cmd": cmd, "mac": mac.to_lowercase() }))
@@ -878,12 +877,11 @@ impl WifiDevice for UnifiDevice {
                 obj.insert("tx_power_mode".to_string(), json!("auto"));
                 obj.remove("tx_power");
             }
-        } else if let Ok(tp) = tx_power_str.parse::<u64>() {
-            if let Some(obj) = entry.as_object_mut() {
+        } else if let Ok(tp) = tx_power_str.parse::<u64>()
+            && let Some(obj) = entry.as_object_mut() {
                 obj.insert("tx_power_mode".to_string(), json!("custom"));
                 obj.insert("tx_power".to_string(), json!(tp));
             }
-        }
 
         // PUT the full radio_table back.
         let url = self

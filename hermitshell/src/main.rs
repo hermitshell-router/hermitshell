@@ -116,10 +116,10 @@ async fn host_validation_middleware(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    if let Some(host) = req.headers().get(axum::http::header::HOST).and_then(|v| v.to_str().ok()) {
-        if !is_allowed_host(host) {
-            return (axum::http::StatusCode::FORBIDDEN, "Invalid Host header").into_response();
-        }
+    if let Some(host) = req.headers().get(axum::http::header::HOST).and_then(|v| v.to_str().ok())
+        && !is_allowed_host(host)
+    {
+        return (axum::http::StatusCode::FORBIDDEN, "Invalid Host header").into_response();
     }
     next.run(req).await
 }
@@ -235,12 +235,12 @@ async fn auth_middleware(
 
     // Rolling refresh: update LAST_ACTIVE timestamp
     let mut response = next.run(req).await;
-    if let Ok(refreshed) = client::refresh_session(&session) {
-        if let Ok(hv) = axum::http::HeaderValue::from_str(
+    if let Ok(refreshed) = client::refresh_session(&session)
+        && let Ok(hv) = axum::http::HeaderValue::from_str(
             &format!("session={}; HttpOnly; Secure; SameSite=Strict; Path=/", refreshed)
-        ) {
-            response.headers_mut().insert(axum::http::header::SET_COOKIE, hv);
-        }
+        )
+    {
+        response.headers_mut().insert(axum::http::header::SET_COOKIE, hv);
     }
     response
 }

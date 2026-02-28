@@ -325,6 +325,7 @@ impl Response {
 }
 
 /// Start the main Unix socket API server that handles all agent commands.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::time::Instant, unbound: Arc<Mutex<UnboundManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, bandwidth_rt: BandwidthRealtimeMap, speed_test_state: SpeedTestState, mdns_registry: crate::mdns::SharedRegistry, portmap: crate::portmap::SharedRegistry) -> Result<()> {
     // Remove stale socket from previous run (ignore: may not exist)
     let _ = std::fs::remove_file(socket_path);
@@ -384,6 +385,7 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, unbound: Arc<Mutex<UnboundManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: LoginRateLimit, password_lock: PasswordLock, bandwidth_rt: BandwidthRealtimeMap, speed_test_state: SpeedTestState, mdns_registry: crate::mdns::SharedRegistry, portmap: crate::portmap::SharedRegistry, caller_uid: u32) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
@@ -437,12 +439,12 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
     Ok(())
 }
 
-fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, unbound: &Arc<Mutex<UnboundManager>>, wan_iface: &str, lan_iface: &str, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: &LoginRateLimit, password_lock: &PasswordLock, bandwidth_rt: &BandwidthRealtimeMap, speed_test_state: &SpeedTestState, mdns_registry: &crate::mdns::SharedRegistry, portmap: &crate::portmap::SharedRegistry) -> Response {
-    if let Some(ref mac) = req.mac {
-        if let Err(e) = nftables::validate_mac(mac) {
+#[allow(clippy::too_many_arguments)]
+fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, unbound: &Arc<Mutex<UnboundManager>>, wan_iface: &str, _lan_iface: &str, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: &LoginRateLimit, password_lock: &PasswordLock, bandwidth_rt: &BandwidthRealtimeMap, speed_test_state: &SpeedTestState, mdns_registry: &crate::mdns::SharedRegistry, portmap: &crate::portmap::SharedRegistry) -> Response {
+    if let Some(ref mac) = req.mac
+        && let Err(e) = nftables::validate_mac(mac) {
             return Response::err(&e.to_string());
         }
-    }
     match req.method.as_str() {
         "list_devices" => devices::handle_list_devices(&req, db),
         "get_device" => devices::handle_get_device(&req, db),
@@ -607,11 +609,10 @@ async fn handle_dhcp_client(stream: UnixStream, db: Arc<Mutex<Db>>, lan_iface: S
 }
 
 fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Response {
-    if let Some(ref mac) = req.mac {
-        if let Err(e) = nftables::validate_mac(mac) {
+    if let Some(ref mac) = req.mac
+        && let Err(e) = nftables::validate_mac(mac) {
             return Response::err(&e.to_string());
         }
-    }
     match req.method.as_str() {
         "dhcp_discover" => {
             let Some(mac) = req.mac else {
@@ -672,17 +673,14 @@ fn handle_dhcp_request(req: Request, db: &Arc<Mutex<Db>>, lan_iface: &str) -> Re
                     // Auto-classify if enabled and device has runZero data
                     let auto_classify = db.get_config("auto_classify_devices")
                         .ok().flatten().map(|v| v == "true").unwrap_or(false);
-                    if auto_classify {
-                        if let Ok(Some(device)) = db.get_device(&mac) {
-                            if device.device_group == "quarantine" {
-                                if let Some(suggested) = devices::suggest_group(device.runzero_device_type.as_deref()) {
+                    if auto_classify
+                        && let Ok(Some(device)) = db.get_device(&mac)
+                        && device.device_group == "quarantine"
+                        && let Some(suggested) = devices::suggest_group(device.runzero_device_type.as_deref()) {
                                     let _ = db.set_device_group(&mac, suggested);
                                     let _ = nftables::remove_device_forward_rule(&ipv4);
                                     let _ = nftables::add_device_forward_rule(&ipv4, suggested);
                                 }
-                            }
-                        }
-                    }
                     let mut resp = Response::ok();
                     resp.subnet_id = Some(sid);
                     resp.device_ipv4 = Some(ipv4);

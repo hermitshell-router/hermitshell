@@ -8,6 +8,7 @@ mod log_export;
 mod mdns;
 mod natpmp;
 mod nftables;
+pub(crate) mod paths;
 mod portmap;
 mod qos;
 mod ra;
@@ -29,14 +30,13 @@ use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error, info, warn};
 
-const DB_PATH: &str = "/var/lib/hermitshell/hermitshell.db";
-const SOCKET_PATH: &str = "/run/hermitshell/agent.sock";
 const POLL_INTERVAL_SECS: u64 = 10;
 
 /// Send a JSON request to the agent socket and return the parsed response.
 fn socket_request(req: &serde_json::Value) -> Result<serde_json::Value, String> {
-    let mut stream = UnixStream::connect(SOCKET_PATH)
-        .map_err(|e| format!("failed to connect to {}: {}", SOCKET_PATH, e))?;
+    let socket_path = paths::socket_path();
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|e| format!("failed to connect to {}: {}", socket_path, e))?;
     let mut payload = serde_json::to_string(req).map_err(|e| format!("JSON encode: {}", e))?;
     payload.push('\n');
     stream
@@ -65,7 +65,7 @@ fn rpassword_fallback() -> String {
         .arg("echo")
         .stdin(std::process::Stdio::inherit())
         .status();
-    eprint!("\n");
+    eprintln!();
     line.trim_end_matches('\n').trim_end_matches('\r').to_string()
 }
 
@@ -306,11 +306,13 @@ fn cli_main() -> Option<i32> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    paths::init();
+
     if let Some(exit_code) = cli_main() {
         std::process::exit(exit_code);
     }
 
-    let use_json = db::Db::open(DB_PATH)
+    let use_json = db::Db::open(&paths::db_path())
         .ok()
         .and_then(|d| d.get_config("log_format").ok().flatten())
         .map(|v| v == "json")
@@ -345,14 +347,14 @@ async fn main() -> Result<()> {
     let start_time = std::time::Instant::now();
 
     let wan_iface = {
-        db::Db::open(DB_PATH)
+        db::Db::open(&paths::db_path())
             .ok()
             .and_then(|d| d.get_config("wan_iface").ok().flatten())
     }
     .unwrap_or_else(|| std::env::var("WAN_IFACE").unwrap_or_else(|_| "eth1".into()));
 
     let lan_iface = {
-        db::Db::open(DB_PATH)
+        db::Db::open(&paths::db_path())
             .ok()
             .and_then(|d| d.get_config("lan_iface").ok().flatten())
     }
@@ -375,13 +377,13 @@ async fn main() -> Result<()> {
 
     // Read LAN IP from config (default: 10.0.0.1 / fd00::1)
     let lan_ip = {
-        db::Db::open(DB_PATH)
+        db::Db::open(&paths::db_path())
             .ok()
             .and_then(|d| d.get_config("lan_ip").ok().flatten())
     }
     .unwrap_or_else(|| "10.0.0.1".into());
     let lan_ip_v6 = {
-        db::Db::open(DB_PATH)
+        db::Db::open(&paths::db_path())
             .ok()
             .and_then(|d| d.get_config("lan_ip_v6").ok().flatten())
     }
@@ -392,7 +394,7 @@ async fn main() -> Result<()> {
 
     // Read device IP range from config (default: 10.0.0.0/8)
     let device_range_cidr = {
-        db::Db::open(DB_PATH)
+        db::Db::open(&paths::db_path())
             .ok()
             .and_then(|d| d.get_config("device_ipv4_base").ok().flatten())
     }
@@ -408,7 +410,7 @@ async fn main() -> Result<()> {
     info!(device_range = %device_range_cidr, max_devices = device_max_subnet_id + 1, "device IP range");
 
     // Ensure LAN interface has the base IPv4 address
-    let status = std::process::Command::new("/usr/sbin/ip")
+    let status = std::process::Command::new(paths::ip())
         .args(["addr", "add", &lan_addr, "dev", &lan_iface])
         .status();
     match status {
@@ -418,11 +420,11 @@ async fn main() -> Result<()> {
     }
 
     // Ensure LAN interface has the base IPv6 ULA address
-    let _ = std::process::Command::new("/usr/sbin/ip")
+    let _ = std::process::Command::new(paths::ip())
         .args(["-6", "addr", "add", &lan_addr_v6, "dev", &lan_iface])
         .status();
     // Verify the address is actually present (ip addr add exit code 2 is ambiguous)
-    let has_ipv6_ula = std::process::Command::new("/usr/sbin/ip")
+    let has_ipv6_ula = std::process::Command::new(paths::ip())
         .args(["-6", "addr", "show", "dev", &lan_iface])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).contains(&lan_ip_v6))
@@ -435,8 +437,8 @@ async fn main() -> Result<()> {
     nftables::apply_base_rules(&wan_iface, &lan_iface, &lan_ip)?;
 
     // Open database
-    let db = Arc::new(Mutex::new(db::Db::open(DB_PATH)?));
-    info!(path = DB_PATH, "database opened");
+    let db = Arc::new(Mutex::new(db::Db::open(&paths::db_path())?));
+    info!(path = %paths::data_dir(), "database opened");
 
     // Generate self-signed TLS cert if missing
     {
@@ -489,11 +491,10 @@ async fn main() -> Result<()> {
     // Encrypt any legacy plaintext WiFi provider passwords
     {
         let db_lock = db.lock().unwrap();
-        if let Ok(Some(secret)) = db_lock.get_config("session_secret") {
-            if let Err(e) = db_lock.encrypt_wifi_provider_passwords(&secret) {
+        if let Ok(Some(secret)) = db_lock.get_config("session_secret")
+            && let Err(e) = db_lock.encrypt_wifi_provider_passwords(&secret) {
                 warn!(error = %e, "failed to encrypt legacy WiFi passwords");
             }
-        }
     }
 
     // Start WAN lifecycle (DHCP or static)
@@ -607,8 +608,8 @@ async fn main() -> Result<()> {
     {
         let db_guard = db.lock().unwrap();
         let wg_enabled = db_guard.get_config_bool("wg_enabled", false);
-        if wg_enabled {
-            if let Some(private_key) = db_guard.get_config("wg_private_key").ok().flatten() {
+        if wg_enabled
+            && let Some(private_key) = db_guard.get_config("wg_private_key").ok().flatten() {
                 let private_key = zeroize::Zeroizing::new(private_key);
                 let listen_port: u16 = db_guard.get_config("wg_listen_port")
                     .ok().flatten()
@@ -634,7 +635,6 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-        }
     }
 
     // Start Unbound DNS server
@@ -663,11 +663,10 @@ async fn main() -> Result<()> {
             let db_guard = db.lock().unwrap();
             let enabled = db_guard.get_config_bool("ad_blocking_enabled", true);
             drop(db_guard);
-            if !enabled {
-                if let Err(e) = mgr.set_blocking_enabled(&db, false) {
+            if !enabled
+                && let Err(e) = mgr.set_blocking_enabled(&db, false) {
                     error!(error = %e, "failed to disable blocking");
                 }
-            }
         }
         Arc::new(Mutex::new(mgr))
     };
@@ -757,18 +756,19 @@ async fn main() -> Result<()> {
     let speed_test_state: crate::socket::SpeedTestState = Arc::new(Mutex::new((false, None, None)));
     let mdns_reg_for_socket = mdns_registry.clone();
     let portmap_for_socket = portmap_registry.clone();
+    let socket_path = paths::socket_path();
     tokio::spawn(async move {
-        if let Err(e) = socket::run_server(SOCKET_PATH, db_clone, start_time, unbound_clone, wan_for_socket, lan_for_socket, log_tx_socket, bandwidth_rt_for_socket, speed_test_state, mdns_reg_for_socket, portmap_for_socket).await {
+        if let Err(e) = socket::run_server(&socket_path, db_clone, start_time, unbound_clone, wan_for_socket, lan_for_socket, log_tx_socket, bandwidth_rt_for_socket, speed_test_state, mdns_reg_for_socket, portmap_for_socket).await {
             error!(error = %e, "socket server error");
         }
     });
 
     // Spawn DHCP IPC socket
-    const DHCP_SOCKET_PATH: &str = "/run/hermitshell/dhcp.sock";
+    let dhcp_socket_path = paths::dhcp_socket_path();
     let db_dhcp = db.clone();
     let lan_iface_dhcp = lan_iface.to_string();
     tokio::spawn(async move {
-        if let Err(e) = socket::run_dhcp_socket(DHCP_SOCKET_PATH, db_dhcp, lan_iface_dhcp).await {
+        if let Err(e) = socket::run_dhcp_socket(&dhcp_socket_path, db_dhcp, lan_iface_dhcp).await {
             error!(error = %e, "DHCP socket error");
         }
     });
@@ -800,18 +800,22 @@ async fn main() -> Result<()> {
         mdns::run(db_mdns, lan_mdns, mdns_reg_for_task, lan_ip_mdns).await;
     });
 
-    // Spawn update check loop (opt-in)
-    let update_enabled = db.lock().unwrap()
-        .get_config("update_check_enabled").ok().flatten()
-        .map(|v| v == "true").unwrap_or(false);
-    if update_enabled {
-        update::spawn_update_loop(db.clone());
+    // Spawn update check loop (opt-in, disabled on NixOS)
+    if std::env::var("HERMITSHELL_UPDATES_DISABLED").is_ok() {
+        info!("built-in updates disabled (HERMITSHELL_UPDATES_DISABLED set)");
+    } else {
+        let update_enabled = db.lock().unwrap()
+            .get_config("update_check_enabled").ok().flatten()
+            .map(|v| v == "true").unwrap_or(false);
+        if update_enabled {
+            update::spawn_update_loop(db.clone());
+        }
     }
 
     // Spawn DHCP server as child process
     let db_for_counters = db.clone();
     let dhcp_bin = std::env::var("HERMITSHELL_DHCP_BIN")
-        .unwrap_or_else(|_| "/opt/hermitshell/hermitshell-dhcp".into());
+        .unwrap_or_else(|_| format!("{}/hermitshell-dhcp", paths::install_dir()));
     std::process::Command::new(&dhcp_bin)
         .args([&lan_iface, &lan_ip, &lan_ip_v6])
         .stdout(std::process::Stdio::inherit())
@@ -878,13 +882,13 @@ async fn main() -> Result<()> {
 
         // Run behavioral analysis every 6 ticks (60 seconds)
         analysis_counter += 1;
-        if analysis_counter % 6 == 0 {
+        if analysis_counter.is_multiple_of(6) {
             analyzer::run_analysis_cycle(&db_for_counters, &log_tx_analyzer);
         }
 
         // Hourly log rotation (360 ticks * 10s = 1 hour)
         rotation_counter += 1;
-        if rotation_counter % 360 == 0 {
+        if rotation_counter.is_multiple_of(360) {
             let db_guard = db_for_counters.lock().unwrap();
             let retention_days: i64 = db_guard
                 .get_config("log_retention_days")
@@ -924,7 +928,7 @@ async fn main() -> Result<()> {
 
         // Every 24h: refresh DNS blocklists (8640 ticks * 10s = 86400s)
         blocklist_counter += 1;
-        if blocklist_counter % 8640 == 0 {
+        if blocklist_counter.is_multiple_of(8640) {
             let unbound = unbound_for_loop.clone();
             let db_bl = db_for_counters.clone();
             tokio::task::spawn_blocking(move || {

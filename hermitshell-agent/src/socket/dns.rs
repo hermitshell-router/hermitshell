@@ -291,8 +291,8 @@ pub(super) fn handle_remove_dns_blocklist(
 
     // Remove the blocklist file
     let path = format!(
-        "/var/lib/hermitshell/unbound/blocklists/{}.conf",
-        id
+        "{}/{}.conf",
+        crate::paths::blocklist_dir(), id
     );
     let _ = std::fs::remove_file(&path);
 

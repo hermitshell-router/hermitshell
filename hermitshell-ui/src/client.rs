@@ -6,7 +6,10 @@ use std::os::unix::net::UnixStream;
 use crate::types::{Device, Status};
 pub use hermitshell_common::{Alert, ConnectionLog, DnsLogEntry};
 
-const SOCKET_PATH: &str = "/run/hermitshell/agent.sock";
+fn socket_path() -> String {
+    let run_dir = std::env::var("HERMITSHELL_RUN_DIR").unwrap_or_else(|_| "/run/hermitshell".into());
+    format!("{}/agent.sock", run_dir)
+}
 
 #[derive(Debug, Deserialize)]
 pub struct Response {
@@ -54,7 +57,7 @@ pub struct Response {
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
-    let mut stream = UnixStream::connect(SOCKET_PATH)
+    let mut stream = UnixStream::connect(socket_path())
         .map_err(|e| format!("Failed to connect to agent: {e}"))?;
 
     let line = request.to_string();
@@ -452,6 +455,7 @@ pub fn wifi_list_providers() -> Result<Vec<hermitshell_common::WifiProviderInfo>
     Ok(resp.wifi_providers.unwrap_or_default())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn wifi_add_provider(
     provider_type: &str,
     name: &str,

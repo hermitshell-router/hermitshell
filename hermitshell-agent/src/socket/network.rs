@@ -172,11 +172,10 @@ pub(super) fn handle_remove_ipv6_pinhole(req: &Request, db: &Arc<Mutex<Db>>) -> 
         Ok(None) => return Response::err("device not found"),
         Err(e) => return Response::err(&e.to_string()),
     };
-    if let Some(ref ipv6_global) = device.ipv6_global {
-        if let Err(e) = nftables::remove_ipv6_pinhole(ipv6_global, &protocol, port_start as u16, port_end as u16) {
+    if let Some(ref ipv6_global) = device.ipv6_global
+        && let Err(e) = nftables::remove_ipv6_pinhole(ipv6_global, &protocol, port_start as u16, port_end as u16) {
             return Response::err(&format!("failed to remove nftables rule: {}", e));
         }
-    }
     match db.remove_ipv6_pinhole(id) {
         Ok(true) => Response::ok(),
         Ok(false) => Response::err("pinhole not found"),

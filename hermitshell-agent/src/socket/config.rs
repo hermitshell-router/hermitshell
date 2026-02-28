@@ -131,8 +131,8 @@ pub(super) fn handle_export_config(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
                     });
                     wifi_provider_passwords.insert(provider.id.clone(), serde_json::Value::String((*plaintext).clone()));
                 }
-                if let Some(api_key) = api_key_enc {
-                    if !api_key.is_empty() {
+                if let Some(api_key) = api_key_enc
+                    && !api_key.is_empty() {
                         let plaintext = Zeroizing::new(if crate::crypto::is_encrypted(&api_key) {
                             crate::crypto::decrypt_password(&api_key, &session_secret)
                                 .unwrap_or_else(|_| api_key.clone())
@@ -141,7 +141,6 @@ pub(super) fn handle_export_config(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
                         });
                         wifi_provider_api_keys.insert(provider.id.clone(), serde_json::Value::String((*plaintext).clone()));
                     }
-                }
             }
         }
         secrets_map.insert("wifi_provider_passwords".to_string(), serde_json::Value::Object(wifi_provider_passwords));
@@ -221,7 +220,7 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
 
     // Version check: accept v1 and v2
     let version = match parsed.get("version").and_then(|v| v.as_i64()) {
-        Some(v) if v >= 1 && v <= 2 => v,
+        Some(v) if (1..=2).contains(&v) => v,
         Some(v) if v > 2 => return Response::err("backup was created by a newer version — upgrade the agent first"),
         _ => return Response::err("missing or invalid version"),
     };
@@ -256,26 +255,22 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
     };
 
     // Count limits
-    if let Some(devices) = parsed.get("devices").and_then(|v| v.as_array()) {
-        if devices.len() > MAX_IMPORT_DEVICES {
+    if let Some(devices) = parsed.get("devices").and_then(|v| v.as_array())
+        && devices.len() > MAX_IMPORT_DEVICES {
             return Response::err(&format!("too many devices ({}, max {})", devices.len(), MAX_IMPORT_DEVICES));
         }
-    }
-    if let Some(forwards) = parsed.get("port_forwards").and_then(|v| v.as_array()) {
-        if forwards.len() > MAX_IMPORT_PORT_FORWARDS {
+    if let Some(forwards) = parsed.get("port_forwards").and_then(|v| v.as_array())
+        && forwards.len() > MAX_IMPORT_PORT_FORWARDS {
             return Response::err(&format!("too many port forwards ({}, max {})", forwards.len(), MAX_IMPORT_PORT_FORWARDS));
         }
-    }
-    if let Some(pinholes) = parsed.get("ipv6_pinholes").and_then(|v| v.as_array()) {
-        if pinholes.len() > MAX_IMPORT_PINHOLES {
+    if let Some(pinholes) = parsed.get("ipv6_pinholes").and_then(|v| v.as_array())
+        && pinholes.len() > MAX_IMPORT_PINHOLES {
             return Response::err(&format!("too many IPv6 pinholes ({}, max {})", pinholes.len(), MAX_IMPORT_PINHOLES));
         }
-    }
-    if let Some(providers) = parsed.get("wifi_providers").and_then(|v| v.as_array()) {
-        if providers.len() > MAX_IMPORT_WIFI_PROVIDERS {
+    if let Some(providers) = parsed.get("wifi_providers").and_then(|v| v.as_array())
+        && providers.len() > MAX_IMPORT_WIFI_PROVIDERS {
             return Response::err(&format!("too many WiFi providers ({}, max {})", providers.len(), MAX_IMPORT_WIFI_PROVIDERS));
         }
-    }
 
     // Validation pass: devices
     if let Some(devices) = parsed.get("devices").and_then(|v| v.as_array()) {
@@ -326,16 +321,14 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
     }
     // Validation pass: config keys
     if let Some(config) = parsed.get("config").and_then(|v| v.as_object()) {
-        if let Some(wan) = config.get("wan_iface").and_then(|v| v.as_str()) {
-            if nftables::validate_iface(wan).is_err() {
+        if let Some(wan) = config.get("wan_iface").and_then(|v| v.as_str())
+            && nftables::validate_iface(wan).is_err() {
                 return Response::err(&format!("invalid WAN interface: {}", wan));
             }
-        }
-        if let Some(lan) = config.get("lan_iface").and_then(|v| v.as_str()) {
-            if nftables::validate_iface(lan).is_err() {
+        if let Some(lan) = config.get("lan_iface").and_then(|v| v.as_str())
+            && nftables::validate_iface(lan).is_err() {
                 return Response::err(&format!("invalid LAN interface: {}", lan));
             }
-        }
     }
 
     let db = db.lock().unwrap();
@@ -510,8 +503,8 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
 
     // Backward compat: old-format wifi_aps with username/password (pre-v8 schema)
     // If wifi_providers section is absent but wifi_aps has credential fields, create providers.
-    if parsed.get("wifi_providers").is_none() {
-        if let Some(wifi_aps) = parsed.get("wifi_aps").and_then(|v| v.as_array()) {
+    if parsed.get("wifi_providers").is_none()
+        && let Some(wifi_aps) = parsed.get("wifi_aps").and_then(|v| v.as_array()) {
             let session_secret = db.get_config("session_secret").ok().flatten().unwrap_or_default();
             let ap_passwords = secrets_obj.as_ref()
                 .and_then(|s| s.get("wifi_ap_passwords"))
@@ -549,14 +542,12 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
                 let _ = db.insert_wifi_ap_for_provider(mac, &provider_id, ip, name);
 
                 let ca_cert = ap.get("ca_cert_pem").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
-                if let Some(pem) = ca_cert {
-                    if wifi::validate_ca_cert_pem_str(pem).is_ok() {
+                if let Some(pem) = ca_cert
+                    && wifi::validate_ca_cert_pem_str(pem).is_ok() {
                         let _ = db.set_wifi_provider_ca_cert(&provider_id, Some(pem));
                     }
-                }
             }
         }
-    }
 
     // Import DNS forward zones
     let _ = db.conn_exec("DELETE FROM dns_forward_zones");
@@ -564,13 +555,11 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
         for z in zones {
             let domain = z.get("domain").and_then(|v| v.as_str()).unwrap_or("");
             let forward_addr = z.get("forward_addr").and_then(|v| v.as_str()).unwrap_or("");
-            if !domain.is_empty() && !forward_addr.is_empty() {
-                if crate::unbound::validate_domain(domain).is_ok()
-                    && forward_addr.parse::<std::net::IpAddr>().is_ok()
-                {
+            if !domain.is_empty() && !forward_addr.is_empty()
+                && crate::unbound::validate_domain(domain).is_ok()
+                && forward_addr.parse::<std::net::IpAddr>().is_ok() {
                     let _ = db.add_dns_forward_zone(domain, forward_addr);
                 }
-            }
         }
     }
 
@@ -582,11 +571,10 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
             let domain = r.get("domain").and_then(|v| v.as_str()).unwrap_or("");
             let record_type = r.get("record_type").and_then(|v| v.as_str()).unwrap_or("");
             let value = r.get("value").and_then(|v| v.as_str()).unwrap_or("");
-            if !domain.is_empty() && !value.is_empty() && valid_types.contains(&record_type) {
-                if crate::unbound::validate_domain(domain).is_ok() {
+            if !domain.is_empty() && !value.is_empty() && valid_types.contains(&record_type)
+                && crate::unbound::validate_domain(domain).is_ok() {
                     let _ = db.add_dns_custom_rule(domain, record_type, value);
                 }
-            }
         }
     }
 
@@ -598,13 +586,11 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
             let name = bl.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let url = bl.get("url").and_then(|v| v.as_str()).unwrap_or("");
             let tag = bl.get("tag").and_then(|v| v.as_str()).unwrap_or("ads");
-            if !name.is_empty() && !url.is_empty() && valid_tags.contains(&tag) {
-                if let Ok(parsed_url) = reqwest::Url::parse(url) {
-                    if parsed_url.scheme() == "http" || parsed_url.scheme() == "https" {
+            if !name.is_empty() && !url.is_empty() && valid_tags.contains(&tag)
+                && let Ok(parsed_url) = reqwest::Url::parse(url)
+                && (parsed_url.scheme() == "http" || parsed_url.scheme() == "https") {
                         let _ = db.add_dns_blocklist(name, url, tag);
                     }
-                }
-            }
         }
     }
 
@@ -681,11 +667,12 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
 
 pub(super) fn handle_backup_database(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let db = db.lock().unwrap();
-    let _ = std::fs::remove_file(Db::BACKUP_PATH);
+    let backup = Db::backup_path();
+    let _ = std::fs::remove_file(&backup);
     match db.vacuum_into_backup() {
         Ok(()) => {
             let mut resp = Response::ok();
-            resp.config_value = Some(Db::BACKUP_PATH.to_string());
+            resp.config_value = Some(backup);
             resp
         }
         Err(e) => Response::err(&format!("backup failed: {}", e)),
@@ -717,11 +704,10 @@ pub(super) fn handle_set_log_config(req: &Request, db: &Arc<Mutex<Db>>) -> Respo
     let allowed_keys = ["log_format", "syslog_target", "webhook_url", "webhook_secret", "log_retention_days"];
     if let Some(obj) = parsed.as_object() {
         for (key, val) in obj {
-            if allowed_keys.contains(&key.as_str()) {
-                if let Some(v) = val.as_str() {
+            if allowed_keys.contains(&key.as_str())
+                && let Some(v) = val.as_str() {
                     let _ = db.set_config(key, v);
                 }
-            }
         }
     }
     Response::ok()
@@ -763,15 +749,14 @@ pub(super) fn handle_set_runzero_config(req: &Request, db: &Arc<Mutex<Db>>) -> R
     if let Some(token) = parsed.get("runzero_token").and_then(|v| v.as_str()) {
         let _ = db.set_config("runzero_token", token);
     }
-    if let Some(interval_str) = parsed.get("runzero_sync_interval").and_then(|v| v.as_str()) {
-        if let Ok(secs) = interval_str.parse::<u64>() {
+    if let Some(interval_str) = parsed.get("runzero_sync_interval").and_then(|v| v.as_str())
+        && let Ok(secs) = interval_str.parse::<u64>() {
             if secs >= 60 {
                 let _ = db.set_config("runzero_sync_interval", interval_str);
             } else {
                 return Response::err("sync interval must be >= 60 seconds");
             }
         }
-    }
     if let Some(enabled) = parsed.get("runzero_enabled").and_then(|v| v.as_str()) {
         let _ = db.set_config("runzero_enabled", enabled);
     }
@@ -908,13 +893,11 @@ pub(super) fn handle_set_qos_test_url(req: &Request, db: &Arc<Mutex<Db>>) -> Res
             if scheme != "http" && scheme != "https" {
                 return Response::err("url must be http or https");
             }
-            if let Some(host) = parsed.host_str() {
-                if let Ok(addr) = host.parse::<std::net::IpAddr>() {
-                    if !crate::qos::is_public_ip(&addr) {
+            if let Some(host) = parsed.host_str()
+                && let Ok(addr) = host.parse::<std::net::IpAddr>()
+                && !crate::qos::is_public_ip(&addr) {
                         return Response::err("url must not point to private/loopback address");
                     }
-                }
-            }
         }
         Err(_) => return Response::err("invalid url"),
     }

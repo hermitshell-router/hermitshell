@@ -7,12 +7,10 @@ use std::sync::{Arc, Mutex};
 use tracing::{debug, error, info};
 
 use crate::db::Db;
-
-const UNBOUND_CONFIG_DIR: &str = "/var/lib/hermitshell/unbound";
-const UNBOUND_BLOCKLIST_DIR: &str = "/var/lib/hermitshell/unbound/blocklists";
-const UNBOUND_CONFIG_PATH: &str = "/var/lib/hermitshell/unbound/unbound.conf";
+use crate::paths;
 
 /// Well-known DoH resolver IPs to block in nftables (for bypass prevention).
+#[allow(dead_code)]
 pub const DOH_RESOLVER_IPS_V4: &[&str] = &[
     "1.1.1.1",
     "1.0.0.1", // Cloudflare
@@ -31,6 +29,7 @@ pub const DOH_RESOLVER_IPS_V4: &[&str] = &[
 ];
 
 /// Well-known DoH resolver IPv6 addresses to block in nftables (for bypass prevention).
+#[allow(dead_code)]
 pub const DOH_RESOLVER_IPS_V6: &[&str] = &[
     "2606:4700:4700::1111",
     "2606:4700:4700::1001", // Cloudflare
@@ -61,7 +60,9 @@ pub const DOH_RESOLVER_DOMAINS: &[&str] = &[
 
 pub struct UnboundManager {
     listen_port: u16,
+    #[allow(dead_code)]
     listen_addr: String,
+    #[allow(dead_code)]
     listen_addr_v6: Option<String>,
     lan_subnet: String,
     tls_cert_path: Option<String>,
@@ -90,24 +91,27 @@ impl UnboundManager {
     }
 
     pub fn write_config(&self, db: &Arc<Mutex<Db>>) -> Result<()> {
-        std::fs::create_dir_all(UNBOUND_CONFIG_DIR)?;
-        std::fs::create_dir_all(UNBOUND_BLOCKLIST_DIR)?;
+        std::fs::create_dir_all(paths::unbound_dir())?;
+        std::fs::create_dir_all(paths::blocklist_dir())?;
 
         // Copy the system root trust anchor into our directory so Unbound
         // can update it at runtime.  The system copy lives in /var/lib/unbound/
         // which is owned by the `unbound` user.  Because we run Unbound as
         // root (username: ""), AppArmor's `owner` qualifier blocks writes to
         // files owned by another UID.
-        let local_root_key = format!("{}/root.key", UNBOUND_CONFIG_DIR);
+        let local_root_key = format!("{}/root.key", paths::unbound_dir());
         if !std::path::Path::new(&local_root_key).exists() {
-            if let Err(e) = std::fs::copy("/var/lib/unbound/root.key", &local_root_key) {
+            let system_root_key = std::env::var("HERMITSHELL_ROOT_KEY_PATH")
+                .unwrap_or_else(|_| "/var/lib/unbound/root.key".into());
+            if let Err(e) = std::fs::copy(&system_root_key, &local_root_key) {
                 debug!(error = %e, "could not copy system root.key, DNSSEC validation may fail");
             }
         }
 
         let cfg = self.generate_config_string(db)?;
-        std::fs::write(UNBOUND_CONFIG_PATH, &cfg)?;
-        debug!(path = UNBOUND_CONFIG_PATH, "wrote unbound config");
+        let config_path = paths::unbound_config();
+        std::fs::write(&config_path, &cfg)?;
+        debug!(path = %config_path, "wrote unbound config");
         Ok(())
     }
 
@@ -202,16 +206,16 @@ impl UnboundManager {
         // with ProtectSystem=strict, PrivateTmp, and restricted capabilities.
         // Unbound can't call setuid/setgid without CAP_SETUID/CAP_SETGID.
         cfg.push_str("    username: \"\"\n");
-        cfg.push_str("\n");
+        cfg.push('\n');
 
         // Logging
         cfg.push_str("    # Logging\n");
         cfg.push_str("    verbosity: 1\n");
         cfg.push_str("    log-queries: yes\n");
-        cfg.push_str("    logfile: \"/var/lib/hermitshell/unbound/query.log\"\n");
+        cfg.push_str(&format!("    logfile: \"{}/query.log\"\n", paths::unbound_dir()));
         cfg.push_str("    use-syslog: no\n");
         cfg.push_str("    log-time-ascii: no\n");
-        cfg.push_str("\n");
+        cfg.push('\n');
 
         // Security
         cfg.push_str("    # Security\n");
@@ -221,9 +225,9 @@ impl UnboundManager {
         cfg.push_str("    harden-dnssec-stripped: yes\n");
         cfg.push_str(&format!(
             "    auto-trust-anchor-file: \"{}/root.key\"\n",
-            UNBOUND_CONFIG_DIR
+            paths::unbound_dir()
         ));
-        cfg.push_str("\n");
+        cfg.push('\n');
 
         // Performance
         cfg.push_str("    # Performance\n");
@@ -231,24 +235,24 @@ impl UnboundManager {
         cfg.push_str("    msg-cache-size: 4m\n");
         cfg.push_str("    rrset-cache-size: 8m\n");
         cfg.push_str("    prefetch: yes\n");
-        cfg.push_str("\n");
+        cfg.push('\n');
 
         // TLS (if cert/key paths are set)
         if let (Some(cert), Some(key)) = (&self.tls_cert_path, &self.tls_key_path) {
             cfg.push_str("    tls-port: 853\n");
             cfg.push_str(&format!("    tls-service-key: \"{}\"\n", key));
             cfg.push_str(&format!("    tls-service-pem: \"{}\"\n", cert));
-            cfg.push_str("\n");
+            cfg.push('\n');
         }
 
         // Rate limiting
         cfg.push_str(&format!("    ip-ratelimit: {}\n", per_client_rate));
         cfg.push_str(&format!("    ratelimit: {}\n", per_domain_rate));
-        cfg.push_str("\n");
+        cfg.push('\n');
 
         // Per-device tags
         cfg.push_str("    define-tag: \"ads custom strict\"\n");
-        cfg.push_str("\n");
+        cfg.push('\n');
 
         for dev in &devices {
             let ip = match &dev.ipv4 {
@@ -263,7 +267,7 @@ impl UnboundManager {
             };
             cfg.push_str(&format!("    access-control-tag: {}/32 \"{}\"\n", ip, tags));
         }
-        cfg.push_str("\n");
+        cfg.push('\n');
 
         // Blocklist includes (only when blocking is enabled)
         if ad_blocking_enabled {
@@ -271,11 +275,11 @@ impl UnboundManager {
                 if bl.enabled {
                     cfg.push_str(&format!(
                         "    include: \"{}/{}.conf\"\n",
-                        UNBOUND_BLOCKLIST_DIR, bl.id
+                        paths::blocklist_dir(), bl.id
                     ));
                 }
             }
-            cfg.push_str("\n");
+            cfg.push('\n');
 
             // DoH domain blocking
             for domain in DOH_RESOLVER_DOMAINS {
@@ -285,7 +289,7 @@ impl UnboundManager {
                     domain
                 ));
             }
-            cfg.push_str("\n");
+            cfg.push('\n');
         }
 
         // Custom DNS rules
@@ -298,7 +302,7 @@ impl UnboundManager {
                 ));
             }
         }
-        cfg.push_str("\n");
+        cfg.push('\n');
 
         // --- remote-control: block ---
         // Disabled: the agent reloads via SIGHUP, so no control socket is needed.
@@ -306,7 +310,7 @@ impl UnboundManager {
         // does not grant.
         cfg.push_str("remote-control:\n");
         cfg.push_str("    control-enable: no\n");
-        cfg.push_str("\n");
+        cfg.push('\n');
 
         // --- Forward zones ---
         for fz in &forward_zones {
@@ -314,7 +318,7 @@ impl UnboundManager {
                 cfg.push_str("forward-zone:\n");
                 cfg.push_str(&format!("    name: \"{}\"\n", fz.domain));
                 cfg.push_str(&format!("    forward-addr: {}\n", fz.forward_addr));
-                cfg.push_str("\n");
+                cfg.push('\n');
             }
         }
 
@@ -332,7 +336,7 @@ impl UnboundManager {
                     cfg.push_str(&format!("    forward-addr: {}\n", ip));
                 }
             }
-            cfg.push_str("\n");
+            cfg.push('\n');
         }
 
         Ok(cfg)
@@ -344,13 +348,13 @@ impl UnboundManager {
 
         // Pre-create the query log so Unbound doesn't need DAC_OVERRIDE
         // to create it inside the systemd sandbox.
-        let log_path = format!("{}/query.log", UNBOUND_CONFIG_DIR);
+        let log_path = format!("{}/query.log", paths::unbound_dir());
         if !std::path::Path::new(&log_path).exists() {
             let _ = std::fs::File::create(&log_path);
         }
 
         let child = Command::new("unbound")
-            .args(["-d", "-c", UNBOUND_CONFIG_PATH])
+            .args(["-d", "-c", &paths::unbound_config()])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .process_group(0) // own process group so agent signals don't reach it
@@ -403,14 +407,13 @@ impl UnboundManager {
                     "example.com",
                 ])
                 .output();
-            if let Ok(output) = result {
-                if output.status.success() {
+            if let Ok(output) = result
+                && output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);
                     if !stdout.trim().is_empty() {
                         return true;
                     }
                 }
-            }
             std::thread::sleep(interval);
         }
         false
@@ -435,7 +438,7 @@ impl UnboundManager {
             db.list_dns_blocklists().unwrap_or_default()
         };
 
-        std::fs::create_dir_all(UNBOUND_BLOCKLIST_DIR)?;
+        std::fs::create_dir_all(paths::blocklist_dir())?;
 
         for bl in &blocklists {
             if !bl.enabled {
@@ -444,7 +447,7 @@ impl UnboundManager {
             info!(id = bl.id, name = %bl.name, url = %bl.url, "downloading blocklist");
             match download_and_convert_blocklist(&bl.url, &bl.tag) {
                 Ok(content) => {
-                    let path = format!("{}/{}.conf", UNBOUND_BLOCKLIST_DIR, bl.id);
+                    let path = format!("{}/{}.conf", paths::blocklist_dir(), bl.id);
                     std::fs::write(&path, &content)?;
                     info!(
                         id = bl.id,
@@ -615,15 +618,13 @@ fn http_download(url: &str) -> Result<String> {
     }
 
     // Follow one redirect (common for blocklist URLs)
-    if status_line.contains("301")
+    if (status_line.contains("301")
         || status_line.contains("302")
         || status_line.contains("307")
-        || status_line.contains("308")
-    {
-        if let Some(loc) = location {
+        || status_line.contains("308"))
+        && let Some(loc) = location {
             return http_download(&loc);
         }
-    }
 
     let mut body = String::new();
     let _ = reader.read_to_string(&mut body);

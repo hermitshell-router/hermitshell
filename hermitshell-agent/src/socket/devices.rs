@@ -71,7 +71,7 @@ pub(super) fn handle_set_device_group(req: &Request, db: &Arc<Mutex<Db>>) -> Res
         return Response::err("device has no IPv4 address");
     };
     let ipv6 = device.ipv6_ula.clone().unwrap_or_default();
-    if let Err(e) = nftables::remove_device_forward_rule(&ipv4) {
+    if let Err(e) = nftables::remove_device_forward_rule(ipv4) {
         return Response::err(&format!("failed to remove old rule: {}", e));
     }
     // best-effort: IPv6 rule may not exist yet
@@ -79,7 +79,7 @@ pub(super) fn handle_set_device_group(req: &Request, db: &Arc<Mutex<Db>>) -> Res
     if let Err(e) = db.set_device_group(mac, group) {
         return Response::err(&format!("failed to update group: {}", e));
     }
-    if let Err(e) = nftables::add_device_forward_rule(&ipv4, group) {
+    if let Err(e) = nftables::add_device_forward_rule(ipv4, group) {
         return Response::err(&format!("failed to add new rule: {}", e));
     }
     // best-effort: IPv6 mirrors IPv4 but is not fatal

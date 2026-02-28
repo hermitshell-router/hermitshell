@@ -137,11 +137,10 @@ impl LogEvent {
                     "severity": severity,
                     "message": message,
                 });
-                if let Some(d) = details {
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(d) {
+                if let Some(d) = details
+                    && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(d) {
                         json["details"] = parsed;
                     }
-                }
                 json
             },
         }
@@ -256,14 +255,13 @@ async fn webhook_post(url: &str, payload: String, secret: &str) {
 /// Per RFC 5424 §6.2.4, FQDN is preferred over bare hostname.
 fn get_hostname() -> String {
     // Try FQDN first
-    if let Ok(output) = std::process::Command::new("hostname").arg("--fqdn").output() {
-        if output.status.success() {
+    if let Ok(output) = std::process::Command::new("hostname").arg("--fqdn").output()
+        && output.status.success() {
             let fqdn = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !fqdn.is_empty() && fqdn.contains('.') {
                 return fqdn;
             }
         }
-    }
     // Fall back to bare hostname
     std::fs::read_to_string("/etc/hostname")
         .unwrap_or_else(|_| "hermitshell".to_string())

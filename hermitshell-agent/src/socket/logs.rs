@@ -126,11 +126,10 @@ static LAST_ANALYSIS: std::sync::Mutex<Option<std::time::Instant>> = std::sync::
 
 pub(super) fn handle_ingest_dns_logs(_req: &Request, db: &Arc<Mutex<Db>>, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>) -> Response {
     let mut last = LAST_INGEST.lock().unwrap();
-    if let Some(t) = *last {
-        if t.elapsed().as_secs() < 10 {
+    if let Some(t) = *last
+        && t.elapsed().as_secs() < 10 {
             return Response::err("rate limited (10s debounce)");
         }
-    }
     *last = Some(std::time::Instant::now());
     drop(last);
     crate::dns_log::ingest_once(db, log_tx);
@@ -139,11 +138,10 @@ pub(super) fn handle_ingest_dns_logs(_req: &Request, db: &Arc<Mutex<Db>>, log_tx
 
 pub(super) fn handle_run_analysis(_req: &Request, db: &Arc<Mutex<Db>>, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>) -> Response {
     let mut last = LAST_ANALYSIS.lock().unwrap();
-    if let Some(t) = *last {
-        if t.elapsed().as_secs() < 10 {
+    if let Some(t) = *last
+        && t.elapsed().as_secs() < 10 {
             return Response::err("rate limited (10s debounce)");
         }
-    }
     *last = Some(std::time::Instant::now());
     drop(last);
     crate::analyzer::run_analysis_cycle(db, log_tx);
@@ -156,11 +154,10 @@ pub(super) fn handle_get_bandwidth_history(req: &Request, db: &Arc<Mutex<Db>>) -
         return Response::err("invalid period: must be 24h, 7d, 30d, or 1y");
     }
     let device_mac = req.device_mac.as_deref().or(req.mac.as_deref());
-    if let Some(mac) = device_mac {
-        if let Err(e) = crate::nftables::validate_mac(mac) {
+    if let Some(mac) = device_mac
+        && let Err(e) = crate::nftables::validate_mac(mac) {
             return Response::err(&e.to_string());
         }
-    }
     let db = db.lock().unwrap();
     match db.get_bandwidth_history(device_mac, period) {
         Ok(points) => {
@@ -178,8 +175,8 @@ pub(super) fn handle_get_bandwidth_realtime(_req: &Request, db: &Arc<Mutex<Db>>,
     let rt = bandwidth_rt.lock().unwrap();
     let mut results = Vec::new();
     for dev in &devices {
-        if let Some(ref ip) = dev.ipv4 {
-            if let Some((prev_rx, prev_tx, curr_rx, curr_tx, poll_time)) = rt.get(ip.as_str()) {
+        if let Some(ref ip) = dev.ipv4
+            && let Some((prev_rx, prev_tx, curr_rx, curr_tx, poll_time)) = rt.get(ip.as_str()) {
                 let elapsed = poll_time.elapsed().as_secs_f64();
                 if elapsed < 30.0 {
                     let delta_rx = curr_rx - prev_rx;
@@ -193,7 +190,6 @@ pub(super) fn handle_get_bandwidth_realtime(_req: &Request, db: &Arc<Mutex<Db>>,
                     });
                 }
             }
-        }
     }
     let mut resp = Response::ok();
     resp.bandwidth_realtime = Some(results);

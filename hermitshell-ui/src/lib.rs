@@ -2,6 +2,7 @@ pub mod charts;
 pub mod client;
 pub mod components;
 pub mod pages;
+#[allow(clippy::too_many_arguments)]
 pub mod server_fns;
 pub mod types;
 

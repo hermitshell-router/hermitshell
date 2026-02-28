@@ -32,14 +32,14 @@ pub fn Logs() -> impl IntoView {
     let is_dns = move || tab() == "dns";
 
     let conn_data = Resource::new(
-        move || device(),
+        device,
         |device_ip| async move {
             client::list_connection_logs(device_ip.as_deref(), 200)
         },
     );
 
     let dns_data = Resource::new(
-        move || device(),
+        device,
         |device_ip| async move {
             client::list_dns_logs(device_ip.as_deref(), 200)
         },
@@ -66,7 +66,7 @@ pub fn Logs() -> impl IntoView {
                     if is_dns() {
                         view! { <input type="hidden" name="tab" value="dns" /> }.into_any()
                     } else {
-                        view! { }.into_any()
+                        ().into_any()
                     }
                 }}
                 <label>"Device IP: "</label>

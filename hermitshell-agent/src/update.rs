@@ -1,14 +1,12 @@
 use std::sync::{Arc, Mutex};
 use tracing::{debug, info, warn};
 
+use crate::paths;
+
 const GITHUB_RELEASES_URL: &str =
     "https://api.github.com/repos/jnordwick/hermitshell/releases/latest";
 const GITHUB_DOWNLOAD_URL: &str = "https://github.com/jnordwick/hermitshell/releases/download";
 const CHECK_INTERVAL_SECS: u64 = 86400; // 24 hours
-const INSTALL_DIR: &str = "/opt/hermitshell";
-const ROLLBACK_DIR: &str = "/opt/hermitshell/rollback";
-const STAGING_DIR: &str = "/opt/hermitshell/staging";
-const UPDATE_MARKER: &str = "/run/hermitshell/update-pending";
 const BINARIES: &[&str] = &["hermitshell-agent", "hermitshell-dhcp", "hermitshell"];
 
 /// Poll GitHub releases API for the latest release tag.
@@ -186,10 +184,12 @@ pub async fn apply_update(db: &std::sync::Arc<std::sync::Mutex<crate::db::Db>>) 
     info!("checksum verified");
 
     // Create rollback dir and copy current binaries
-    std::fs::create_dir_all(ROLLBACK_DIR)?;
+    let rollback_dir = paths::rollback_dir();
+    let install_dir = paths::install_dir();
+    std::fs::create_dir_all(&rollback_dir)?;
     for bin in BINARIES {
-        let src = format!("{}/{}", INSTALL_DIR, bin);
-        let dst = format!("{}/{}", ROLLBACK_DIR, bin);
+        let src = format!("{}/{}", install_dir, bin);
+        let dst = format!("{}/{}", rollback_dir, bin);
         if std::path::Path::new(&src).exists() {
             std::fs::copy(&src, &dst)?;
         }
@@ -197,7 +197,8 @@ pub async fn apply_update(db: &std::sync::Arc<std::sync::Mutex<crate::db::Db>>) 
     info!("current binaries backed up to rollback/");
 
     // Extract to staging dir
-    let staging = std::path::Path::new(STAGING_DIR);
+    let staging_dir = paths::staging_dir();
+    let staging = std::path::Path::new(&staging_dir);
     if staging.exists() {
         std::fs::remove_dir_all(staging)?;
     }
@@ -218,7 +219,7 @@ pub async fn apply_update(db: &std::sync::Arc<std::sync::Mutex<crate::db::Db>>) 
     for bin in BINARIES {
         // tarball may have a top-level directory — find the binary
         let staged = find_binary(staging, bin)?;
-        let dest = format!("{}/{}", INSTALL_DIR, bin);
+        let dest = format!("{}/{}", install_dir, bin);
         std::fs::rename(&staged, &dest)?;
     }
     info!("binaries swapped");
@@ -227,7 +228,8 @@ pub async fn apply_update(db: &std::sync::Arc<std::sync::Mutex<crate::db::Db>>) 
     let _ = std::fs::remove_dir_all(staging);
 
     // Write update marker
-    std::fs::write(UPDATE_MARKER, &version)?;
+    let update_marker = paths::update_marker();
+    std::fs::write(&update_marker, &version)?;
     info!(version = %version, "update marker written");
 
     // Store version in DB
@@ -286,7 +288,8 @@ pub fn trigger_staged_restart() {
 
 /// Check for update marker on startup. Returns Ok(Some(version)) if update succeeded.
 pub fn check_update_marker() -> anyhow::Result<Option<String>> {
-    let marker = std::path::Path::new(UPDATE_MARKER);
+    let marker_path = paths::update_marker();
+    let marker = std::path::Path::new(&marker_path);
     if !marker.exists() {
         return Ok(None);
     }
@@ -297,7 +300,7 @@ pub fn check_update_marker() -> anyhow::Result<Option<String>> {
     if current == expected_version {
         // Update succeeded — clean up
         std::fs::remove_file(marker)?;
-        let _ = std::fs::remove_dir_all(ROLLBACK_DIR);
+        let _ = std::fs::remove_dir_all(paths::rollback_dir());
         info!(version = %current, "update successful, marker cleared");
         Ok(Some(current))
     } else {

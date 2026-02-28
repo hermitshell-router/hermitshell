@@ -392,15 +392,14 @@ pub(super) fn handle_get_tls_status(_req: &Request, db: &Arc<Mutex<Db>>) -> Resp
         "tls_mode": mode,
     });
 
-    if let Some(ref pem) = cert_pem {
-        if let Some(info) = parse_cert_info(pem) {
+    if let Some(ref pem) = cert_pem
+        && let Some(info) = parse_cert_info(pem) {
             status["issuer"] = serde_json::Value::String(info.issuer);
             status["expires_at"] = serde_json::Value::Number(info.expires_at.into());
             status["sans"] = serde_json::Value::Array(
                 info.sans.into_iter().map(serde_json::Value::String).collect()
             );
         }
-    }
 
     let mut resp = Response::ok();
     resp.tls_status = Some(status);

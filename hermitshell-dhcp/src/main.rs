@@ -28,7 +28,14 @@ fn server_ipv6_ula() -> Ipv6Addr {
     *SERVER_IPV6_ULA.get().expect("SERVER_IPV6_ULA not initialized")
 }
 const LEASE_TIME: u32 = 3600; // 1 hour
-const AGENT_SOCKET: &str = "/run/hermitshell/dhcp.sock";
+fn agent_socket() -> String {
+    let run_dir = std::env::var("HERMITSHELL_RUN_DIR").unwrap_or_else(|_| "/run/hermitshell".into());
+    format!("{}/dhcp.sock", run_dir)
+}
+
+fn ip_path() -> String {
+    std::env::var("HERMITSHELL_IP_PATH").unwrap_or_else(|_| "/usr/sbin/ip".into())
+}
 
 /// Server DUID (DUID-LL with Ethernet hardware type and a fixed identifier).
 /// Type=3 (DUID-LL), HType=1 (Ethernet), then 6-byte link-layer address.
@@ -48,7 +55,7 @@ impl AgentConn {
     }
 
     fn connect(&mut self) -> Result<()> {
-        let stream = UnixStream::connect(AGENT_SOCKET)
+        let stream = UnixStream::connect(agent_socket())
             .context("failed to connect to agent DHCP socket")?;
         stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
         let reader = BufReader::new(stream.try_clone()?);
@@ -119,11 +126,11 @@ fn main() -> Result<()> {
 
     // Wait up to 10s for agent socket
     for i in 0..20 {
-        if std::path::Path::new(AGENT_SOCKET).exists() {
+        if std::path::Path::new(&agent_socket()).exists() {
             break;
         }
         if i == 19 {
-            anyhow::bail!("agent socket {} not found after 10s", AGENT_SOCKET);
+            anyhow::bail!("agent socket {} not found after 10s", &agent_socket());
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
@@ -202,11 +209,11 @@ fn main() -> Result<()> {
 
         let response = match msg_type {
             MessageType::Discover => {
-                if let Some(last) = discover_times.get(&mac) {
-                    if last.elapsed().as_secs() < 3 {
-                        warn!(mac = %mac, "DHCPDISCOVER rate-limited");
-                        continue;
-                    }
+                if let Some(last) = discover_times.get(&mac)
+                    && last.elapsed().as_secs() < 3
+                {
+                    warn!(mac = %mac, "DHCPDISCOVER rate-limited");
+                    continue;
                 }
                 info!(mac = %mac, "DHCPDISCOVER");
                 match handle_discover(&mut agent, &msg, &mac) {
@@ -402,11 +409,11 @@ fn handle_discover(agent: &mut AgentConn, request: &Message, mac: &str) -> Resul
 /// Handle DHCPREQUEST (v4): verify requested IP, respond with DHCPACK, fire-and-forget provision.
 fn handle_request(agent: &mut AgentConn, request: &Message, mac: &str) -> Result<Option<Message>> {
     // H11: Check Option 54 (Server Identifier) — silently ignore if for another server
-    if let Some(DhcpOption::ServerIdentifier(sid)) = request.opts().get(dhcproto::v4::OptionCode::ServerIdentifier) {
-        if *sid != server_ip() {
-            debug!(mac = %mac, server_id = %sid, "DHCPREQUEST for another server, ignoring");
-            return Ok(None);
-        }
+    if let Some(DhcpOption::ServerIdentifier(sid)) = request.opts().get(dhcproto::v4::OptionCode::ServerIdentifier)
+        && *sid != server_ip()
+    {
+        debug!(mac = %mac, server_id = %sid, "DHCPREQUEST for another server, ignoring");
+        return Ok(None);
     }
 
     // Look up device via IPC (same as discover — returns existing assignment)
@@ -615,11 +622,11 @@ fn run_dhcpv6_server(lan_iface: &str) -> Result<()> {
 
         let response = match msg.msg_type() {
             MessageType6::Solicit => {
-                if let Some(last) = solicit_times.get(&mac) {
-                    if last.elapsed().as_secs() < 10 {
-                        warn!(mac = %mac, "DHCPv6 SOLICIT rate-limited");
-                        continue;
-                    }
+                if let Some(last) = solicit_times.get(&mac)
+                    && last.elapsed().as_secs() < 10
+                {
+                    warn!(mac = %mac, "DHCPv6 SOLICIT rate-limited");
+                    continue;
                 }
                 solicit_times.put(mac.clone(), Instant::now());
                 info!(mac = %mac, "DHCPv6 SOLICIT");
@@ -755,7 +762,7 @@ fn is_valid_mac_str(mac: &str) -> bool {
 /// Runs `ip -6 neigh show <addr> dev <iface>` and parses the `lladdr` field.
 /// Returns `None` if no entry is found (e.g. NDP hasn't completed yet).
 fn resolve_mac_from_neigh(src_ip: &std::net::Ipv6Addr, iface: &str) -> Option<String> {
-    let output = std::process::Command::new("/usr/sbin/ip")
+    let output = std::process::Command::new(ip_path())
         .args(["-6", "neigh", "show", &src_ip.to_string(), "dev", iface])
         .output()
         .ok()?;

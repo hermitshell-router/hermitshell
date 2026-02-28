@@ -1,12 +1,15 @@
 use crate::db::Db;
 use crate::log_export::LogEvent;
+use crate::paths;
 
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, error, warn};
 
-const LOG_FILE: &str = "/var/lib/hermitshell/unbound/query.log";
+fn log_file() -> String {
+    format!("{}/query.log", paths::unbound_dir())
+}
 const SCAN_INTERVAL_SECS: u64 = 30;
 
 /// Parsed DNS log entry from an Unbound log line.
@@ -41,13 +44,14 @@ fn parse_unbound_log_line(line: &str) -> Option<DnsLogEntry<'_>> {
 
 /// Run one ingest cycle: read Unbound query log, parse and store DNS queries.
 pub fn ingest_once(db: &Arc<Mutex<Db>>, tx: &UnboundedSender<LogEvent>) {
-    let ingest_path = format!("{}.ingest", LOG_FILE);
+    let log_path = log_file();
+    let ingest_path = format!("{}.ingest", log_path);
 
     // Atomic rename: move the active log file so Unbound reopens a fresh one on next write
-    if let Err(e) = std::fs::rename(LOG_FILE, &ingest_path) {
+    if let Err(e) = std::fs::rename(&log_path, &ingest_path) {
         // File may not exist yet — that's fine
         if e.kind() != std::io::ErrorKind::NotFound {
-            debug!(error = %e, file = LOG_FILE, "cannot rename log file");
+            debug!(error = %e, file = %log_path, "cannot rename log file");
         }
         return;
     }

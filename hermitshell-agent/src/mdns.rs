@@ -23,6 +23,7 @@ const MAX_TOTAL_RECORDS: usize = 10_000;
 /// Internal service record tracking an mDNS service announcement.
 #[derive(Debug, Clone)]
 struct ServiceRecord {
+    #[allow(dead_code)]
     device_mac: String,
     service_type: String,
     service_name: String,
@@ -31,6 +32,7 @@ struct ServiceRecord {
     host_ipv4: Ipv4Addr,
     /// The SRV target hostname from the original announcement (e.g., "chromecast-xxx.local").
     target_hostname: String,
+    #[allow(dead_code)]
     ttl_secs: u32,
     expires_at: Instant,
 }
@@ -55,6 +57,7 @@ impl ServiceRegistry {
     ///
     /// A TTL of 0 is a goodbye packet (RFC 6762 Section 10.1) — the matching
     /// record is removed immediately.
+    #[allow(clippy::too_many_arguments)]
     pub fn upsert(
         &mut self,
         mac: &str,
@@ -98,7 +101,7 @@ impl ServiceRegistry {
         let is_update = self
             .records
             .get(mac)
-            .map_or(false, |entries| {
+            .is_some_and(|entries| {
                 entries.iter().any(|r| r.service_type == service_type && r.service_name == service_name)
             });
 
@@ -146,6 +149,7 @@ impl ServiceRegistry {
     /// - "trusted" sees: trusted, iot, servers
     /// - "iot"/"servers" sees: trusted only
     /// - guest/quarantine/blocked sees: nothing
+    #[allow(dead_code)]
     pub fn query(
         &self,
         querier_group: &str,
@@ -169,11 +173,10 @@ impl ServiceRegistry {
                 continue;
             }
             for rec in entries {
-                if let Some(filter) = service_type_filter {
-                    if rec.service_type != filter {
+                if let Some(filter) = service_type_filter
+                    && rec.service_type != filter {
                         continue;
                     }
-                }
                 result.push(MdnsService {
                     service_type: rec.service_type.clone(),
                     service_name: rec.service_name.clone(),
@@ -766,11 +769,10 @@ pub async fn run(db: Arc<Mutex<Db>>, lan_iface: String, registry: SharedRegistry
         };
 
         // Ignore packets from the router itself
-        if let SocketAddr::V4(addr) = src {
-            if *addr.ip() == lan_ip {
+        if let SocketAddr::V4(addr) = src
+            && *addr.ip() == lan_ip {
                 continue;
             }
-        }
 
         let data = &data_ref[..len];
         let packet = match Packet::parse(data) {

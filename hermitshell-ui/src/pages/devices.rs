@@ -86,7 +86,7 @@ pub fn DeviceList() -> impl IntoView {
                                                                 .or_else(|| d.hostname.clone())
                                                                 .unwrap_or_else(|| "(unknown)".to_string())}
                                                         </a>
-                                                        {d.nickname.as_ref().and_then(|_| d.hostname.as_ref()).map(|h| {
+                                                        {d.nickname.as_ref().and(d.hostname.as_ref()).map(|h| {
                                                             view! { <br /><span style="color: var(--text-muted); font-size: 0.75rem">{h.clone()}</span> }
                                                         })}
                                                     </td>

@@ -22,6 +22,7 @@ const PCP_UNSUPP_VERSION: u8 = 1;
 const PCP_NOT_AUTHORIZED: u8 = 2;
 const PCP_MALFORMED_REQUEST: u8 = 3;
 const PCP_UNSUPP_OPCODE: u8 = 4;
+#[allow(dead_code)]
 const PCP_UNSUPP_OPTION: u8 = 5;
 const PCP_NETWORK_FAILURE: u8 = 7;
 const PCP_NO_RESOURCES: u8 = 8;
@@ -68,11 +69,10 @@ fn get_wan_ipv4(iface: &str) -> Option<Ipv4Addr> {
     use std::sync::Mutex;
     static CACHE: Mutex<Option<(Instant, Option<Ipv4Addr>)>> = Mutex::new(None);
     let mut guard = CACHE.lock().unwrap();
-    if let Some((ts, ip)) = *guard {
-        if ts.elapsed().as_secs() < 30 {
+    if let Some((ts, ip)) = *guard
+        && ts.elapsed().as_secs() < 30 {
             return ip;
         }
-    }
     let ip = query_wan_ipv4(iface);
     *guard = Some((Instant::now(), ip));
     ip
@@ -342,7 +342,7 @@ fn handle_pcp(
     }
 
     // M6: PCP packets must be a multiple of 4 octets
-    if data.len() % 4 != 0 {
+    if !data.len().is_multiple_of(4) {
         let sssoe = epoch_secs(epoch);
         return Some(pcp_error_response(0, PCP_MALFORMED_REQUEST, sssoe));
     }
@@ -390,6 +390,7 @@ fn handle_pcp_announce(sssoe: u32) -> Option<Vec<u8>> {
 /// Request has 36 additional bytes after the 24-byte header:
 ///   nonce(12), protocol(1), reserved(3), internal_port(2),
 ///   suggested_external_port(2), suggested_external_ip(16)
+#[allow(clippy::too_many_arguments)]
 fn handle_pcp_map(
     data: &[u8],
     client_ipv4: Option<Ipv4Addr>,
@@ -416,11 +417,10 @@ fn handle_pcp_map(
         SocketAddr::V4(addr) => *addr.ip(),
         _ => return None,
     };
-    if let Some(client_ip) = client_ipv4 {
-        if client_ip != Ipv4Addr::UNSPECIFIED && client_ip != src_ipv4 {
+    if let Some(client_ip) = client_ipv4
+        && client_ip != Ipv4Addr::UNSPECIFIED && client_ip != src_ipv4 {
             return Some(pcp_error_response(1, PCP_ADDRESS_MISMATCH, sssoe));
         }
-    }
     let client_ip_str = src_ipv4.to_string();
 
     let protocol = match protocol_byte {
@@ -565,6 +565,7 @@ fn pcp_error_response(opcode: u8, result: u8, sssoe: u32) -> Vec<u8> {
 }
 
 /// Build a PCP MAP success response: common header (24) + MAP payload (36) = 60 bytes.
+#[allow(clippy::too_many_arguments)]
 fn pcp_map_response(
     result: u8,
     lifetime: u32,
@@ -721,10 +722,9 @@ pub async fn run(
             }
         };
 
-        if let Some(resp_bytes) = response {
-            if let Err(e) = socket.send_to(&resp_bytes, src).await {
+        if let Some(resp_bytes) = response
+            && let Err(e) = socket.send_to(&resp_bytes, src).await {
                 debug!(error = %e, dest = %src, "NAT-PMP/PCP response send failed");
             }
-        }
     }
 }

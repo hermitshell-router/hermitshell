@@ -130,11 +130,10 @@ fn parse_st(data: &str) -> Option<&str> {
 fn parse_mx(data: &str) -> u32 {
     for line in data.lines() {
         let lower = line.to_ascii_lowercase();
-        if lower.starts_with("mx:") {
-            if let Ok(val) = line[3..].trim().parse::<u32>() {
+        if lower.starts_with("mx:")
+            && let Ok(val) = line[3..].trim().parse::<u32>() {
                 return val.clamp(1, 120);
             }
-        }
     }
     3 // default 3 seconds per spec
 }
@@ -230,11 +229,10 @@ async fn run_ssdp(db: Arc<Mutex<Db>>, device_uuid: String, lan_iface: String, la
         };
 
         // Ignore packets from the router itself
-        if let SocketAddr::V4(addr) = src {
-            if *addr.ip() == lan_ip {
+        if let SocketAddr::V4(addr) = src
+            && *addr.ip() == lan_ip {
                 continue;
             }
-        }
 
         let data = match std::str::from_utf8(&buf[..len]) {
             Ok(s) => s,
@@ -576,11 +574,10 @@ fn get_wan_ip(wan_iface: &str) -> Option<String> {
     use std::sync::Mutex;
     static CACHE: Mutex<Option<(Instant, Option<String>)>> = Mutex::new(None);
     let mut guard = CACHE.lock().unwrap();
-    if let Some((ref ts, ref ip)) = *guard {
-        if ts.elapsed().as_secs() < 30 {
+    if let Some((ref ts, ref ip)) = *guard
+        && ts.elapsed().as_secs() < 30 {
             return ip.clone();
         }
-    }
     let ip = query_wan_ip(wan_iface);
     *guard = Some((Instant::now(), ip.clone()));
     ip

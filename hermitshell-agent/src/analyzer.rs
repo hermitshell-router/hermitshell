@@ -95,26 +95,23 @@ fn fire_alert(db: &Db, device_mac: &str, rule: &str, severity: &str, message: &s
 }
 
 fn compute_baselines(db: &Db, mac: &str, ip: &str) {
-    if let Ok(hourly) = db.count_unique_dns_domains_hourly(ip, BASELINE_HOURS) {
-        if hourly.len() >= 24 {
+    if let Ok(hourly) = db.count_unique_dns_domains_hourly(ip, BASELINE_HOURS)
+        && hourly.len() >= 24 {
             let (avg, stddev) = mean_stddev(&hourly.iter().map(|(_, c)| *c as f64).collect::<Vec<_>>());
             let _ = db.upsert_baseline(mac, "unique_dns_domains", avg, stddev);
         }
-    }
 
-    if let Ok(hourly) = db.count_unique_dest_ips_hourly(ip, BASELINE_HOURS) {
-        if hourly.len() >= 24 {
+    if let Ok(hourly) = db.count_unique_dest_ips_hourly(ip, BASELINE_HOURS)
+        && hourly.len() >= 24 {
             let (avg, stddev) = mean_stddev(&hourly.iter().map(|(_, c)| *c as f64).collect::<Vec<_>>());
             let _ = db.upsert_baseline(mac, "unique_dest_ips", avg, stddev);
         }
-    }
 
-    if let Ok(hourly) = db.get_device_tx_bytes_hourly(ip, BASELINE_HOURS) {
-        if hourly.len() >= 24 {
+    if let Ok(hourly) = db.get_device_tx_bytes_hourly(ip, BASELINE_HOURS)
+        && hourly.len() >= 24 {
             let (avg, stddev) = mean_stddev(&hourly.iter().map(|(_, c)| *c as f64).collect::<Vec<_>>());
             let _ = db.upsert_baseline(mac, "tx_bytes", avg, stddev);
         }
-    }
 }
 
 fn check_dns_beaconing(db: &Db, mac: &str, ip: &str, log_tx: &UnboundedSender<LogEvent>) {
@@ -158,6 +155,7 @@ fn check_dns_beaconing(db: &Db, mac: &str, ip: &str, log_tx: &UnboundedSender<Lo
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn check_baseline_spike(
     db: &Db,
     mac: &str,

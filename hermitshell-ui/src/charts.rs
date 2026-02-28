@@ -78,7 +78,7 @@ pub fn bandwidth_chart(data: &[BandwidthPoint], width: u32, height: u32) -> Stri
         // Grid line
         y_labels.push_str(&format!(
             r##"<line x1="{}" y1="{y:.1}" x2="{}" y2="{y:.1}" stroke="#333" stroke-width="0.5" />"##,
-            margin_left, margin_left as u32 + chart_w
+            margin_left, margin_left + chart_w
         ));
     }
 
@@ -94,7 +94,7 @@ pub fn bandwidth_chart(data: &[BandwidthPoint], width: u32, height: u32) -> Stri
             let label = format_time_label(bucket);
             x_labels.push_str(&format!(
                 r##"<text x="{x:.1}" y="{}" fill="#888" font-size="11" text-anchor="middle">{label}</text>"##,
-                margin_top as u32 + chart_h + 20
+                margin_top + chart_h + 20
             ));
         }
     }

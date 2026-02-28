@@ -237,6 +237,7 @@ pub async fn provision_acme_dns01(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
             .map_err(|e| anyhow::anyhow!("failed to set challenge ready: {}", e))?;
 
         // Drop borrows so we can use order again
+        #[allow(clippy::drop_non_drop)]
         drop(authorizations);
 
         let status = order

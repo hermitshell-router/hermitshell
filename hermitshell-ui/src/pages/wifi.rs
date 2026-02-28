@@ -97,7 +97,7 @@ pub fn Wifi() -> impl IntoView {
                     let pid2 = pid.clone();
                     view! {
                         <div class="settings-section">
-                            <h3>{format!("SSIDs for Provider")}</h3>
+                            <h3>{"SSIDs for Provider"}</h3>
                             <ProviderDetail provider_id=pid2
                                 set_ssid_action=set_ssid_action
                                 delete_ssid_action=delete_ssid_action />

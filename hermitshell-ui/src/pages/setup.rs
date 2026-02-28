@@ -395,7 +395,7 @@ pub fn SetupStep8() -> impl IntoView {
                                                 </div>
                                             }.into_any()
                                         } else {
-                                            view! {}.into_any()
+                                            ().into_any()
                                         }}
                                         <div class="setup-summary-row">
                                             <span class="setup-summary-label">"Hostname"</span>

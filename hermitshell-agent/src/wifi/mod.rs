@@ -36,14 +36,18 @@ pub trait WifiProvider: Send + Sync {
     async fn delete_ssid(&self, ssid_name: &str, band: &str) -> Result<()>;
 
     /// Client management routed through the correct AP/controller.
+    #[allow(dead_code)]
     async fn kick_client(&self, mac: &str) -> Result<()>;
+    #[allow(dead_code)]
     async fn block_client(&self, mac: &str) -> Result<()>;
+    #[allow(dead_code)]
     async fn unblock_client(&self, mac: &str) -> Result<()>;
 }
 
 /// Per-physical-AP operations (radio config, status, clients).
 #[async_trait]
 pub trait WifiDevice: Send + Sync {
+    #[allow(dead_code)]
     async fn get_status(&self) -> Result<ApStatus>;
     async fn get_clients(&self) -> Result<Vec<WifiClient>>;
     async fn get_radios(&self) -> Result<Vec<WifiRadioConfig>>;
@@ -182,8 +186,8 @@ pub async fn run(db: Arc<Mutex<Db>>) {
                     };
 
                     for ap_mac in &device_macs {
-                        if let Ok(device) = provider.device(ap_mac).await {
-                            if let Ok(clients) = device.get_clients().await {
+                        if let Ok(device) = provider.device(ap_mac).await
+                            && let Ok(clients) = device.get_clients().await {
                                 let db = db.lock().unwrap();
                                 for client in &clients {
                                     let _ = db.update_device_wifi(
@@ -195,7 +199,6 @@ pub async fn run(db: Arc<Mutex<Db>>) {
                                     );
                                 }
                             }
-                        }
                     }
 
                     info!(provider = %provider_info.name, "wifi poll complete");

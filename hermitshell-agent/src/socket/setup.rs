@@ -213,11 +213,10 @@ pub(super) fn handle_set_timezone(req: &Request, db: &Arc<Mutex<Db>>) -> Respons
 
 pub(super) fn handle_setup_set_dns(req: &Request, db: &Arc<Mutex<Db>>, unbound: &Arc<Mutex<UnboundManager>>) -> Response {
     let db_guard = db.lock().unwrap();
-    if db_guard.get_config("admin_password_hash").ok().flatten().is_some() {
-        if db_guard.get_config("setup_complete").ok().flatten().as_deref() == Some("true") {
+    if db_guard.get_config("admin_password_hash").ok().flatten().is_some()
+        && db_guard.get_config("setup_complete").ok().flatten().as_deref() == Some("true") {
             return Response::err("DNS config during setup only");
         }
-    }
 
     // Store upstream DNS preference
     if let Some(ref dns) = req.value {

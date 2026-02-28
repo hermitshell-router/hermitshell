@@ -5,6 +5,8 @@ use std::process::Command;
 use std::sync::OnceLock;
 use tracing::{debug, info};
 
+use crate::paths;
+
 const VALID_GROUPS: &[&str] = &["quarantine", "trusted", "iot", "guest", "servers", "blocked"];
 
 /// Device IPv4 range: (base_u32, prefix_len, max_subnet_id). Set once at startup.
@@ -109,7 +111,7 @@ pub fn validate_protocol(protocol: &str) -> Result<()> {
 
 
 fn build_base_ruleset(wan_iface: &str, lan_iface: &str, lan_ip: &str) -> String {
-    format!(r#"#!/usr/sbin/nft -f
+    format!(r#"#!{} -f
 flush ruleset
 
 table inet filter {{
@@ -251,13 +253,13 @@ table inet traffic {{
         ip6 daddr @rx_devices_v6
     }}
 }}
-"#)
+"#, paths::nft())
 }
 
 fn execute_nft_script(rules: &str) -> Result<()> {
     let temp_path = "/tmp/hermitshell-rules.nft";
     std::fs::write(temp_path, rules)?;
-    let status = Command::new("/usr/sbin/nft")
+    let status = Command::new(paths::nft())
         .args(["-f", temp_path])
         .status()?;
     let _ = std::fs::remove_file(temp_path);
@@ -281,12 +283,12 @@ pub fn add_device_counter(ip: &str) -> Result<()> {
     let element = format!("{{ {} }}", ip);
 
     // Add to TX counter set (traffic from device)
-    let _ = Command::new("/usr/sbin/nft")
+    let _ = Command::new(paths::nft())
         .args(["add", "element", "inet", "traffic", "tx_devices", &element])
         .status()?;
 
     // Add to RX counter set (traffic to device)
-    let _ = Command::new("/usr/sbin/nft")
+    let _ = Command::new(paths::nft())
         .args(["add", "element", "inet", "traffic", "rx_devices", &element])
         .status()?;
 
@@ -297,11 +299,11 @@ pub fn add_device_counter_v6(ip: &str) -> Result<()> {
     validate_ipv6_ula(ip)?;
     let element = format!("{{ {} }}", ip);
 
-    let _ = Command::new("/usr/sbin/nft")
+    let _ = Command::new(paths::nft())
         .args(["add", "element", "inet", "traffic", "tx_devices_v6", &element])
         .status()?;
 
-    let _ = Command::new("/usr/sbin/nft")
+    let _ = Command::new(paths::nft())
         .args(["add", "element", "inet", "traffic", "rx_devices_v6", &element])
         .status()?;
 
@@ -324,11 +326,10 @@ fn parse_counter_set(output: &str) -> HashMap<String, i64> {
             }
             let parts: Vec<&str> = entry.split_whitespace().collect();
             // Expected: ["10.0.1.2", "counter", "packets", "123", "bytes", "45678"]
-            if parts.len() >= 6 && parts[1] == "counter" && parts[4] == "bytes" {
-                if let Ok(bytes) = parts[5].parse::<i64>() {
+            if parts.len() >= 6 && parts[1] == "counter" && parts[4] == "bytes"
+                && let Ok(bytes) = parts[5].parse::<i64>() {
                     counters.insert(parts[0].to_string(), bytes);
                 }
-            }
         }
     }
     counters
@@ -336,10 +337,10 @@ fn parse_counter_set(output: &str) -> HashMap<String, i64> {
 
 /// Get rx/tx bytes for a specific IP
 pub fn get_device_counters(ip: &str) -> Result<(i64, i64)> {
-    let tx_output = Command::new("/usr/sbin/nft")
+    let tx_output = Command::new(paths::nft())
         .args(["list", "set", "inet", "traffic", "tx_devices"])
         .output()?;
-    let rx_output = Command::new("/usr/sbin/nft")
+    let rx_output = Command::new(paths::nft())
         .args(["list", "set", "inet", "traffic", "rx_devices"])
         .output()?;
 
@@ -357,7 +358,7 @@ pub fn add_device_forward_rule(ip: &str, group: &str) -> Result<()> {
     validate_group(group)?;
     let chain = format!("{}_fwd", group);
     let element = format!("{{ {} : jump {} }}", ip, chain);
-    let status = Command::new("/usr/sbin/nft")
+    let status = Command::new(paths::nft())
         .args(["add", "element", "inet", "filter", "device_groups_v4", &element])
         .status()?;
     if status.success() {
@@ -374,7 +375,7 @@ pub fn add_device_forward_rule_v6(ip: &str, group: &str) -> Result<()> {
     validate_group(group)?;
     let chain = format!("{}_fwd", group);
     let element = format!("{{ {} : jump {} }}", ip, chain);
-    let status = Command::new("/usr/sbin/nft")
+    let status = Command::new(paths::nft())
         .args(["add", "element", "inet", "filter", "device_groups_v6", &element])
         .status()?;
     if status.success() {
@@ -390,12 +391,12 @@ pub fn remove_device_forward_rule(ip: &str) -> Result<()> {
     validate_ip(ip)?;
     let element = format!("{{ {} }}", ip);
     // Ignore errors -- element may not exist (e.g. already blocked)
-    let _ = Command::new("/usr/sbin/nft")
+    let _ = Command::new(paths::nft())
         .args(["delete", "element", "inet", "filter", "device_groups_v4", &element])
         .status();
 
     // Flush conntrack entries so established connections don't bypass the block
-    let _ = Command::new("/usr/sbin/conntrack")
+    let _ = Command::new(paths::conntrack())
         .args(["-D", "-s", ip])
         .status();
 
@@ -406,7 +407,7 @@ pub fn remove_device_forward_rule(ip: &str) -> Result<()> {
 pub fn remove_device_forward_rule_v6(ip: &str) -> Result<()> {
     validate_ipv6_ula(ip)?;
     let element = format!("{{ {} }}", ip);
-    let _ = Command::new("/usr/sbin/nft")
+    let _ = Command::new(paths::nft())
         .args(["delete", "element", "inet", "filter", "device_groups_v6", &element])
         .status();
 
@@ -419,11 +420,11 @@ pub fn add_device_route(device_ip: &str, lan_iface: &str, mac: &str) -> Result<(
     validate_iface(lan_iface)?;
     validate_mac(mac)?;
     let route = format!("{}/32", device_ip);
-    let _ = Command::new("/usr/sbin/ip")
+    let _ = Command::new(paths::ip())
         .args(["route", "add", &route, "dev", lan_iface])
         .status();
     // Bind IP→MAC permanently to prevent ARP cache poisoning
-    let _ = Command::new("/usr/sbin/ip")
+    let _ = Command::new(paths::ip())
         .args(["neigh", "replace", device_ip, "lladdr", mac, "nud", "permanent", "dev", lan_iface])
         .status();
     debug!(route = %route, mac = mac, iface = lan_iface, "added device route + ARP binding");
@@ -436,14 +437,14 @@ pub fn add_device_route_v6(device_ipv6: &str, lan_iface: &str, mac: &str) -> Res
     validate_iface(lan_iface)?;
     validate_mac(mac)?;
     let route = format!("{}/128", device_ipv6);
-    let _ = Command::new("/usr/sbin/ip")
+    let _ = Command::new(paths::ip())
         .args(["-6", "route", "add", &route, "dev", lan_iface])
         .status();
-    let _ = Command::new("/usr/sbin/ip")
+    let _ = Command::new(paths::ip())
         .args(["-6", "neigh", "add", "proxy", device_ipv6, "dev", lan_iface])
         .status();
     // Bind IPv6→MAC permanently
-    let _ = Command::new("/usr/sbin/ip")
+    let _ = Command::new(paths::ip())
         .args(["-6", "neigh", "replace", device_ipv6, "lladdr", mac, "nud", "permanent", "dev", lan_iface])
         .status();
     debug!(route = %route, mac = mac, iface = lan_iface, "added device v6 route + NDP binding");
@@ -455,7 +456,7 @@ pub fn add_mac_ip_rule(device_ip: &str, mac: &str) -> Result<()> {
     validate_ip(device_ip)?;
     validate_mac(mac)?;
     let comment = format!("mac-ip-{}", device_ip);
-    let status = Command::new("/usr/sbin/nft")
+    let status = Command::new(paths::nft())
         .args([
             "add", "rule", "inet", "filter", "mac_ip_validate",
             "ip", "saddr", device_ip,
@@ -477,7 +478,7 @@ pub fn add_mac_ip_rule_v6(device_ipv6: &str, mac: &str) -> Result<()> {
     validate_ipv6_ula(device_ipv6)?;
     validate_mac(mac)?;
     let comment = format!("mac-ip-{}", device_ipv6);
-    let status = Command::new("/usr/sbin/nft")
+    let status = Command::new(paths::nft())
         .args([
             "add", "rule", "inet", "filter", "mac_ip_validate",
             "ip6", "saddr", device_ipv6,
@@ -497,19 +498,18 @@ pub fn add_mac_ip_rule_v6(device_ipv6: &str, mac: &str) -> Result<()> {
 /// Remove MAC-IP validation rules for a device IP (by searching for comment).
 pub fn remove_mac_ip_rule(device_ip: &str) -> Result<()> {
     let comment = format!("mac-ip-{}", device_ip);
-    let output = Command::new("/usr/sbin/nft")
+    let output = Command::new(paths::nft())
         .args(["-a", "list", "chain", "inet", "filter", "mac_ip_validate"])
         .output()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     for line in stdout.lines() {
         let trimmed = line.trim();
-        if trimmed.contains(&comment) {
-            if let Some(handle) = trimmed.rsplit("# handle ").next().and_then(|s| s.trim().parse::<u64>().ok()) {
-                let _ = Command::new("/usr/sbin/nft")
+        if trimmed.contains(&comment)
+            && let Some(handle) = trimmed.rsplit("# handle ").next().and_then(|s| s.trim().parse::<u64>().ok()) {
+                let _ = Command::new(paths::nft())
                     .args(["delete", "rule", "inet", "filter", "mac_ip_validate", "handle", &handle.to_string()])
                     .status();
             }
-        }
     }
     Ok(())
 }
@@ -568,15 +568,14 @@ pub fn apply_port_forwards(
     }
 
     // DMZ catch-all (must be last before DNS redirect)
-    if let Some(ip) = dmz_ip {
-        if !ip.is_empty() {
+    if let Some(ip) = dmz_ip
+        && !ip.is_empty() {
             validate_ip(ip)?;
             prerouting_rules.push_str(&format!(
                 "        iifname \"{}\" dnat to {}\n",
                 wan_iface, ip
             ));
         }
-    }
 
     // DNS redirect rules (always present — must match build_base_ruleset)
     prerouting_rules.push_str(&format!(
@@ -607,14 +606,13 @@ pub fn apply_port_forwards(
         }
     }
     // DMZ forward rule
-    if let Some(ip) = dmz_ip {
-        if !ip.is_empty() {
+    if let Some(ip) = dmz_ip
+        && !ip.is_empty() {
             forward_rules.push_str(&format!(
                 "        ct state new iifname \"{}\" ip daddr {} accept\n",
                 wan_iface, ip
             ));
         }
-    }
 
     // Rebuild the nat prerouting chain (flush and re-add rules)
     let mut nft_commands = Vec::new();
@@ -639,7 +637,7 @@ pub fn apply_port_forwards(
 
     let temp_path = "/tmp/hermitshell-portfwd.nft";
     std::fs::write(temp_path, &nft_script)?;
-    let status = Command::new("/usr/sbin/nft")
+    let status = Command::new(paths::nft())
         .args(["-f", temp_path])
         .status()?;
     if !status.success() {
@@ -660,7 +658,7 @@ pub fn add_upnp_input_rules(lan_iface: &str) -> Result<()> {
     );
     let temp_path = "/tmp/hermitshell-upnp-input.nft";
     std::fs::write(temp_path, &rules)?;
-    let status = Command::new("/usr/sbin/nft").args(["-f", temp_path]).status()?;
+    let status = Command::new(paths::nft()).args(["-f", temp_path]).status()?;
     if !status.success() {
         anyhow::bail!("failed to add UPnP input rules");
     }
@@ -671,20 +669,18 @@ pub fn add_upnp_input_rules(lan_iface: &str) -> Result<()> {
 #[allow(dead_code)]
 pub fn remove_upnp_input_rules() -> Result<()> {
     for comment in &["upnp-ssdp", "upnp-http", "upnp-natpmp"] {
-        let output = Command::new("/usr/sbin/nft")
+        let output = Command::new(paths::nft())
             .args(["-a", "list", "chain", "inet", "filter", "input"])
             .output()?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines() {
-            if line.contains(comment) {
-                if let Some(handle) = line.rsplit("# handle ").next() {
-                    if let Ok(h) = handle.trim().parse::<u64>() {
-                        let _ = Command::new("/usr/sbin/nft")
+            if line.contains(comment)
+                && let Some(handle) = line.rsplit("# handle ").next()
+                && let Ok(h) = handle.trim().parse::<u64>() {
+                        let _ = Command::new(paths::nft())
                             .args(["delete", "rule", "inet", "filter", "input", "handle", &h.to_string()])
                             .status();
                     }
-                }
-            }
         }
     }
     Ok(())
@@ -706,7 +702,7 @@ pub fn add_ipv6_pinhole(ipv6_global: &str, protocol: &str, port_start: u16, port
         ipv6_global, protocol, port_spec
     );
 
-    let status = Command::new("/usr/sbin/nft")
+    let status = Command::new(paths::nft())
         .args(["add", "rule", "inet", "filter", "forward"])
         .args(rule.split_whitespace().collect::<Vec<_>>())
         .status()?;
@@ -733,7 +729,7 @@ pub fn remove_ipv6_pinhole(ipv6_global: &str, protocol: &str, port_start: u16, p
     let search = format!("ip6 daddr {} {} dport {} accept", ipv6_global, protocol, port_spec);
 
     // List rules with handles
-    let output = Command::new("/usr/sbin/nft")
+    let output = Command::new(paths::nft())
         .args(["-a", "list", "chain", "inet", "filter", "forward"])
         .output()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -743,7 +739,7 @@ pub fn remove_ipv6_pinhole(ipv6_global: &str, protocol: &str, port_start: u16, p
         if trimmed.contains(&search) {
             // Extract handle number from "# handle N"
             if let Some(handle) = trimmed.rsplit("# handle ").next().and_then(|s| s.trim().parse::<u64>().ok()) {
-                let status = Command::new("/usr/sbin/nft")
+                let status = Command::new(paths::nft())
                     .args(["delete", "rule", "inet", "filter", "forward", "handle", &handle.to_string()])
                     .status()?;
                 if status.success() {

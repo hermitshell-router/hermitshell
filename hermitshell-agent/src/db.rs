@@ -12,7 +12,6 @@ pub use hermitshell_common::{
 ///   Fix: single dump parsed once, or nft get element for individual lookups.
 /// - Restart restore: list_assigned_devices is a full table scan, each device
 ///   re-adds a /32 route + verdict map element + counter set element.
-
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS devices (
     mac TEXT PRIMARY KEY,
@@ -401,6 +400,7 @@ impl Db {
                     let mut stmt = conn.prepare(
                         "SELECT mac, ip, name, provider, username, password_enc, model, firmware, enabled, last_seen, status, ca_cert_pem FROM wifi_aps"
                     )?;
+                    #[allow(clippy::type_complexity)]
                     let old_aps: Vec<(String, String, String, String, String, String, Option<String>, Option<String>, i64, Option<i64>, String, Option<String>)> = stmt.query_map([], |row| {
                         Ok((
                             row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?,
@@ -520,7 +520,7 @@ impl Db {
         let mut stmt = self.conn.prepare(
             "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname, wifi_ssid, wifi_band, wifi_rssi, wifi_ap_mac, wifi_last_seen, dhcp_fingerprint FROM devices"
         )?;
-        let devices = stmt.query_map([], |row| device_from_row(row))?;
+        let devices = stmt.query_map([], device_from_row)?;
         Ok(devices.filter_map(|d| d.ok()).collect())
     }
 
@@ -626,7 +626,7 @@ impl Db {
         let mut stmt = self.conn.prepare(
             "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname, wifi_ssid, wifi_band, wifi_rssi, wifi_ap_mac, wifi_last_seen, dhcp_fingerprint FROM devices WHERE subnet_id IS NOT NULL"
         )?;
-        let devices = stmt.query_map([], |row| device_from_row(row))?;
+        let devices = stmt.query_map([], device_from_row)?;
         Ok(devices.filter_map(|d| d.ok()).collect())
     }
 
@@ -762,6 +762,7 @@ impl Db {
     }
 
     /// Insert a port forward with source, expires_at, and requesting_ip fields.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_port_forward_ext(
         &self, protocol: &str, ext_start: u16, ext_end: u16,
         internal_ip: &str, internal_port: u16, description: &str,
@@ -922,14 +923,17 @@ impl Db {
         Ok(())
     }
 
-    pub const BACKUP_PATH: &str = "/var/lib/hermitshell/hermitshell-backup.db";
+    pub fn backup_path() -> String {
+        crate::paths::backup_path()
+    }
 
     pub fn vacuum_into_backup(&self) -> Result<()> {
-        self.conn.execute(&format!("VACUUM INTO '{}'", Self::BACKUP_PATH), [])?;
+        let path = Self::backup_path();
+        self.conn.execute(&format!("VACUUM INTO '{}'", path), [])?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(Self::BACKUP_PATH, std::fs::Permissions::from_mode(0o600))?;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
         }
         Ok(())
     }
@@ -944,6 +948,7 @@ impl Db {
         Ok(self.conn.last_insert_rowid())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn update_connection_end(&self, device_ip: &str, dest_ip: &str, dest_port: i64, protocol: &str, bytes_sent: i64, bytes_recv: i64, ended_at: i64) -> Result<()> {
         self.conn.execute(
             "UPDATE connection_logs SET bytes_sent = ?5, bytes_recv = ?6, ended_at = ?7
@@ -1708,6 +1713,7 @@ impl Db {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_wifi_provider(&self, id: &str, provider_type: &str, name: &str, url: &str, username: &str, password_enc: &str, site: Option<&str>, api_key_enc: Option<&str>) -> Result<()> {
         self.conn.execute(
             "INSERT INTO wifi_providers (id, provider_type, name, url, username, password_enc, site, api_key_enc) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -1723,6 +1729,7 @@ impl Db {
     }
 
     /// Returns (provider_type, url, username, password_enc, site, api_key_enc)
+    #[allow(clippy::type_complexity)]
     pub fn get_wifi_provider_credentials(&self, id: &str) -> Result<Option<(String, String, String, String, Option<String>, Option<String>)>> {
         let mut stmt = self.conn.prepare(
             "SELECT provider_type, url, username, password_enc, site, api_key_enc FROM wifi_providers WHERE id = ?1"
@@ -1838,15 +1845,14 @@ impl Db {
                     (&encrypted, &id),
                 )?;
             }
-            if let Some(ref api_key) = api_key_enc {
-                if !api_key.is_empty() && !crate::crypto::is_encrypted(api_key) {
+            if let Some(ref api_key) = api_key_enc
+                && !api_key.is_empty() && !crate::crypto::is_encrypted(api_key) {
                     let encrypted = crate::crypto::encrypt_password(api_key, session_secret)?;
                     self.conn.execute(
                         "UPDATE wifi_providers SET api_key_enc = ?1 WHERE id = ?2",
                         (&encrypted, &id),
                     )?;
                 }
-            }
         }
         Ok(())
     }
@@ -1881,6 +1887,7 @@ impl Db {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn set_dns_forward_zone_enabled(&self, id: i64, enabled: bool) -> Result<()> {
         self.conn.execute(
             "UPDATE dns_forward_zones SET enabled = ?1 WHERE id = ?2",
@@ -1920,6 +1927,7 @@ impl Db {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn set_dns_custom_rule_enabled(&self, id: i64, enabled: bool) -> Result<()> {
         self.conn.execute(
             "UPDATE dns_custom_rules SET enabled = ?1 WHERE id = ?2",
@@ -1959,6 +1967,7 @@ impl Db {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn set_dns_blocklist_enabled(&self, id: i64, enabled: bool) -> Result<()> {
         self.conn.execute(
             "UPDATE dns_blocklists SET enabled = ?1 WHERE id = ?2",

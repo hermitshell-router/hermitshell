@@ -91,13 +91,12 @@ pub(super) fn handle_wifi_add_provider(req: &Request, db: &Arc<Mutex<Db>>) -> Re
                 Err(_) => return Response::err("url must be a valid URL (https://...) for unifi"),
             }
             // Validate site if provided
-            if let Some(ref site) = req.site {
-                if site.is_empty() || site.len() > 64
-                    || !site.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-                {
+            if let Some(ref site) = req.site
+                && (site.is_empty() || site.len() > 64
+                    || !site.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+            {
                     return Response::err("site must be 1-64 alphanumeric characters (plus - _)");
                 }
-            }
         }
         _ => {}
     }
@@ -139,22 +138,20 @@ pub(super) fn handle_wifi_add_provider(req: &Request, db: &Arc<Mutex<Db>>) -> Re
     }
 
     // Store CA cert if provided
-    if let Some(ref ca_cert) = req.ca_cert {
-        if !ca_cert.is_empty() {
+    if let Some(ref ca_cert) = req.ca_cert
+        && !ca_cert.is_empty() {
             if let Err(msg) = validate_ca_cert_pem(ca_cert) {
                 let _ = db.remove_wifi_provider(&provider_id);
                 return Response::err(&msg);
             }
             let _ = db.set_wifi_provider_ca_cert(&provider_id, Some(ca_cert));
         }
-    }
 
     // For eap_standalone, insert the initial AP record
-    if provider_type == "eap_standalone" {
-        if let Some(ref mac) = req.mac {
+    if provider_type == "eap_standalone"
+        && let Some(ref mac) = req.mac {
             let _ = db.insert_wifi_ap_for_provider(mac, &provider_id, url, name);
         }
-    }
 
     let _ = db.log_audit("wifi_add_provider", &format!("added {} provider {}", provider_type, name));
     Response::ok()
