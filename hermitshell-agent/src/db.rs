@@ -3,8 +3,8 @@ use rusqlite::Connection;
 
 pub use hermitshell_common::{
     Alert, AuditEntry, BandwidthPoint, BandwidthRealtime, ConnectionLog, Device,
-    DhcpReservation, DnsLogEntry, PortForward, TopDestination, WgPeer,
-    WifiAp, WifiClient,
+    DhcpReservation, DnsBlocklist, DnsCustomRule, DnsForwardZone, DnsLogEntry,
+    PortForward, TopDestination, WgPeer, WifiAp, WifiClient,
 };
 
 /// Practical bottlenecks before hitting address space limits:
@@ -126,6 +126,31 @@ CREATE TABLE IF NOT EXISTS audit_log (
     created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+
+CREATE TABLE IF NOT EXISTS dns_forward_zones (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    domain TEXT NOT NULL UNIQUE,
+    forward_addr TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS dns_custom_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    domain TEXT NOT NULL,
+    record_type TEXT NOT NULL DEFAULT 'A',
+    value TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS dns_blocklists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL UNIQUE,
+    tag TEXT NOT NULL DEFAULT 'ads',
+    enabled INTEGER NOT NULL DEFAULT 1
+);
+
+INSERT OR IGNORE INTO dns_blocklists (name, url, tag) VALUES ('StevenBlack Hosts', 'https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts', 'ads');
 "#;
 
 fn device_from_row(row: &rusqlite::Row) -> rusqlite::Result<Device> {
@@ -445,6 +470,37 @@ impl Db {
             conn.execute(
                 "INSERT INTO config (key, value) VALUES ('schema_version', '8')
                  ON CONFLICT(key) DO UPDATE SET value = '8'",
+                [],
+            )?;
+        }
+
+        if version < 9 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS dns_forward_zones (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    domain TEXT NOT NULL UNIQUE,
+                    forward_addr TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1
+                );
+                CREATE TABLE IF NOT EXISTS dns_custom_rules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    domain TEXT NOT NULL,
+                    record_type TEXT NOT NULL DEFAULT 'A',
+                    value TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1
+                );
+                CREATE TABLE IF NOT EXISTS dns_blocklists (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    url TEXT NOT NULL UNIQUE,
+                    tag TEXT NOT NULL DEFAULT 'ads',
+                    enabled INTEGER NOT NULL DEFAULT 1
+                );
+                INSERT OR IGNORE INTO dns_blocklists (name, url, tag) VALUES ('StevenBlack Hosts', 'https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts', 'ads');"
+            )?;
+            conn.execute(
+                "INSERT INTO config (key, value) VALUES ('schema_version', '9')
+                 ON CONFLICT(key) DO UPDATE SET value = '9'",
                 [],
             )?;
         }
@@ -1792,6 +1848,122 @@ impl Db {
                 }
             }
         }
+        Ok(())
+    }
+
+    // DNS forward zone methods
+
+    pub fn list_dns_forward_zones(&self) -> Result<Vec<DnsForwardZone>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, domain, forward_addr, enabled FROM dns_forward_zones"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(DnsForwardZone {
+                id: row.get(0)?,
+                domain: row.get(1)?,
+                forward_addr: row.get(2)?,
+                enabled: row.get::<_, i64>(3)? != 0,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn add_dns_forward_zone(&self, domain: &str, forward_addr: &str) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO dns_forward_zones (domain, forward_addr) VALUES (?1, ?2)",
+            (domain, forward_addr),
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn remove_dns_forward_zone(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM dns_forward_zones WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn set_dns_forward_zone_enabled(&self, id: i64, enabled: bool) -> Result<()> {
+        self.conn.execute(
+            "UPDATE dns_forward_zones SET enabled = ?1 WHERE id = ?2",
+            (if enabled { 1 } else { 0 }, id),
+        )?;
+        Ok(())
+    }
+
+    // DNS custom rule methods
+
+    pub fn list_dns_custom_rules(&self) -> Result<Vec<DnsCustomRule>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, domain, record_type, value, enabled FROM dns_custom_rules"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(DnsCustomRule {
+                id: row.get(0)?,
+                domain: row.get(1)?,
+                record_type: row.get(2)?,
+                value: row.get(3)?,
+                enabled: row.get::<_, i64>(4)? != 0,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn add_dns_custom_rule(&self, domain: &str, record_type: &str, value: &str) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO dns_custom_rules (domain, record_type, value) VALUES (?1, ?2, ?3)",
+            (domain, record_type, value),
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn remove_dns_custom_rule(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM dns_custom_rules WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn set_dns_custom_rule_enabled(&self, id: i64, enabled: bool) -> Result<()> {
+        self.conn.execute(
+            "UPDATE dns_custom_rules SET enabled = ?1 WHERE id = ?2",
+            (if enabled { 1 } else { 0 }, id),
+        )?;
+        Ok(())
+    }
+
+    // DNS blocklist methods
+
+    pub fn list_dns_blocklists(&self) -> Result<Vec<DnsBlocklist>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, url, tag, enabled FROM dns_blocklists"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(DnsBlocklist {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                url: row.get(2)?,
+                tag: row.get(3)?,
+                enabled: row.get::<_, i64>(4)? != 0,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn add_dns_blocklist(&self, name: &str, url: &str, tag: &str) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO dns_blocklists (name, url, tag) VALUES (?1, ?2, ?3)",
+            (name, url, tag),
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn remove_dns_blocklist(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM dns_blocklists WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn set_dns_blocklist_enabled(&self, id: i64, enabled: bool) -> Result<()> {
+        self.conn.execute(
+            "UPDATE dns_blocklists SET enabled = ?1 WHERE id = ?2",
+            (if enabled { 1 } else { 0 }, id),
+        )?;
         Ok(())
     }
 }
