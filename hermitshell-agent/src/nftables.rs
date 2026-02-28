@@ -138,6 +138,7 @@ table inet filter {{
         iifname != "{wan_iface}" tcp dport 22 accept
         iifname {{ "{lan_iface}", "tailscale0" }} tcp dport {{ 8080, 8443 }} accept
         iifname "{lan_iface}" udp dport 67 accept
+        iifname "{wan_iface}" udp dport 68 accept
         iifname {{ "{lan_iface}", "wg0" }} tcp dport {{ 53, 5354 }} accept
         iifname {{ "{lan_iface}", "wg0" }} udp dport {{ 53, 5354 }} accept
         iifname {{ "{lan_iface}", "wg0" }} tcp dport 853 accept
