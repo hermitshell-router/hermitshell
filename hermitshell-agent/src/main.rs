@@ -838,6 +838,8 @@ async fn main() -> Result<()> {
 
     let mut rotation_counter: u64 = 0;
     let mut analysis_counter: u64 = 0;
+    let mut blocklist_counter: u64 = 0;
+    let unbound_for_loop = unbound_mgr.clone();
 
     loop {
         interval.tick().await;
@@ -919,6 +921,22 @@ async fn main() -> Result<()> {
                 }
                 Err(e) => error!(error = %e, "bandwidth rollup rotation failed"),
             }
+        }
+
+        // Every 24h: refresh DNS blocklists (8640 ticks * 10s = 86400s)
+        blocklist_counter += 1;
+        if blocklist_counter % 8640 == 0 {
+            let unbound = unbound_for_loop.clone();
+            let db_bl = db_for_counters.clone();
+            tokio::task::spawn_blocking(move || {
+                let mgr = unbound.lock().unwrap();
+                if let Err(e) = mgr.download_blocklists(&db_bl) {
+                    error!(error = %e, "blocklist refresh failed");
+                }
+                if let Err(e) = mgr.reload() {
+                    error!(error = %e, "unbound reload after blocklist refresh failed");
+                }
+            });
         }
     }
 }
