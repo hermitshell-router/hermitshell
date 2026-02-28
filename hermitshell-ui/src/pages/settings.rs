@@ -8,6 +8,10 @@ use crate::server_fns::{
     SetQosConfig, SetQosTestUrl, RunSpeedTest,
     SetTlsCustomCert, SetTlsSelfSigned, SetTlsTailscale, SetTlsAcme,
     ApplyUpdate, SetAutoUpdate,
+    UpdateHostname, UpdateTimezone, UpdateUpstreamDns,
+    UpdateWanConfig, UpdateInterfaces,
+    ChangePassword,
+    SetAnalyzerEnabled, SetAlertRule,
 };
 
 #[component]
@@ -44,9 +48,214 @@ pub fn Settings() -> impl IntoView {
         || (),
         |_| async { client::check_update() },
     );
+    let interfaces = Resource::new(|| (), |_| async { client::list_interfaces() });
+    let net_config = Resource::new(|| (), |_| async {
+        let wan_iface = client::get_config("wan_iface").unwrap_or(None).unwrap_or_default();
+        let lan_iface = client::get_config("lan_iface").unwrap_or(None).unwrap_or_default();
+        let wan_mode = client::get_config("wan_mode").unwrap_or(None).unwrap_or_else(|| "dhcp".to_string());
+        let hostname = client::get_config("router_hostname").unwrap_or(None).unwrap_or_default();
+        let timezone = client::get_config("timezone").unwrap_or(None).unwrap_or_else(|| "UTC".to_string());
+        let upstream = client::get_config("upstream_dns").unwrap_or(None).unwrap_or_else(|| "auto".to_string());
+        Ok::<_, String>((wan_iface, lan_iface, wan_mode, hostname, timezone, upstream))
+    });
+
+    let password_action = ServerAction::<ChangePassword>::new();
 
     view! {
         <Layout title="Settings" active_page="settings">
+            <Suspense fallback=move || view! { <p>"Loading network config..."</p> }>
+                {move || {
+                    let ifaces_data = interfaces.get();
+                    let config_data = net_config.get();
+                    match (ifaces_data, config_data) {
+                        (Some(Ok(ifaces)), Some(Ok((wan_iface, lan_iface, wan_mode, hostname, timezone, upstream)))) => {
+                            let iface_action = ServerAction::<UpdateInterfaces>::new();
+                            let wan_action = ServerAction::<UpdateWanConfig>::new();
+                            let hostname_action = ServerAction::<UpdateHostname>::new();
+                            let tz_action = ServerAction::<UpdateTimezone>::new();
+                            let dns_action = ServerAction::<UpdateUpstreamDns>::new();
+
+                            let is_static = wan_mode == "static";
+
+                            let upstream_select = match upstream.as_str() {
+                                "1.1.1.1,1.0.0.1" => "cloudflare",
+                                "8.8.8.8,8.8.4.4" => "google",
+                                "9.9.9.9,149.112.112.112" => "quad9",
+                                "auto" => "auto",
+                                _ => "custom",
+                            };
+                            let custom_dns_val = if upstream_select == "custom" { upstream.clone() } else { String::new() };
+
+                            Some(view! {
+                                <div class="settings-section">
+                                    <h3>"Network & System"</h3>
+
+                                    <h4>"Interfaces"</h4>
+                                    <ActionForm action=iface_action>
+                                        <div class="settings-row">
+                                            <span class="settings-label">"WAN Interface"</span>
+                                            <span class="settings-value">
+                                                <select name="wan">
+                                                    <option value="">"-- Select --"</option>
+                                                    {ifaces.iter().map(|iface| {
+                                                        let name = iface.name.clone();
+                                                        let selected = name == wan_iface;
+                                                        let label = format!("{} ({})", iface.name, iface.mac);
+                                                        view! {
+                                                            <option value={name} selected=selected>{label}</option>
+                                                        }
+                                                    }).collect_view()}
+                                                </select>
+                                            </span>
+                                        </div>
+                                        <div class="settings-row">
+                                            <span class="settings-label">"LAN Interface"</span>
+                                            <span class="settings-value">
+                                                <select name="lan">
+                                                    <option value="">"-- Select --"</option>
+                                                    {ifaces.iter().map(|iface| {
+                                                        let name = iface.name.clone();
+                                                        let selected = name == lan_iface;
+                                                        let label = format!("{} ({})", iface.name, iface.mac);
+                                                        view! {
+                                                            <option value={name} selected=selected>{label}</option>
+                                                        }
+                                                    }).collect_view()}
+                                                </select>
+                                            </span>
+                                        </div>
+                                        <p class="hint">"Requires agent restart after changing."</p>
+                                        <div class="actions-bar">
+                                            <button type="submit" class="btn btn-primary btn-sm">"Save Interfaces"</button>
+                                        </div>
+                                    </ActionForm>
+                                    <ErrorToast value=iface_action.value() />
+
+                                    <h4>"WAN Mode"</h4>
+                                    <ActionForm action=wan_action>
+                                        <div class="settings-row">
+                                            <span class="settings-label">"Mode"</span>
+                                            <span class="settings-value">
+                                                <label style="margin-right:1rem">
+                                                    <input type="radio" name="wan_mode" value="dhcp" checked={!is_static} />
+                                                    " DHCP"
+                                                </label>
+                                                <label>
+                                                    <input type="radio" name="wan_mode" value="static" checked={is_static} />
+                                                    " Static"
+                                                </label>
+                                            </span>
+                                        </div>
+                                        <div class="settings-row">
+                                            <span class="settings-label">"Static IP"</span>
+                                            <span class="settings-value">
+                                                <input type="text" name="static_ip" placeholder="192.168.1.2" />
+                                            </span>
+                                        </div>
+                                        <div class="settings-row">
+                                            <span class="settings-label">"Gateway"</span>
+                                            <span class="settings-value">
+                                                <input type="text" name="gateway" placeholder="192.168.1.1" />
+                                            </span>
+                                        </div>
+                                        <div class="settings-row">
+                                            <span class="settings-label">"DNS Server"</span>
+                                            <span class="settings-value">
+                                                <input type="text" name="dns" placeholder="1.1.1.1" />
+                                            </span>
+                                        </div>
+                                        <div class="actions-bar">
+                                            <button type="submit" class="btn btn-primary btn-sm">"Save WAN Config"</button>
+                                        </div>
+                                    </ActionForm>
+                                    <ErrorToast value=wan_action.value() />
+
+                                    <h4>"Hostname"</h4>
+                                    <ActionForm action=hostname_action>
+                                        <div class="settings-row">
+                                            <span class="settings-label">"Router Hostname"</span>
+                                            <span class="settings-value">
+                                                <input type="text" name="hostname" value={hostname} />
+                                            </span>
+                                        </div>
+                                        <div class="actions-bar">
+                                            <button type="submit" class="btn btn-primary btn-sm">"Save"</button>
+                                        </div>
+                                    </ActionForm>
+                                    <ErrorToast value=hostname_action.value() />
+
+                                    <h4>"Timezone"</h4>
+                                    <ActionForm action=tz_action>
+                                        <div class="settings-row">
+                                            <span class="settings-label">"Timezone"</span>
+                                            <span class="settings-value">
+                                                <input type="text" name="timezone" value={timezone} />
+                                            </span>
+                                        </div>
+                                        <div class="actions-bar">
+                                            <button type="submit" class="btn btn-primary btn-sm">"Save"</button>
+                                        </div>
+                                    </ActionForm>
+                                    <ErrorToast value=tz_action.value() />
+
+                                    <h4>"Upstream DNS"</h4>
+                                    <ActionForm action=dns_action>
+                                        <div class="settings-row">
+                                            <span class="settings-label">"Provider"</span>
+                                            <span class="settings-value">
+                                                <select name="upstream_dns">
+                                                    <option value="auto" selected={upstream_select == "auto"}>"Auto (from DHCP)"</option>
+                                                    <option value="cloudflare" selected={upstream_select == "cloudflare"}>"Cloudflare (1.1.1.1)"</option>
+                                                    <option value="google" selected={upstream_select == "google"}>"Google (8.8.8.8)"</option>
+                                                    <option value="quad9" selected={upstream_select == "quad9"}>"Quad9 (9.9.9.9)"</option>
+                                                    <option value="custom" selected={upstream_select == "custom"}>"Custom"</option>
+                                                </select>
+                                            </span>
+                                        </div>
+                                        <div class="settings-row">
+                                            <span class="settings-label">"Custom DNS"</span>
+                                            <span class="settings-value">
+                                                <input type="text" name="custom_dns" placeholder="1.1.1.1,8.8.8.8" value={custom_dns_val} />
+                                            </span>
+                                        </div>
+                                        <div class="actions-bar">
+                                            <button type="submit" class="btn btn-primary btn-sm">"Save"</button>
+                                        </div>
+                                    </ActionForm>
+                                    <ErrorToast value=dns_action.value() />
+                                </div>
+                            }.into_any())
+                        }
+                        (Some(Err(e)), _) | (_, Some(Err(e))) => {
+                            Some(view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any())
+                        }
+                        _ => None,
+                    }
+                }}
+            </Suspense>
+
+            <div class="settings-section">
+                <h3>"Change Password"</h3>
+                <ActionForm action=password_action>
+                    <div class="settings-row">
+                        <span class="settings-label">"Current Password"</span>
+                        <span class="settings-value"><input type="password" name="current_password" required /></span>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">"New Password"</span>
+                        <span class="settings-value"><input type="password" name="new_password" required /></span>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">"Confirm New Password"</span>
+                        <span class="settings-value"><input type="password" name="confirm_password" required /></span>
+                    </div>
+                    <div class="actions-bar">
+                        <button type="submit" class="btn btn-primary btn-sm">"Change Password"</button>
+                    </div>
+                </ActionForm>
+                <ErrorToast value=password_action.value() />
+            </div>
+
             <Suspense fallback=move || view! { <p>"Loading..."</p> }>
                 {move || data.get().map(|result| match result {
                     Ok(status) => {
@@ -386,32 +595,42 @@ pub fn Settings() -> impl IntoView {
                                 let low = counts.get("low").and_then(|v| v.as_i64()).unwrap_or(0);
                                 format!("{} high, {} medium, {} low", high, medium, low)
                             });
-                        let rule_statuses: Vec<(&str, String)> = status.get("rules")
+                        let rule_statuses: Vec<(String, String, String)> = status.get("rules")
                             .and_then(|v| v.as_object())
                             .map(|rule_map| {
                                 let rule_names = [
-                                    ("dns_beaconing", "DNS Beaconing"),
-                                    ("dns_volume_spike", "DNS Volume Spike"),
-                                    ("new_dest_spike", "New Destination Spike"),
-                                    ("suspicious_ports", "Suspicious Ports"),
-                                    ("bandwidth_spike", "Bandwidth Spike"),
+                                    ("DNS Beaconing", "dns_beaconing"),
+                                    ("DNS Volume Spike", "dns_volume_spike"),
+                                    ("New Destination Spike", "new_dest_spike"),
+                                    ("Suspicious Ports", "suspicious_ports"),
+                                    ("Bandwidth Spike", "bandwidth_spike"),
                                 ];
-                                rule_names.iter().map(|(key, label)| {
+                                rule_names.iter().map(|(label, key)| {
                                     let s = rule_map.get(*key)
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("enabled")
                                         .to_string();
-                                    (*label, s)
+                                    (label.to_string(), key.to_string(), s)
                                 }).collect()
                             })
                             .unwrap_or_default();
+
+                        let analyzer_action = ServerAction::<SetAnalyzerEnabled>::new();
 
                         view! {
                             <div class="settings-section">
                                 <h3>"Behavioral Analysis"</h3>
                                 <div class="settings-row">
-                                    <span class="settings-label">"Status"</span>
-                                    <span class="settings-value">{if enabled == "true" { "Enabled" } else { "Disabled" }}</span>
+                                    <span class="settings-label">"Analyzer"</span>
+                                    <span class="settings-value">
+                                        <ActionForm action=analyzer_action attr:style="display:inline">
+                                            <input type="hidden" name="enabled" value={if enabled == "true" { "false" } else { "true" }} />
+                                            <button type="submit" class="btn btn-sm">
+                                                {if enabled == "true" { "Disable" } else { "Enable" }}
+                                            </button>
+                                        </ActionForm>
+                                        <ErrorToast value=analyzer_action.value() />
+                                    </span>
                                 </div>
                                 {if let Some(counts_text) = alert_counts {
                                     view! {
@@ -425,20 +644,26 @@ pub fn Settings() -> impl IntoView {
                                 } else {
                                     view! { <span></span> }.into_any()
                                 }}
-                                {if !rule_statuses.is_empty() {
+                                {rule_statuses.into_iter().map(|(label, key, status)| {
+                                    let rule_action = ServerAction::<SetAlertRule>::new();
+                                    let is_enabled = status == "enabled";
+                                    let toggle_val = if is_enabled { "false" } else { "true" };
                                     view! {
-                                        {rule_statuses.iter().map(|(label, s)| {
-                                            view! {
-                                                <div class="settings-row">
-                                                    <span class="settings-label">{*label}</span>
-                                                    <span class="settings-value">{s.clone()}</span>
-                                                </div>
-                                            }
-                                        }).collect_view()}
-                                    }.into_any()
-                                } else {
-                                    view! { <span></span> }.into_any()
-                                }}
+                                        <div class="settings-row">
+                                            <span class="settings-label">{label}</span>
+                                            <span class="settings-value">
+                                                <ActionForm action=rule_action attr:style="display:inline">
+                                                    <input type="hidden" name="rule" value={key} />
+                                                    <input type="hidden" name="enabled" value={toggle_val} />
+                                                    <button type="submit" class="btn btn-sm">
+                                                        {if is_enabled { "Disable" } else { "Enable" }}
+                                                    </button>
+                                                </ActionForm>
+                                                <ErrorToast value=rule_action.value() />
+                                            </span>
+                                        </div>
+                                    }
+                                }).collect_view()}
                             </div>
                         }.into_any()
                     }
