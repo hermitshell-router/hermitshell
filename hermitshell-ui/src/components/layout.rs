@@ -22,6 +22,7 @@ pub fn Layout(
         ("Port Forwarding", "/port-forwarding"),
         ("Settings", "/settings"),
         ("Audit", "/audit"),
+        ("Logs", "/logs"),
     ];
 
     view! {
