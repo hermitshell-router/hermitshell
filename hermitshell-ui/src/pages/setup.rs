@@ -82,7 +82,8 @@ pub fn SetupStep2() -> impl IntoView {
                                                 <option value="">"-- Select interface --"</option>
                                                 {ifaces.iter().map(|iface| {
                                                     let name = iface.name.clone();
-                                                    let label = format!("{} ({})", iface.name, iface.mac);
+                                                    let carrier = if iface.has_carrier { "\u{1F7E2}" } else { "\u{1F534}" };
+                                                    let label = format!("{} {} ({})", carrier, iface.name, iface.mac);
                                                     view! {
                                                         <option value={name}>
                                                             {label}
@@ -95,7 +96,8 @@ pub fn SetupStep2() -> impl IntoView {
                                                 <option value="">"-- Select interface --"</option>
                                                 {ifaces.iter().map(|iface| {
                                                     let name = iface.name.clone();
-                                                    let label = format!("{} ({})", iface.name, iface.mac);
+                                                    let carrier = if iface.has_carrier { "\u{1F7E2}" } else { "\u{1F534}" };
+                                                    let label = format!("{} {} ({})", carrier, iface.name, iface.mac);
                                                     view! {
                                                         <option value={name}>
                                                             {label}
@@ -346,6 +348,10 @@ pub fn SetupStep8() -> impl IntoView {
                                 let wan_iface = s.get("wan_iface").and_then(|v| v.as_str()).unwrap_or("-").to_string();
                                 let lan_iface = s.get("lan_iface").and_then(|v| v.as_str()).unwrap_or("-").to_string();
                                 let wan_mode = s.get("wan_mode").and_then(|v| v.as_str()).unwrap_or("dhcp").to_string();
+                                let wan_static_ip = s.get("wan_static_ip").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let wan_static_gw = s.get("wan_static_gateway").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let wan_static_dns = s.get("wan_static_dns").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let is_static = wan_mode == "static";
                                 let hostname = s.get("hostname").and_then(|v| v.as_str()).unwrap_or("hermitshell").to_string();
                                 let timezone = s.get("timezone").and_then(|v| v.as_str()).unwrap_or("UTC").to_string();
                                 let upstream_dns = s.get("upstream_dns").and_then(|v| v.as_str()).unwrap_or("auto").to_string();
@@ -373,6 +379,24 @@ pub fn SetupStep8() -> impl IntoView {
                                             <span class="setup-summary-label">"WAN Mode"</span>
                                             <span class="setup-summary-value">{wan_mode.to_uppercase()}</span>
                                         </div>
+                                        {if is_static {
+                                            view! {
+                                                <div class="setup-summary-row">
+                                                    <span class="setup-summary-label">"Static IP"</span>
+                                                    <span class="setup-summary-value">{wan_static_ip}</span>
+                                                </div>
+                                                <div class="setup-summary-row">
+                                                    <span class="setup-summary-label">"Gateway"</span>
+                                                    <span class="setup-summary-value">{wan_static_gw}</span>
+                                                </div>
+                                                <div class="setup-summary-row">
+                                                    <span class="setup-summary-label">"WAN DNS"</span>
+                                                    <span class="setup-summary-value">{wan_static_dns}</span>
+                                                </div>
+                                            }.into_any()
+                                        } else {
+                                            view! {}.into_any()
+                                        }}
                                         <div class="setup-summary-row">
                                             <span class="setup-summary-label">"Hostname"</span>
                                             <span class="setup-summary-value">{hostname}</span>

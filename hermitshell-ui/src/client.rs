@@ -593,13 +593,19 @@ pub fn finalize_setup() -> Result<(), String> {
 }
 
 pub fn is_setup_complete() -> Result<bool, String> {
-    let resp = ok_or_err(send(json!({"method": "get_config", "key": "setup_complete"}))?)?;
-    Ok(resp.config_value.as_deref() == Some("true"))
+    let resp = ok_or_err(send(json!({"method": "get_setup_state"}))?)?;
+    let val: serde_json::Value = resp.config_value.as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or(serde_json::json!({}));
+    Ok(val.get("complete").and_then(|v| v.as_bool()).unwrap_or(false))
 }
 
 pub fn get_setup_step() -> Result<u32, String> {
-    let resp = ok_or_err(send(json!({"method": "get_config", "key": "setup_step"}))?)?;
-    Ok(resp.config_value.and_then(|s| s.parse().ok()).unwrap_or(1))
+    let resp = ok_or_err(send(json!({"method": "get_setup_state"}))?)?;
+    let val: serde_json::Value = resp.config_value.as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or(serde_json::json!({}));
+    Ok(val.get("step").and_then(|v| v.as_u64()).unwrap_or(1) as u32)
 }
 
 pub fn check_update() -> Result<serde_json::Value, String> {

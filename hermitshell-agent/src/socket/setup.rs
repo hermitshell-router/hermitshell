@@ -90,6 +90,7 @@ pub(super) fn handle_set_interfaces(req: &Request, db: &Arc<Mutex<Db>>) -> Respo
     if let Err(e) = db.set_config("lan_iface", lan) {
         return Response::err(&format!("failed to store LAN: {}", e));
     }
+    let _ = db.set_config("setup_step", "2");
     let _ = db.log_audit("set_interfaces", &format!("wan={}, lan={}", wan, lan));
     Response::ok()
 }
@@ -173,6 +174,7 @@ pub(super) fn handle_set_hostname(req: &Request, db: &Arc<Mutex<Db>>) -> Respons
         .args(["set-hostname", &clean])
         .status();
 
+    let _ = db.set_config("setup_step", "4");
     let _ = db.log_audit("set_hostname", &clean);
     Response::ok()
 }
@@ -250,6 +252,16 @@ pub(super) fn handle_setup_set_dns(req: &Request, db: &Arc<Mutex<Db>>, blocky: &
     Response::ok()
 }
 
+pub(super) fn handle_get_setup_state(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let db = db.lock().unwrap();
+    let complete = db.get_config("setup_complete").ok().flatten().as_deref() == Some("true");
+    let step: u32 = db.get_config("setup_step").ok().flatten()
+        .and_then(|s| s.parse().ok()).unwrap_or(1);
+    let mut resp = Response::ok();
+    resp.config_value = Some(serde_json::json!({"complete": complete, "step": step}).to_string());
+    resp
+}
+
 pub(super) fn handle_setup_get_summary(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let db = db.lock().unwrap();
     let wan_iface = db.get_config("wan_iface").ok().flatten().unwrap_or_default();
@@ -260,10 +272,17 @@ pub(super) fn handle_setup_get_summary(_req: &Request, db: &Arc<Mutex<Db>>) -> R
     let upstream_dns = db.get_config("upstream_dns").ok().flatten().unwrap_or_else(|| "auto".to_string());
     let ad_blocking = db.get_config_bool("ad_blocking_enabled", true);
 
+    let wan_static_ip = db.get_config("wan_static_ip").ok().flatten().unwrap_or_default();
+    let wan_static_gateway = db.get_config("wan_static_gateway").ok().flatten().unwrap_or_default();
+    let wan_static_dns = db.get_config("wan_static_dns").ok().flatten().unwrap_or_default();
+
     let summary = serde_json::json!({
         "wan_iface": wan_iface,
         "lan_iface": lan_iface,
         "wan_mode": wan_mode,
+        "wan_static_ip": wan_static_ip,
+        "wan_static_gateway": wan_static_gateway,
+        "wan_static_dns": wan_static_dns,
         "hostname": hostname,
         "timezone": timezone,
         "upstream_dns": upstream_dns,

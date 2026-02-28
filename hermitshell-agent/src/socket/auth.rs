@@ -107,7 +107,10 @@ pub(super) fn handle_setup_password(req: &Request, db: &Arc<Mutex<Db>>, login_ra
     };
     let db = db.lock().unwrap();
     match db.set_config("admin_password_hash", &new_hash) {
-        Ok(()) => Response::ok(),
+        Ok(()) => {
+            let _ = db.set_config("setup_step", "6");
+            Response::ok()
+        }
         Err(e) => Response::err(&e.to_string()),
     }
 }

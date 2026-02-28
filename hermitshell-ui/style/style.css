@@ -467,11 +467,7 @@ select {
 
 /* CSS-only toggle: hide static fields when DHCP is selected */
 .wan-static-fields { display: none; }
-input[name="wan_mode"][value="static"]:checked ~ .wan-static-fields { display: block; }
-
-/* CSS-only toggle: hide custom DNS fields when not selected */
-.dns-custom-fields { display: none; }
-input[name="upstream_dns"][value="custom"]:checked ~ .dns-custom-fields { display: block; }
+.radio-group:has(input[name="wan_mode"][value="static"]:checked) .wan-static-fields { display: block; }
 
 /* Welcome page */
 .setup-welcome {
@@ -502,17 +498,6 @@ input[name="upstream_dns"][value="custom"]:checked ~ .dns-custom-fields { displa
 .setup-summary-row:last-child { border-bottom: none; }
 .setup-summary-label { color: var(--text-secondary); }
 .setup-summary-value { font-weight: 500; }
-
-/* Carrier status dot */
-.carrier-dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    margin-right: 0.25rem;
-}
-.carrier-up { background: var(--success); }
-.carrier-down { background: var(--text-muted); }
 
 /* Skip link for optional steps */
 .setup-skip {

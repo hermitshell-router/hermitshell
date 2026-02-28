@@ -180,16 +180,21 @@ async fn auth_middleware(
 ) -> axum::response::Response {
     let path = req.uri().path().to_string();
 
-    // Always allow: login page, setup pages, CSS, and their server functions
-    if path == "/login" || path.starts_with("/setup") || path == "/style.css"
-        || path.starts_with("/api/login") || path.starts_with("/api/setup_")
-        || path.starts_with("/api/get_interfaces")
-    {
+    // Always allow: login page, CSS
+    if path == "/login" || path == "/style.css" || path.starts_with("/api/login") {
         return next.run(req).await;
     }
 
     let has_password = client::has_password().unwrap_or(false);
+    let setup_complete = client::is_setup_complete().unwrap_or(false);
+    let is_setup_path = path.starts_with("/setup") || path.starts_with("/api/setup_")
+        || path.starts_with("/api/get_interfaces");
+
+    // No password yet: allow setup paths, redirect everything else to wizard
     if !has_password {
+        if is_setup_path {
+            return next.run(req).await;
+        }
         return axum::response::Redirect::to("/setup/1").into_response();
     }
 
@@ -205,12 +210,23 @@ async fn auth_middleware(
         .unwrap_or("")
         .to_string();
 
-    if !client::verify_session(&session).unwrap_or(false) {
+    let authenticated = client::verify_session(&session).unwrap_or(false);
+
+    // Setup complete: block setup paths for unauthenticated users
+    if setup_complete {
+        if is_setup_path && !authenticated {
+            return axum::response::Redirect::to("/login").into_response();
+        }
+    } else if is_setup_path {
+        // Setup incomplete: allow setup paths (password is set but wizard not finished)
+        return next.run(req).await;
+    }
+
+    if !authenticated {
         return axum::response::Redirect::to("/login").into_response();
     }
 
     // If setup not complete, redirect authenticated users to resume wizard
-    let setup_complete = client::is_setup_complete().unwrap_or(true);
     if !setup_complete {
         let step = client::get_setup_step().unwrap_or(7);
         let target = format!("/setup/{}", step);
