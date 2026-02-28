@@ -445,6 +445,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "wifi_set_provider_ca_cert" => wifi::handle_wifi_set_provider_ca_cert(&req, db),
         "wifi_get_clients" => wifi::handle_wifi_get_clients(&req, db),
         "check_update" => config::handle_check_update(&req, db),
+        "setup_wan_config" => setup::handle_setup_wan_config(&req, db),
         "list_interfaces" => setup::handle_list_interfaces(&req, db),
         "set_interfaces" => setup::handle_set_interfaces(&req, db),
         "get_bandwidth_history" => logs::handle_get_bandwidth_history(&req, db),

@@ -93,3 +93,52 @@ pub(super) fn handle_set_interfaces(req: &Request, db: &Arc<Mutex<Db>>) -> Respo
     let _ = db.log_audit("set_interfaces", &format!("wan={}, lan={}", wan, lan));
     Response::ok()
 }
+
+pub(super) fn handle_setup_wan_config(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref mode) = req.value else {
+        return Response::err("value required (wan_mode: dhcp or static)");
+    };
+
+    match mode.as_str() {
+        "dhcp" | "static" => {}
+        _ => return Response::err("wan_mode must be 'dhcp' or 'static'"),
+    }
+
+    let db = db.lock().unwrap();
+    if db.get_config("admin_password_hash").ok().flatten().is_some() {
+        return Response::err("WAN config can only be set during initial setup");
+    }
+
+    if let Err(e) = db.set_config("wan_mode", mode) {
+        return Response::err(&format!("failed to store wan_mode: {}", e));
+    }
+
+    if mode == "static" {
+        // Validate and store static IP fields from key (IP/mask), name (gateway), description (DNS)
+        if let Some(ref ip) = req.key {
+            if ip.parse::<std::net::Ipv4Addr>().is_err() && !ip.contains('/') {
+                return Response::err("invalid static IP address");
+            }
+            let _ = db.set_config("wan_static_ip", ip);
+        }
+        if let Some(ref gw) = req.name {
+            if gw.parse::<std::net::Ipv4Addr>().is_err() {
+                return Response::err("invalid gateway address");
+            }
+            let _ = db.set_config("wan_static_gateway", gw);
+        }
+        if let Some(ref dns) = req.description {
+            // DNS can be comma-separated IPs
+            for part in dns.split(',') {
+                if part.trim().parse::<std::net::Ipv4Addr>().is_err() {
+                    return Response::err(&format!("invalid DNS address: {}", part.trim()));
+                }
+            }
+            let _ = db.set_config("wan_static_dns", dns);
+        }
+    }
+
+    let _ = db.set_config("setup_step", "3");
+    let _ = db.log_audit("setup_wan_config", mode);
+    Response::ok()
+}
