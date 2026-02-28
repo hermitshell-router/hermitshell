@@ -44,6 +44,7 @@ deploy_stop_all || true
 sleep 2
 vm_sudo router "rm -f /run/hermitshell/*.sock" || true
 vm_sudo router "rm -f /var/lib/hermitshell/hermitshell.db" || true
+vm_sudo router "rm -rf /var/lib/hermitshell/unbound && mkdir -p /var/lib/hermitshell/unbound/blocklists" || true
 deploy_start || true
 
 # Deploy dhclient hook so DHCP renewals set the default route via hermitshell router

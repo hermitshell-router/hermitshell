@@ -36,7 +36,7 @@ rustls = "0.23"
 webpki-roots = "0.26"
 rustls-pki-types = "1"
 urlencoding = "2"
-nix = { version = "0.29", features = ["fs", "hostname", "user"] }
+nix = { version = "0.29", features = ["fs", "hostname", "signal", "user"] }
 tempfile = "3"
 zeroize = "1"
 simple-dns = "0.9"

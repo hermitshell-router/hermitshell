@@ -100,7 +100,6 @@ do_install() {
     # Install system dependencies
     apt-get update -qq
     apt-get install -y -qq nftables conntrack wireguard-tools iproute2 curl unbound >/dev/null
-    unbound-control-setup 2>/dev/null || true
 
     # On Ubuntu, install ifupdown (replaces Netplan for interface management)
     . /etc/os-release

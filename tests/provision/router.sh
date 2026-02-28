@@ -82,7 +82,13 @@ apt-get install -y -qq unbound 2>/dev/null || true
 # Stop system unbound — agent manages its own instance
 systemctl stop unbound 2>/dev/null || true
 systemctl disable unbound 2>/dev/null || true
-unbound-control-setup 2>/dev/null || true
+# Allow Unbound to access HermitShell config/data directory via AppArmor
+if [ -d /etc/apparmor.d/local ]; then
+    cat > /etc/apparmor.d/local/usr.sbin.unbound <<APPARMOR
+  /var/lib/hermitshell/unbound/** rw,
+APPARMOR
+    apparmor_parser -r /etc/apparmor.d/usr.sbin.unbound 2>/dev/null || true
+fi
 
 # Run hermitshell-agent as daemon (nohup prevents SIGHUP on session close)
 if [ -f /opt/hermitshell/hermitshell-agent ]; then

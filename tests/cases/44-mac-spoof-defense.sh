@@ -47,9 +47,9 @@ assert_match "$device_info" '"dhcp_fingerprint":"[0-9]' "Device has non-empty DH
 # Store a fake old fingerprint to create a mismatch
 vm_exec router "echo '{\"method\":\"set_config\",\"key\":\"dhcp_fp_$lan_mac\",\"value\":\"99,98,97\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock" >/dev/null
 
-# Trigger analysis cycle
-vm_exec router "echo '{\"method\":\"run_analysis\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock" >/dev/null
-
-# Check alerts for dhcp_fingerprint_change
-alerts=$(vm_exec router "echo '{\"method\":\"list_alerts\",\"rule\":\"dhcp_fingerprint_change\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock")
-assert_match "$alerts" "dhcp_fingerprint_change" "Fingerprint change alert fired"
+# Trigger analysis cycle (retry until rate-limit debounce clears)
+_fp_alert_fired() {
+    vm_exec router "echo '{\"method\":\"run_analysis\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock" >/dev/null 2>&1
+    vm_exec router "echo '{\"method\":\"list_alerts\",\"rule\":\"dhcp_fingerprint_change\"}' | socat - UNIX-CONNECT:/run/hermitshell/agent.sock" | grep -q "dhcp_fingerprint_change"
+}
+wait_for 15 "Fingerprint change alert fired" _fp_alert_fired

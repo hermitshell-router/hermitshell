@@ -545,15 +545,35 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Make the IP list admin-configurable via DB. Provide a built-in default that can be updated via the update checker.
 
-## 96. Unbound runs unsandboxed as root
+## 96. Unbound runs as root (no privilege drop)
 
-**What:** Unbound is spawned as a bare child process via `Command::new("unbound")` with no seccomp, AppArmor, chroot, or user separation. It inherits the agent's root privileges.
+**What:** Unbound is configured with `username: ""` so it does not drop privileges after startup. It inherits the agent's root UID and runs inside the same systemd sandbox (`ProtectSystem=strict`, `PrivateTmp`, restricted `CapabilityBoundingSet`).
 
-**Why:** The agent runs as root for nftables management. Unbound needs to read its config and bind to port 5354. Adding sandboxing was deferred.
+**Why:** The systemd unit restricts capabilities to `CAP_NET_ADMIN`, `CAP_NET_RAW`, `CAP_NET_BIND_SERVICE`. Unbound needs `CAP_SETUID`/`CAP_SETGID`/`CAP_CHOWN` to drop privileges, which are not available. Running as root inside the sandbox avoids permission issues between the agent (writes config) and Unbound (writes logs, query log, trust anchor).
 
-**Risk:** Medium. An Unbound remote code execution vulnerability would grant full root access to the router. Unbound has a strong security track record, but zero-days are possible.
+**Risk:** Low-medium. An Unbound RCE vulnerability would grant the attacker root within the systemd sandbox (restricted file access, no new privileges, limited capabilities). The blast radius is smaller than full root due to `ProtectSystem=strict` and `ReadWritePaths` restrictions.
 
-**Proper fix:** Run Unbound as a dedicated non-root user (`--username unbound`). Apply seccomp or AppArmor profiles. Consider chroot with `chroot: /var/lib/hermitshell/unbound`.
+**Proper fix:** Run Unbound as a dedicated non-root user. Add `CAP_SETUID CAP_SETGID CAP_CHOWN` to the capability bounding set so Unbound can drop privileges. Use a shared group for the config directory.
+
+## 98. DNSSEC trust anchor copied to agent-owned directory
+
+**What:** The agent copies `/var/lib/unbound/root.key` to `/var/lib/hermitshell/unbound/root.key` at config write time. Unbound's `auto-trust-anchor-file` points to the copy, not the system original.
+
+**Why:** Unbound updates the trust anchor by creating temp files (`root.key.<pid>-<seq>-<hash>`) in the same directory. The system copy lives in `/var/lib/unbound/`, owned by the `unbound` user. AppArmor's `owner` qualifier on that path blocks root-owned Unbound from writing there. Copying to the agent's data directory (`/var/lib/hermitshell/unbound/`) sidesteps the AppArmor restriction because the agent's AppArmor local override grants `rw` without the `owner` qualifier.
+
+**Risk:** Low. The trust anchor is public data (IANA root zone KSK). The copy drifts from the system copy over time as Unbound updates it independently, but both copies track the same IANA root key via RFC 5011 automated updates. If the system copy is updated by `unbound-anchor` (e.g., via a package upgrade), the agent's copy is not refreshed until the agent restarts and `write_config()` runs again — but only if the agent's copy is deleted first (the copy is skipped if the file already exists).
+
+**Proper fix:** Run Unbound as the `unbound` user so it can write to `/var/lib/unbound/` natively. This eliminates the copy entirely. Requires `CAP_SETUID`/`CAP_SETGID` in the capability bounding set.
+
+## 99. Unbound control socket disabled; reload via SIGHUP
+
+**What:** The agent sets `control-enable: no` in the Unbound config and reloads Unbound by sending `SIGHUP` to the child process instead of using `unbound-control reload`.
+
+**Why:** `unbound-control` requires a control socket (`/run/unbound.ctl`), which Unbound creates with `chown` to match its configured user. Inside the systemd sandbox, `CAP_CHOWN` is not available, so socket creation fails. SIGHUP achieves the same config reload without any control socket or extra capabilities.
+
+**Risk:** Low. SIGHUP reload is documented Unbound behavior. The tradeoff is that the agent cannot use `unbound-control` for runtime queries (cache stats, cache dump, flush). These features are not currently used. If the child PID is stale (Unbound crashed and was not reaped), the SIGHUP would be sent to a nonexistent or wrong process — but `process_group(0)` isolation and the agent's `Child` handle prevent this.
+
+**Proper fix:** Acceptable as-is. If `unbound-control` features are needed later, add `CAP_CHOWN` to the capability bounding set and re-enable the control socket.
 
 ## 97. Blocklist file permissions not restricted
 

@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error, info};
@@ -89,6 +90,18 @@ impl UnboundManager {
         std::fs::create_dir_all(UNBOUND_CONFIG_DIR)?;
         std::fs::create_dir_all(UNBOUND_BLOCKLIST_DIR)?;
 
+        // Copy the system root trust anchor into our directory so Unbound
+        // can update it at runtime.  The system copy lives in /var/lib/unbound/
+        // which is owned by the `unbound` user.  Because we run Unbound as
+        // root (username: ""), AppArmor's `owner` qualifier blocks writes to
+        // files owned by another UID.
+        let local_root_key = format!("{}/root.key", UNBOUND_CONFIG_DIR);
+        if !std::path::Path::new(&local_root_key).exists() {
+            if let Err(e) = std::fs::copy("/var/lib/unbound/root.key", &local_root_key) {
+                debug!(error = %e, "could not copy system root.key, DNSSEC validation may fail");
+            }
+        }
+
         let cfg = self.generate_config_string(db)?;
         std::fs::write(UNBOUND_CONFIG_PATH, &cfg)?;
         debug!(path = UNBOUND_CONFIG_PATH, "wrote unbound config");
@@ -155,6 +168,10 @@ impl UnboundManager {
         cfg.push_str("    do-ip6: yes\n");
         cfg.push_str("    do-udp: yes\n");
         cfg.push_str("    do-tcp: yes\n");
+        // Skip privilege drop — the agent's systemd unit already sandboxes
+        // with ProtectSystem=strict, PrivateTmp, and restricted capabilities.
+        // Unbound can't call setuid/setgid without CAP_SETUID/CAP_SETGID.
+        cfg.push_str("    username: \"\"\n");
         cfg.push_str("\n");
 
         // Logging
@@ -172,7 +189,10 @@ impl UnboundManager {
         cfg.push_str("    hide-version: yes\n");
         cfg.push_str("    harden-glue: yes\n");
         cfg.push_str("    harden-dnssec-stripped: yes\n");
-        cfg.push_str("    auto-trust-anchor-file: \"/var/lib/hermitshell/unbound/root.key\"\n");
+        cfg.push_str(&format!(
+            "    auto-trust-anchor-file: \"{}/root.key\"\n",
+            UNBOUND_CONFIG_DIR
+        ));
         cfg.push_str("\n");
 
         // Performance
@@ -251,9 +271,11 @@ impl UnboundManager {
         cfg.push_str("\n");
 
         // --- remote-control: block ---
+        // Disabled: the agent reloads via SIGHUP, so no control socket is needed.
+        // Enabling the control socket requires CAP_CHOWN which the systemd sandbox
+        // does not grant.
         cfg.push_str("remote-control:\n");
-        cfg.push_str("    control-enable: yes\n");
-        cfg.push_str("    control-interface: 127.0.0.1\n");
+        cfg.push_str("    control-enable: no\n");
         cfg.push_str("\n");
 
         // --- Forward zones ---
@@ -287,10 +309,18 @@ impl UnboundManager {
         // Kill any existing process
         self.stop();
 
+        // Pre-create the query log so Unbound doesn't need DAC_OVERRIDE
+        // to create it inside the systemd sandbox.
+        let log_path = format!("{}/query.log", UNBOUND_CONFIG_DIR);
+        if !std::path::Path::new(&log_path).exists() {
+            let _ = std::fs::File::create(&log_path);
+        }
+
         let child = Command::new("unbound")
             .args(["-d", "-c", UNBOUND_CONFIG_PATH])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
+            .process_group(0) // own process group so agent signals don't reach it
             .spawn()
             .context("failed to spawn unbound")?;
 
@@ -308,16 +338,21 @@ impl UnboundManager {
     }
 
     pub fn reload(&self) -> Result<()> {
-        let status = Command::new("unbound-control")
-            .args(["-c", UNBOUND_CONFIG_PATH, "reload"])
-            .output()
-            .context("failed to run unbound-control reload")?;
-        if !status.status.success() {
-            let stderr = String::from_utf8_lossy(&status.stderr);
-            bail!("unbound-control reload failed: {}", stderr);
+        if let Some(child) = &self.child {
+            let pid = child.id();
+            // Unbound reloads its config on SIGHUP.  This avoids needing
+            // unbound-control and its control socket (which requires
+            // CAP_CHOWN inside the systemd sandbox).
+            nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid as i32),
+                nix::sys::signal::Signal::SIGHUP,
+            )
+            .context("failed to send SIGHUP to unbound")?;
+            debug!(pid, "sent SIGHUP to unbound for reload");
+            Ok(())
+        } else {
+            bail!("unbound is not running, cannot reload");
         }
-        debug!("unbound-control reload succeeded");
-        Ok(())
     }
 
     pub fn wait_for_ready(&self, timeout_secs: u64) -> bool {

@@ -30,8 +30,6 @@ COPY docker-ctx/${TARGETARCH}/hermitshell-agent /usr/local/bin/
 COPY docker-ctx/${TARGETARCH}/hermitshell-dhcp /usr/local/bin/
 COPY docker-ctx/${TARGETARCH}/hermitshell /usr/local/bin/
 
-RUN unbound-control-setup
-
 # s6 service definitions
 COPY docker/s6/hermitshell-agent /etc/s6-overlay/s6-rc.d/hermitshell-agent
 COPY docker/s6/hermitshell-ui /etc/s6-overlay/s6-rc.d/hermitshell-ui

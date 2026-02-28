@@ -5,6 +5,9 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
+# Unconditional pass (for assertions checked by the caller)
+pass() { echo -e "${GREEN}PASS${NC}: $1"; }
+
 # --- SSH multiplexing setup ---
 # Use raw SSH with ControlMaster instead of vagrant ssh (~0.02s vs ~5s per call)
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
