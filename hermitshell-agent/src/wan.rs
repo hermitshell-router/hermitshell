@@ -17,6 +17,7 @@ const DHCP_CLIENT_PORT: u16 = 68;
 
 /// Represents a WAN lease obtained via DHCP or configured statically.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct WanLease {
     pub ip: Ipv4Addr,
     pub subnet_mask: Ipv4Addr,
@@ -933,7 +934,7 @@ async fn run_dhcp(
             };
 
         let mut cur_gw = gateways.first().copied().unwrap_or(server_ip);
-        let mut cur_dns = dns_servers;
+        let cur_dns = dns_servers;
 
         // --- Apply IP to interface ---
         if let Err(e) = apply_wan_ip(wan_iface, cur_ip, cur_mask, cur_gw) {
@@ -1023,7 +1024,6 @@ async fn run_dhcp(
                     cur_ip = new_ip;
                     cur_mask = new_mask;
                     cur_gw = new_gw;
-                    cur_dns = new_dns;
                     cur_lease_secs = new_lease;
 
                     info!(ip = %cur_ip, lease_secs = cur_lease_secs, "lease renewed, continuing");
