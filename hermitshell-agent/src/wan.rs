@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddrV4, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -306,7 +306,7 @@ fn build_renew(xid: u32, mac: &[u8; 6], client_ip: Ipv4Addr) -> Vec<u8> {
 /// Returns (ip, subnet_mask, gateway, dns_servers, lease_seconds).
 fn parse_lease_from_ack(
     msg: &v4::Message,
-) -> Result<(Ipv4Addr, Ipv4Addr, Vec<Ipv4Addr>, Vec<IpAddr>, u32)> {
+) -> Result<(Ipv4Addr, Ipv4Addr, Vec<Ipv4Addr>, Vec<Ipv4Addr>, u32)> {
     let ip = msg.yiaddr();
     if ip.is_unspecified() {
         bail!("ACK has no yiaddr");
@@ -322,10 +322,8 @@ fn parse_lease_from_ack(
         _ => Vec::new(),
     };
 
-    let dns_servers: Vec<IpAddr> = match msg.opts().get(OptionCode::DomainNameServer) {
-        Some(DhcpOption::DomainNameServer(servers)) => {
-            servers.iter().map(|s| IpAddr::V4(*s)).collect()
-        }
+    let dns_servers: Vec<Ipv4Addr> = match msg.opts().get(OptionCode::DomainNameServer) {
+        Some(DhcpOption::DomainNameServer(servers)) => servers.clone(),
         _ => Vec::new(),
     };
 
@@ -374,7 +372,7 @@ fn apply_wan_ip(iface: &str, ip: Ipv4Addr, mask: Ipv4Addr, gateway: Ipv4Addr) ->
 fn dhcp4_acquire_blocking(
     iface: &str,
     mac: &[u8; 6],
-) -> Result<(Ipv4Addr, Ipv4Addr, Vec<Ipv4Addr>, Vec<IpAddr>, u32, Ipv4Addr)> {
+) -> Result<(Ipv4Addr, Ipv4Addr, Vec<Ipv4Addr>, Vec<Ipv4Addr>, u32, Ipv4Addr)> {
     // Bring interface up
     let _ = Command::new("/usr/sbin/ip")
         .args(["link", "set", iface, "up"])
@@ -383,14 +381,15 @@ fn dhcp4_acquire_blocking(
     let sock = make_dhcp_socket(iface, Ipv4Addr::UNSPECIFIED)?;
     let broadcast_dest = SocketAddrV4::new(Ipv4Addr::BROADCAST, DHCP_SERVER_PORT);
 
-    let xid: u32 = rand::thread_rng().r#gen();
     let mut backoff = Duration::from_secs(2);
     let max_backoff = Duration::from_secs(32);
 
     for attempt in 1u32..=5 {
+        // Fresh xid per DISCOVER attempt
+        let xid: u32 = rand::thread_rng().r#gen();
+
         // --- DISCOVER ---
         let discover = build_discover(xid, mac);
-        sock.set_read_timeout(Some(backoff))?;
 
         if let Err(e) = sock.send_to(&discover, broadcast_dest) {
             warn!(attempt, error = %e, "failed to send DISCOVER");
@@ -400,8 +399,15 @@ fn dhcp4_acquire_blocking(
         info!(attempt, xid, "sent DHCP DISCOVER");
 
         // --- Wait for OFFER ---
+        let offer_deadline = Instant::now() + backoff;
         let mut buf = [0u8; 1500];
         let offer_msg = loop {
+            let remaining = offer_deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                warn!(attempt, "DISCOVER timed out waiting for OFFER");
+                break None;
+            }
+            sock.set_read_timeout(Some(remaining))?;
             let n = match sock.recv(&mut buf) {
                 Ok(n) => n,
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
@@ -448,7 +454,6 @@ fn dhcp4_acquire_blocking(
 
         // --- REQUEST ---
         let request = build_request(xid, mac, offered_ip, server_id);
-        sock.set_read_timeout(Some(Duration::from_secs(5)))?;
 
         if let Err(e) = sock.send_to(&request, broadcast_dest) {
             warn!(error = %e, "failed to send REQUEST");
@@ -458,7 +463,14 @@ fn dhcp4_acquire_blocking(
         info!(xid, "sent DHCP REQUEST");
 
         // --- Wait for ACK/NAK ---
+        let ack_deadline = Instant::now() + Duration::from_secs(5);
         let ack_msg = loop {
+            let remaining = ack_deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                warn!("REQUEST timed out waiting for ACK");
+                break None;
+            }
+            sock.set_read_timeout(Some(remaining))?;
             let n = match sock.recv(&mut buf) {
                 Ok(n) => n,
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
@@ -510,7 +522,7 @@ fn dhcp4_acquire_blocking(
 async fn dhcp4_acquire(
     iface: String,
     mac: [u8; 6],
-) -> Result<(Ipv4Addr, Ipv4Addr, Vec<Ipv4Addr>, Vec<IpAddr>, u32, Ipv4Addr)> {
+) -> Result<(Ipv4Addr, Ipv4Addr, Vec<Ipv4Addr>, Vec<Ipv4Addr>, u32, Ipv4Addr)> {
     tokio::task::spawn_blocking(move || dhcp4_acquire_blocking(&iface, &mac))
         .await
         .context("DHCP acquire task panicked")?
@@ -524,9 +536,8 @@ fn dhcp4_renew_blocking(
     client_ip: Ipv4Addr,
     server_ip: Ipv4Addr,
     broadcast: bool,
-) -> Result<(Ipv4Addr, Ipv4Addr, Vec<Ipv4Addr>, Vec<IpAddr>, u32)> {
+) -> Result<(Ipv4Addr, Ipv4Addr, Vec<Ipv4Addr>, Vec<Ipv4Addr>, u32)> {
     let sock = make_dhcp_socket(iface, client_ip)?;
-    sock.set_read_timeout(Some(Duration::from_secs(10)))?;
 
     let xid: u32 = rand::thread_rng().r#gen();
     let renew_pkt = build_renew(xid, mac, client_ip);
@@ -546,8 +557,14 @@ fn dhcp4_renew_blocking(
         "sent DHCP renewal REQUEST"
     );
 
+    let deadline = Instant::now() + Duration::from_secs(10);
     let mut buf = [0u8; 1500];
     loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            bail!("renewal timed out");
+        }
+        sock.set_read_timeout(Some(remaining))?;
         let n = match sock.recv(&mut buf) {
             Ok(n) => n,
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
@@ -587,7 +604,7 @@ async fn dhcp4_renew_loop(
     server_ip: Ipv4Addr,
     lease_secs: u32,
     lease_start: Instant,
-) -> Result<(Ipv4Addr, Ipv4Addr, Vec<Ipv4Addr>, Vec<IpAddr>, u32)> {
+) -> Result<(Ipv4Addr, Ipv4Addr, Vec<Ipv4Addr>, Vec<Ipv4Addr>, u32)> {
     let lease_dur = Duration::from_secs(lease_secs as u64);
     let t1 = lease_dur / 2; // 50%
     let t2 = lease_dur * 7 / 8; // 87.5%
@@ -663,7 +680,7 @@ async fn run_dhcp(
 
     loop {
         // --- Acquire lease ---
-        let (ip, mask, gateways, dns, lease_secs, server_ip) =
+        let (mut cur_ip, mut cur_mask, gateways, dns_servers, mut cur_lease_secs, server_ip) =
             match dhcp4_acquire(wan_iface.to_string(), mac).await {
                 Ok(result) => result,
                 Err(e) => {
@@ -673,17 +690,11 @@ async fn run_dhcp(
                 }
             };
 
-        let gateway = gateways.first().copied().unwrap_or(server_ip);
-        let dns_v4: Vec<Ipv4Addr> = dns
-            .iter()
-            .filter_map(|a| match a {
-                IpAddr::V4(v4) => Some(*v4),
-                _ => None,
-            })
-            .collect();
+        let mut cur_gw = gateways.first().copied().unwrap_or(server_ip);
+        let mut cur_dns = dns_servers;
 
         // --- Apply IP to interface ---
-        if let Err(e) = apply_wan_ip(wan_iface, ip, mask, gateway) {
+        if let Err(e) = apply_wan_ip(wan_iface, cur_ip, cur_mask, cur_gw) {
             error!(error = %e, "failed to apply WAN IP");
             tokio::time::sleep(Duration::from_secs(10)).await;
             continue;
@@ -693,16 +704,16 @@ async fn run_dhcp(
         let delegated_prefix = dhcp6_pd(wan_iface).await;
 
         // --- Populate shared lease ---
-        let lease_start = Instant::now();
-        let lease_dur = Duration::from_secs(lease_secs as u64);
+        let mut lease_start = Instant::now();
+        let lease_dur = Duration::from_secs(cur_lease_secs as u64);
         {
             let mut guard = lease.lock().unwrap();
             *guard = Some(WanLease {
-                ip,
-                subnet_mask: mask,
-                gateway,
-                dns_servers: dns_v4.clone(),
-                lease_time: lease_secs,
+                ip: cur_ip,
+                subnet_mask: cur_mask,
+                gateway: cur_gw,
+                dns_servers: cur_dns.clone(),
+                lease_time: cur_lease_secs,
                 renew_at: lease_start + lease_dur / 2,
                 rebind_at: lease_start + lease_dur * 7 / 8,
                 delegated_prefix: delegated_prefix.clone(),
@@ -711,78 +722,78 @@ async fn run_dhcp(
         }
 
         info!(
-            ip = %ip,
-            mask = %mask,
-            gateway = %gateway,
-            dns = ?dns_v4,
-            lease_secs,
+            ip = %cur_ip,
+            mask = %cur_mask,
+            gateway = %cur_gw,
+            dns = ?cur_dns,
+            lease_secs = cur_lease_secs,
             prefix = ?delegated_prefix,
             "WAN DHCP lease active"
         );
 
-        // --- Renewal loop ---
-        match dhcp4_renew_loop(
-            wan_iface.to_string(),
-            mac,
-            ip,
-            server_ip,
-            lease_secs,
-            lease_start,
-        )
-        .await
-        {
-            Ok((new_ip, new_mask, new_gws, new_dns, new_lease)) => {
-                let new_gw = new_gws.first().copied().unwrap_or(server_ip);
-                let new_dns_v4: Vec<Ipv4Addr> = new_dns
-                    .iter()
-                    .filter_map(|a| match a {
-                        IpAddr::V4(v4) => Some(*v4),
-                        _ => None,
-                    })
-                    .collect();
+        // --- Renewal loop: keep renewing without full re-acquire ---
+        loop {
+            match dhcp4_renew_loop(
+                wan_iface.to_string(),
+                mac,
+                cur_ip,
+                server_ip,
+                cur_lease_secs,
+                lease_start,
+            )
+            .await
+            {
+                Ok((new_ip, new_mask, new_gws, new_dns, new_lease)) => {
+                    let new_gw = new_gws.first().copied().unwrap_or(server_ip);
 
-                // Reapply if IP changed
-                if new_ip != ip || new_mask != mask || new_gw != gateway {
-                    if let Err(e) = apply_wan_ip(wan_iface, new_ip, new_mask, new_gw) {
-                        error!(error = %e, "failed to apply renewed WAN IP");
+                    // Reapply if IP changed
+                    if new_ip != cur_ip || new_mask != cur_mask || new_gw != cur_gw {
+                        if let Err(e) = apply_wan_ip(wan_iface, new_ip, new_mask, new_gw) {
+                            error!(error = %e, "failed to apply renewed WAN IP");
+                        }
                     }
-                }
 
-                let renew_start = Instant::now();
-                let new_dur = Duration::from_secs(new_lease as u64);
-                {
-                    let mut guard = lease.lock().unwrap();
-                    *guard = Some(WanLease {
-                        ip: new_ip,
-                        subnet_mask: new_mask,
-                        gateway: new_gw,
-                        dns_servers: new_dns_v4,
-                        lease_time: new_lease,
-                        renew_at: renew_start + new_dur / 2,
-                        rebind_at: renew_start + new_dur * 7 / 8,
-                        delegated_prefix: delegated_prefix.clone(),
-                        prefix_valid_lifetime: None,
-                    });
-                }
+                    lease_start = Instant::now();
+                    let new_dur = Duration::from_secs(new_lease as u64);
+                    {
+                        let mut guard = lease.lock().unwrap();
+                        *guard = Some(WanLease {
+                            ip: new_ip,
+                            subnet_mask: new_mask,
+                            gateway: new_gw,
+                            dns_servers: new_dns.clone(),
+                            lease_time: new_lease,
+                            renew_at: lease_start + new_dur / 2,
+                            rebind_at: lease_start + new_dur * 7 / 8,
+                            delegated_prefix: delegated_prefix.clone(),
+                            prefix_valid_lifetime: None,
+                        });
+                    }
 
-                info!(ip = %new_ip, lease_secs = new_lease, "lease renewed, continuing");
-                // After one successful renewal, loop back to another renewal cycle.
-                // For simplicity, we restart the full acquire loop so the next
-                // renewal cycle starts cleanly.
-                continue;
-            }
-            Err(e) => {
-                warn!(error = %e, "renewal failed, lease expired — flushing IP and restarting");
-                // Clear the lease
-                {
-                    let mut guard = lease.lock().unwrap();
-                    *guard = None;
+                    // Update current state for next renewal cycle
+                    cur_ip = new_ip;
+                    cur_mask = new_mask;
+                    cur_gw = new_gw;
+                    cur_dns = new_dns;
+                    cur_lease_secs = new_lease;
+
+                    info!(ip = %cur_ip, lease_secs = cur_lease_secs, "lease renewed, continuing");
+                    // Loop back for another renewal cycle (no re-acquire)
                 }
-                // Flush IP before re-acquiring
-                let _ = Command::new("/usr/sbin/ip")
-                    .args(["addr", "flush", "dev", wan_iface])
-                    .status();
-                tokio::time::sleep(Duration::from_secs(10)).await;
+                Err(e) => {
+                    warn!(error = %e, "renewal failed, lease expired — restarting DORA");
+                    // Clear the lease
+                    {
+                        let mut guard = lease.lock().unwrap();
+                        *guard = None;
+                    }
+                    // Flush IP before re-acquiring
+                    let _ = Command::new("/usr/sbin/ip")
+                        .args(["addr", "flush", "dev", wan_iface])
+                        .status();
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    break; // Break inner loop to re-acquire in outer loop
+                }
             }
         }
     }
