@@ -134,7 +134,7 @@ These are security features. The default is isolation; connectivity is opt-in.
 git clone https://github.com/youruser/hermitshell
 cd hermitshell
 docker compose up -d
-# Open http://router-ip:8080, complete setup via UI
+# Open https://router-ip, complete setup via UI
 ```
 
 ---
@@ -2123,7 +2123,7 @@ sudo ./scripts/install-agent.sh
 docker compose up -d
 
 # Open
-echo "Access at http://$(hostname -I | awk '{print $1}'):8080"
+echo "Access at https://$(hostname -I | awk '{print $1}')"
 ```
 
 ### 9.4 Files
@@ -2154,7 +2154,7 @@ echo "Access at http://$(hostname -I | awk '{print $1}'):8080"
 
 | Setting | Default |
 |---------|---------|
-| Web UI URL | http://IP:8080 |
+| Web UI URL | https://IP |
 | Username | admin |
 | Password | hermitshell |
 | Agent secret | (randomly generated) |
@@ -2253,7 +2253,7 @@ cd hermitshell
 docker compose up -d
 ```
 
-User opens `http://router-ip:8080`:
+User opens `https://router-ip`:
 
 1. **Welcome** - "Let's set up your network"
 2. **Interfaces** - Auto-detect WAN/LAN, confirm or override

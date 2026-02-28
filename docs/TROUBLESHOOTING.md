@@ -2,7 +2,7 @@
 
 ## Web UI won't load
 
-**Symptom:** Browser shows "connection refused" or times out at `https://<IP>:8443`.
+**Symptom:** Browser shows "connection refused" or times out at `https://<IP>`.
 
 1. Check that both services are running:
    ```bash

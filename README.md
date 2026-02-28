@@ -53,7 +53,7 @@ sudo bash install.sh --wan eth0 --lan eth1
 
 ### After Install
 
-Open **https://\<LAN-IP\>:8443** in your browser. You'll see a self-signed certificate warning on first visit — this is expected. The setup wizard walks you through interface selection, LAN configuration, and setting an admin password.
+Open **https://\<LAN-IP\>** in your browser. You'll see a self-signed certificate warning on first visit — this is expected. The setup wizard walks you through interface selection, LAN configuration, and setting an admin password.
 
 ## Features
 

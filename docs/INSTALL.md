@@ -128,7 +128,7 @@ The web UI needs `LEPTOS_OUTPUT_NAME=hermitshell` set in its environment.
 
 ## After Installation
 
-1. Open **https://\<LAN-IP\>:8443** in your browser
+1. Open **https://\<LAN-IP\>** in your browser
 2. Accept the self-signed certificate warning (expected on first visit)
 3. The setup wizard walks you through network configuration and setting an admin password
 4. After setup, the web UI is available at the same address with your admin credentials

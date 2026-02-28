@@ -239,7 +239,7 @@ UNIT
     echo ""
     echo "Tip: For easier upgrades, use the apt repository instead:"
     echo "  https://github.com/hermitshell/hermitshell#install-via-apt"
-    echo "  Web UI: https://10.0.0.1:8443 (self-signed cert)"
+    echo "  Web UI: https://10.0.0.1 (self-signed cert)"
     echo "  Logs:   journalctl -u hermitshell-agent -f"
 }
 
