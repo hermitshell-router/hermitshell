@@ -142,3 +142,63 @@ pub(super) fn handle_setup_wan_config(req: &Request, db: &Arc<Mutex<Db>>) -> Res
     let _ = db.log_audit("setup_wan_config", mode);
     Response::ok()
 }
+
+pub(super) fn handle_set_hostname(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref hostname) = req.value else {
+        return Response::err("value required (hostname)");
+    };
+
+    let clean = hermitshell_common::sanitize_hostname(hostname);
+    if clean.is_empty() || clean.len() > 63 {
+        return Response::err("invalid hostname");
+    }
+
+    let db = db.lock().unwrap();
+    if db.get_config("setup_complete").ok().flatten().as_deref() == Some("true") {
+        return Response::err("hostname can only be set during initial setup");
+    }
+
+    if let Err(e) = db.set_config("router_hostname", &clean) {
+        return Response::err(&format!("failed to store hostname: {}", e));
+    }
+
+    // Apply to system
+    let _ = std::process::Command::new("hostnamectl")
+        .args(["set-hostname", &clean])
+        .status();
+
+    let _ = db.log_audit("set_hostname", &clean);
+    Response::ok()
+}
+
+pub(super) fn handle_set_timezone(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref tz) = req.value else {
+        return Response::err("value required (timezone)");
+    };
+
+    // Validate: must exist in zoneinfo and contain no path traversal
+    if tz.contains("..") || tz.starts_with('/') {
+        return Response::err("invalid timezone");
+    }
+    let tz_path = format!("/usr/share/zoneinfo/{}", tz);
+    if !std::path::Path::new(&tz_path).exists() {
+        return Response::err(&format!("unknown timezone: {}", tz));
+    }
+
+    let db = db.lock().unwrap();
+    if db.get_config("setup_complete").ok().flatten().as_deref() == Some("true") {
+        return Response::err("timezone can only be set during initial setup");
+    }
+
+    if let Err(e) = db.set_config("timezone", tz) {
+        return Response::err(&format!("failed to store timezone: {}", e));
+    }
+
+    // Apply to system
+    let _ = std::process::Command::new("timedatectl")
+        .args(["set-timezone", tz])
+        .status();
+
+    let _ = db.log_audit("set_timezone", tz);
+    Response::ok()
+}
