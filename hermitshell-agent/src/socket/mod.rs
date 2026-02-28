@@ -38,6 +38,8 @@ const BLOCKED_CONFIG_KEYS: &[&str] = &[
     "webhook_secret",
     "update_latest_version",
     "update_installed_version",
+    "setup_complete",
+    "setup_step",
 ];
 
 fn is_blocked_config_key(key: &str) -> bool {

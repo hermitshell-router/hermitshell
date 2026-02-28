@@ -105,7 +105,7 @@ pub(super) fn handle_setup_wan_config(req: &Request, db: &Arc<Mutex<Db>>) -> Res
     }
 
     let db = db.lock().unwrap();
-    if db.get_config("admin_password_hash").ok().flatten().is_some() {
+    if db.get_config("setup_complete").ok().flatten().as_deref() == Some("true") {
         return Response::err("WAN config can only be set during initial setup");
     }
 
@@ -116,7 +116,13 @@ pub(super) fn handle_setup_wan_config(req: &Request, db: &Arc<Mutex<Db>>) -> Res
     if mode == "static" {
         // Validate and store static IP fields from key (IP/mask), name (gateway), description (DNS)
         if let Some(ref ip) = req.key {
-            if ip.parse::<std::net::Ipv4Addr>().is_err() && !ip.contains('/') {
+            let valid = if let Some((addr, prefix)) = ip.split_once('/') {
+                addr.parse::<std::net::Ipv4Addr>().is_ok()
+                    && prefix.parse::<u8>().map(|p| p <= 32).unwrap_or(false)
+            } else {
+                ip.parse::<std::net::Ipv4Addr>().is_ok()
+            };
+            if !valid {
                 return Response::err("invalid static IP address");
             }
             let _ = db.set_config("wan_static_ip", ip);
@@ -130,7 +136,7 @@ pub(super) fn handle_setup_wan_config(req: &Request, db: &Arc<Mutex<Db>>) -> Res
         if let Some(ref dns) = req.description {
             // DNS can be comma-separated IPs
             for part in dns.split(',') {
-                if part.trim().parse::<std::net::Ipv4Addr>().is_err() {
+                if part.trim().parse::<std::net::IpAddr>().is_err() {
                     return Response::err(&format!("invalid DNS address: {}", part.trim()));
                 }
             }
@@ -217,7 +223,7 @@ pub(super) fn handle_setup_set_dns(req: &Request, db: &Arc<Mutex<Db>>, blocky: &
         if dns != "auto" {
             // Validate each IP
             for part in dns.split(',') {
-                if part.trim().parse::<std::net::Ipv4Addr>().is_err() {
+                if part.trim().parse::<std::net::IpAddr>().is_err() {
                     return Response::err(&format!("invalid DNS address: {}", part.trim()));
                 }
             }
