@@ -669,3 +669,27 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Display a confirmation warning in the UI when the new interface assignment differs from the current running config: "Changing interfaces requires an agent restart. You may lose management access if your current connection is on the interface being reassigned. Continue?" Consider a watchdog timer that reverts the change if the admin does not confirm via a second request within 60 seconds (similar to display resolution change dialogs).
 
+---
+
+## NixOS Flake
+
+## 108. NixOS web UI service runs natively without Docker isolation
+
+**What:** The NixOS module runs `hermitshell-ui` as a native systemd service under the `hermitshell` user, not inside a Docker container. The upstream Debian/Ubuntu deployment uses Docker with `--cap-drop ALL --read-only --security-opt no-new-privileges`.
+
+**Why:** NixOS deployments avoid Docker when possible. The NixOS module uses systemd hardening directives that provide equivalent restrictions: `CapabilityBoundingSet = [""]` (no capabilities), `ProtectSystem = "strict"`, `NoNewPrivileges`, `MemoryDenyWriteExecute`, namespace/device/syscall restrictions.
+
+**Risk:** Low. The systemd hardening profile is stricter than Docker's default seccomp in some areas (explicit syscall filter, kernel protection directives) and equivalent in others (capability drop, read-only filesystem). The web UI runs as a non-root user with no capabilities, so a vulnerability would grant limited access within the sandbox.
+
+**Proper fix:** Acceptable as-is. The systemd hardening matches or exceeds the Docker container's security posture.
+
+## 109. NixOS test mode bypasses systemd hardening
+
+**What:** The `nix` deploy mode in `tests/lib/deploy.sh` spawns the agent with bare `setsid` instead of through the NixOS module's systemd unit. The agent runs as root without capability bounding, syscall filters, or filesystem restrictions.
+
+**Why:** Tests need to restart the agent after redeployment without configuring the full NixOS module in the VM. The test provisioner installs packages but does not enable `services.hermitshell`.
+
+**Risk:** Low (test-only). Production NixOS deployments use the module's systemd units with full hardening. The test gap means systemd-level hardening is not exercised in the NixOS test path, but it is tested indirectly via the `direct` and `install` modes on Debian.
+
+**Proper fix:** Acceptable for test infrastructure. If NixOS-specific systemd hardening needs testing, add a test case that enables the module and verifies the service starts with the expected restrictions.
+

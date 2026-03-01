@@ -143,10 +143,27 @@ in
         Group = "hermitshell";
         Restart = "on-failure";
         RestartSec = 5;
+
+        # Hardening (equivalent to Docker --cap-drop ALL --read-only)
         ProtectHome = true;
         ProtectSystem = "strict";
+        ReadWritePaths = [ "/run/hermitshell" ];
         PrivateTmp = true;
         NoNewPrivileges = true;
+        PrivateDevices = true;
+        RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+        RestrictNamespaces = true;
+        LockPersonality = true;
+        MemoryDenyWriteExecute = true;
+        RestrictSUIDSGID = true;
+        ProtectClock = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectKernelLogs = true;
+        ProtectControlGroups = true;
+        RestrictRealtime = true;
+        CapabilityBoundingSet = [ "" ];
+        SystemCallFilter = [ "~@mount" "~@reboot" "~@swap" "~@debug" "~@module" "~@cpu-emulation" ];
       };
     };
   };
