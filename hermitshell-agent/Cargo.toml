@@ -10,7 +10,7 @@ anyhow = "1"
 async-trait = "0.1"
 base64 = "0.22"
 flate2 = "1"
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.38", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 socket2 = { version = "0.6", features = ["all"] }
