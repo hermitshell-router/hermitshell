@@ -5,16 +5,16 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
-anyhow = "1"
-hermitshell-common = { path = "../hermitshell-common" }
-dhcproto = "0.14"
+hermitshell-common = { workspace = true }
+anyhow = { workspace = true }
+dhcproto = { workspace = true }
 ipnet = "2"
-lru = "0.16"
-socket2 = { version = "0.6", features = ["all"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+lru = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+socket2 = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true

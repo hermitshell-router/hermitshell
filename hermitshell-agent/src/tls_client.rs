@@ -128,11 +128,10 @@ pub fn builder_with_ca(ca_cert_pem: Option<&str>) -> Result<reqwest::ClientBuild
 pub fn builder_wifi_native_verified(ca_cert_pem: &str) -> Result<reqwest::ClientBuilder> {
     let cert = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
     Ok(reqwest::Client::builder()
-        .use_native_tls()
-        .add_root_certificate(cert)
-        .tls_built_in_root_certs(false)
-        .danger_accept_invalid_certs(false)
-        .danger_accept_invalid_hostnames(true))
+        .tls_backend_native()
+        .tls_certs_only([cert])
+        .tls_danger_accept_invalid_certs(false)
+        .tls_danger_accept_invalid_hostnames(true))
 }
 
 /// Perform a bare TLS handshake to `ip:port` and extract the server's leaf

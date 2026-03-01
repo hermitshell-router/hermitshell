@@ -5,19 +5,24 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
-hermitshell-common = { path = "../hermitshell-common" }
-anyhow = "1"
+hermitshell-common = { workspace = true }
+anyhow = { workspace = true }
+axum = { workspace = true }
+dhcproto = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+socket2 = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["json"] }
 async-trait = "0.1"
 base64 = "0.22"
 flate2 = "1"
 rusqlite = { version = "0.38", features = ["bundled"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-socket2 = { version = "0.6", features = ["all"] }
 tar = "0.4"
-tokio = { version = "1", features = ["full"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "signal", "sync", "time", "io-util"] }
 argon2 = "0.5"
 hmac = "0.12"
 sha2 = "0.10"
@@ -26,25 +31,19 @@ rand = "0.8"
 aes-gcm = "0.10"
 hkdf = "0.12"
 rcgen = "0.14"
-rustls-pemfile = "2"
 x509-parser = "0.18"
 instant-acme = { version = "0.8", default-features = false, features = ["ring", "hyper-rustls"] }
 md-5 = "0.10"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "native-tls-vendored", "json", "cookies"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "native-tls-vendored", "json", "cookies"] }
 native-tls = { version = "0.2", features = ["vendored"] }
 tokio-native-tls = "0.3"
-rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
-webpki-roots = "1.0"
 rustls-pki-types = "1"
 urlencoding = "2"
 nix = { version = "0.31", features = ["fs", "hostname", "signal", "user"] }
 tempfile = "3"
 zeroize = "1"
 simple-dns = "0.11"
-toml = "0.9"
 uuid = { version = "1", features = ["v4"] }
-axum = "0.8"
-dhcproto = "0.14"
 
 [package.metadata.deb]
 name = "hermitshell"
