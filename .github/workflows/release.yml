@@ -78,7 +78,7 @@ jobs:
         run: cargo deb -p hermitshell-agent --no-build --target ${{ matrix.target }}
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.arch }}
           path: |
@@ -87,7 +87,7 @@ jobs:
 
       - name: Upload SBOM artifacts
         if: matrix.arch == 'x86_64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom
           path: sbom/*.cdx.json
