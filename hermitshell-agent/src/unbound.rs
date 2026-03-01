@@ -548,13 +548,13 @@ pub fn validate_outbound_url(url: &str, allow_http: bool) -> Result<()> {
             .strip_prefix('[')
             .and_then(|s| s.strip_suffix(']'))
             .unwrap_or(host);
-        if let Ok(addr) = bare.parse::<std::net::IpAddr>() {
-            if !crate::qos::is_public_ip(&addr) {
-                bail!(
-                    "URL must not point to a private/loopback/link-local address: {}",
-                    bare
-                );
-            }
+        if let Ok(addr) = bare.parse::<std::net::IpAddr>()
+            && !crate::qos::is_public_ip(&addr)
+        {
+            bail!(
+                "URL must not point to a private/loopback/link-local address: {}",
+                bare
+            );
         }
     }
 

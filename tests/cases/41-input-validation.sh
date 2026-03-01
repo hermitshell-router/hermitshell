@@ -91,7 +91,7 @@ data = {
 req = {'method': 'import_config', 'value': json.dumps(data)}
 print(json.dumps(req))
 ")
-result=$(vm_exec router "echo '$ESCAPED_IMPORT' | socat - $SOCK")
+result=$(vm_exec router "echo '$ESCAPED_IMPORT' | socat -t5 - $SOCK")
 assert_match "$result" '"ok":true' "import_config succeeds (skips invalid AP)"
 
 # Verify good AP was imported but bad AP was not

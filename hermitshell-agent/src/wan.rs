@@ -381,6 +381,15 @@ fn dhcp4_acquire_blocking(
         .args(["link", "set", iface, "up"])
         .status();
 
+    // Disable reverse path filtering on the WAN interface so DHCP OFFER
+    // packets are not dropped before the interface has an IP address.
+    // Kernels with rp_filter=2 (Debian 13+) drop broadcast responses
+    // when no route exists for the source IP.  The effective rp_filter
+    // value is max(all, iface), so both must be set to 0.
+    let _ = std::fs::write("/proc/sys/net/ipv4/conf/all/rp_filter", "0");
+    let rp_path = format!("/proc/sys/net/ipv4/conf/{}/rp_filter", iface);
+    let _ = std::fs::write(&rp_path, "0");
+
     let sock = make_dhcp_socket(iface, Ipv4Addr::UNSPECIFIED)?;
     let broadcast_dest = SocketAddrV4::new(Ipv4Addr::BROADCAST, DHCP_SERVER_PORT);
 

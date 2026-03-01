@@ -205,7 +205,7 @@ assert_contains "$result" '"ok":false' "import rejects future version"
 assert_contains "$result" "newer version" "error mentions newer version"
 
 # --- v1 backward compat ---
-result=$(vm_exec router 'echo "{\"method\":\"import_config\",\"value\":\"{\\\"version\\\":1,\\\"devices\\\":[],\\\"config\\\":{}}\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
+result=$(vm_exec router 'echo "{\"method\":\"import_config\",\"value\":\"{\\\"version\\\":1,\\\"devices\\\":[],\\\"config\\\":{}}\"}" | socat -t5 - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_contains "$result" '"ok":true' "v1 import still works"
 
 # --- Encrypted secrets round-trip ---

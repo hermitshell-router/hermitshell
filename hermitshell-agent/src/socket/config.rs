@@ -912,10 +912,9 @@ pub fn apply_hermit_config(
     // Validate webhook URL (SSRF protection: require HTTPS, reject internal IPs)
     if let Some(ref url) = config.logging.webhook_url
         && !url.is_empty()
+        && let Err(e) = crate::unbound::validate_outbound_url(url, false)
     {
-        if let Err(e) = crate::unbound::validate_outbound_url(url, false) {
-            return Err(format!("invalid webhook_url: {}", e));
-        }
+        return Err(format!("invalid webhook_url: {}", e));
     }
 
     // Count limits
@@ -1203,12 +1202,11 @@ pub(super) fn handle_set_log_config(req: &Request, db: &Arc<Mutex<Db>>) -> Respo
         Err(e) => return Response::err(&format!("invalid JSON: {}", e)),
     };
     // Validate webhook URL before storing (SSRF protection)
-    if let Some(url) = parsed.get("webhook_url").and_then(|v| v.as_str()) {
-        if !url.is_empty() {
-            if let Err(e) = crate::unbound::validate_outbound_url(url, false) {
-                return Response::err(&format!("invalid webhook_url: {}", e));
-            }
-        }
+    if let Some(url) = parsed.get("webhook_url").and_then(|v| v.as_str())
+        && !url.is_empty()
+        && let Err(e) = crate::unbound::validate_outbound_url(url, false)
+    {
+        return Response::err(&format!("invalid webhook_url: {}", e));
     }
 
     let db = db.lock().unwrap();
