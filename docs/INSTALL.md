@@ -106,7 +106,46 @@ sudo nano /etc/default/hermitshell
 sudo systemctl enable --now hermitshell-agent hermitshell-ui
 ```
 
-## Method 5: Static Binaries (Any Linux Distro)
+## Method 5: NixOS Flake
+
+Add HermitShell to your NixOS configuration via a flake:
+
+```nix
+{
+  inputs.hermitshell.url = "github:hermitshell/hermitshell";
+
+  outputs = { self, nixpkgs, hermitshell, ... }: {
+    nixosConfigurations.router = nixpkgs.lib.nixosSystem {
+      modules = [
+        hermitshell.nixosModules.default
+        {
+          services.hermitshell = {
+            enable = true;
+            wanInterface = "enp1s0";
+            lanInterface = "enp2s0";
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
+Replace `enp1s0` and `enp2s0` with your actual interface names.
+
+The module automatically:
+- Installs and configures systemd services for the agent and web UI
+- Sets all binary paths to the nix store
+- Enables IP forwarding and conntrack accounting
+- Creates the `hermitshell` system user
+- Disables the NixOS firewall and nftables module (HermitShell manages nftables directly)
+- Disables the built-in update checker (update via `nix flake update` instead)
+
+**Important:** HermitShell takes full control of nftables, DNS (via Unbound on port 5354), and DHCP on your LAN interface. Make sure no other NixOS services manage these on the same interfaces. In particular, set `networking.interfaces.<lan>.useDHCP = false` and do not enable `services.unbound`, `services.dnsmasq`, or `services.kea` on the LAN interface.
+
+**Upgrades:** `nix flake update` then `nixos-rebuild switch`.
+
+## Method 6: Static Binaries (Any Linux Distro)
 
 Every release includes static musl-linked binaries that run on any Linux distro without runtime dependencies. Download the tarball for your architecture from the [releases page](https://github.com/hermitshell/hermitshell/releases).
 
