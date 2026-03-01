@@ -3,12 +3,14 @@
 # Each distro gets a fresh vagrant destroy/up cycle.
 #
 # Usage:
-#   sudo -E ./sweep.sh                          # all 4 distros, direct mode
-#   sudo -E ./sweep.sh --mode install            # all 4 distros, install mode
+#   sudo -E ./sweep.sh                          # default distros, direct mode
+#   sudo -E ./sweep.sh --mode install            # default distros, install mode
 #   sudo -E ./sweep.sh --distro debian12 debian13 # subset of distros
 cd "$(dirname "$0")"
 
-ALL_DISTROS="debian12 debian13 ubuntu2204 ubuntu2404 nixos"
+# Ubuntu boxes boot but fail to get a DHCP lease on the vagrant-libvirt
+# management network — omitted from default sweep until resolved.
+ALL_DISTROS="debian12 debian13 nixos"
 DISTROS=""
 MODE_ARGS=""
 
@@ -26,7 +28,7 @@ while [ $# -gt 0 ]; do
             shift 2
             ;;
         *)
-            echo "Usage: $0 [--mode docker|install|deb|direct|nix] [--distro debian12 debian13 ubuntu2204 ubuntu2404 nixos]"
+            echo "Usage: $0 [--mode docker|install|deb|direct|nix] [--distro debian12|debian13|ubuntu2204|ubuntu2404|nixos]"
             exit 1
             ;;
     esac
@@ -60,10 +62,11 @@ clean_vagrant() {
         virsh destroy "$vm" 2>/dev/null || true
         virsh undefine "$vm" --remove-all-storage 2>/dev/null || true
     done
-    # Remove vagrant machine state so next 'vagrant up' starts fresh
-    rm -rf .vagrant/machines/*/libvirt/id
-    # Second destroy to clean any remaining vagrant state
-    vagrant destroy -f 2>/dev/null || true
+    # Nuke all vagrant machine state so next 'vagrant up' starts fresh
+    rm -rf .vagrant
+    # Close stale SSH ControlMaster sockets from prior VMs
+    rm -rf /tmp/hermit-ssh-cache
+    rm -f "$HOME/.ssh/sockets/vagrant@"*
 }
 
 SWEEP_START=$SECONDS
