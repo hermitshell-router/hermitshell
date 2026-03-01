@@ -155,9 +155,9 @@ pub fn router(state: AppState) -> Router {
 /// Start the REST API HTTP server on the given port.
 pub async fn start(state: AppState, port: u16) -> anyhow::Result<()> {
     let app = router(state);
-    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    info!(port = port, "REST API server listening");
+    info!(port = port, "REST API server listening on localhost");
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -176,7 +176,7 @@ async fn put_config(
     State(state): State<AppState>,
     Json(config): Json<hermitshell_common::HermitConfig>,
 ) -> Response {
-    match apply_hermit_config(&config, &state.db, &state.portmap, &state.unbound) {
+    match apply_hermit_config(&config, None, &state.db, &state.portmap, &state.unbound) {
         Ok(()) => json_ok(),
         Err(e) => json_error(StatusCode::BAD_REQUEST, &e),
     }
@@ -254,7 +254,7 @@ async fn put_config_section(
             }
         };
 
-    match apply_hermit_config(&merged, &state.db, &state.portmap, &state.unbound) {
+    match apply_hermit_config(&merged, None, &state.db, &state.portmap, &state.unbound) {
         Ok(()) => json_ok(),
         Err(e) => json_error(StatusCode::BAD_REQUEST, &e),
     }

@@ -71,7 +71,7 @@ fn load_config(path: &std::path::Path) -> Result<HermitConfig> {
         .with_context(|| format!("failed to parse TOML config: {}", path.display()))
 }
 
-fn cmd_apply(cli: &Cli, config_path: &std::path::Path, _secrets_path: Option<&std::path::Path>) -> Result<()> {
+fn cmd_apply(cli: &Cli, config_path: &std::path::Path, secrets_path: Option<&std::path::Path>) -> Result<()> {
     let config = load_config(config_path)?;
 
     // Validate
@@ -84,15 +84,39 @@ fn cmd_apply(cli: &Cli, config_path: &std::path::Path, _secrets_path: Option<&st
         std::process::exit(1);
     }
 
+    // Load secrets if the file exists
+    let secrets = if let Some(sp) = secrets_path {
+        if sp.exists() {
+            let content = std::fs::read_to_string(sp)
+                .with_context(|| format!("failed to read secrets file: {}", sp.display()))?;
+            let s = hermitshell_common::HermitSecrets::from_toml(&content)
+                .with_context(|| format!("failed to parse secrets TOML: {}", sp.display()))?;
+            Some(s)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Build the request with optional secrets
     let config_json = config.to_json()?;
-    let req = serde_json::json!({
+    let mut req = serde_json::json!({
         "method": "apply_config",
         "value": config_json,
     });
+    if let Some(ref s) = secrets {
+        let secrets_json = serde_json::to_string(s).context("failed to serialize secrets")?;
+        req["secrets"] = serde_json::Value::String(secrets_json);
+    }
 
     let resp = socket_rpc(&cli.socket, &req)?;
     if resp.get("ok").and_then(|v| v.as_bool()) == Some(true) {
-        println!("Config applied successfully.");
+        if secrets.is_some() {
+            println!("Config and secrets applied successfully.");
+        } else {
+            println!("Config applied successfully.");
+        }
     } else {
         let err = resp.get("error").and_then(|v| v.as_str()).unwrap_or("unknown error");
         eprintln!("Apply failed: {}", err);

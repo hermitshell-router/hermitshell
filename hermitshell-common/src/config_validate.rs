@@ -143,6 +143,12 @@ impl HermitConfig {
     }
 
     fn validate_wireguard(&self, errors: &mut Vec<ValidationError>) {
+        if self.wireguard.listen_port == 0 {
+            errors.push(ValidationError {
+                field: "wireguard.listen_port".into(),
+                message: "listen_port must be > 0".into(),
+            });
+        }
         for (i, peer) in self.wireguard.peers.iter().enumerate() {
             if peer.name.is_empty() || peer.name.len() > 64 {
                 errors.push(ValidationError {
@@ -150,10 +156,10 @@ impl HermitConfig {
                     message: "name must be 1-64 characters".into(),
                 });
             }
-            if peer.public_key.is_empty() {
+            if !is_valid_wg_key(&peer.public_key) {
                 errors.push(ValidationError {
                     field: format!("wireguard.peers[{}].public_key", i),
-                    message: "public_key is required".into(),
+                    message: "public_key must be a valid base64-encoded 32-byte WireGuard key".into(),
                 });
             }
             match peer.device_group.as_str() {
@@ -227,6 +233,15 @@ pub fn is_valid_iface(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 15
         && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_')
+}
+
+/// WireGuard public key validation: base64-encoded 32 bytes (44 chars with padding).
+pub fn is_valid_wg_key(key: &str) -> bool {
+    if key.len() != 44 || !key.ends_with('=') {
+        return false;
+    }
+    // Standard base64 alphabet + padding
+    key.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
 }
 
 /// Basic MAC address validation: XX:XX:XX:XX:XX:XX or XX-XX-XX-XX-XX-XX.
@@ -326,5 +341,33 @@ enabled = false
         let errors = config.validate();
         assert_eq!(errors.len(), 1);
         assert!(errors[0].field == "qos");
+    }
+
+    #[test]
+    fn test_wg_key_validation() {
+        // Valid 32-byte base64-encoded key
+        assert!(is_valid_wg_key("YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="));
+        // Too short
+        assert!(!is_valid_wg_key("dG9vc2hvcnQ="));
+        // No padding
+        assert!(!is_valid_wg_key("YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY"));
+        // Empty
+        assert!(!is_valid_wg_key(""));
+        // Invalid characters
+        assert!(!is_valid_wg_key("YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM!NTY="));
+    }
+
+    #[test]
+    fn test_wg_listen_port_zero() {
+        let config = HermitConfig {
+            wireguard: WireguardConfig {
+                enabled: true,
+                listen_port: 0,
+                peers: vec![],
+            },
+            ..Default::default()
+        };
+        let errors = config.validate();
+        assert!(errors.iter().any(|e| e.field == "wireguard.listen_port"));
     }
 }

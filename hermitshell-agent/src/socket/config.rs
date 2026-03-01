@@ -842,7 +842,12 @@ pub(super) fn handle_apply_config(
         Err(e) => return Response::err(&format!("invalid config JSON: {}", e)),
     };
 
-    match apply_hermit_config(&config, db, portmap, unbound) {
+    // Parse optional secrets
+    let secrets: Option<hermitshell_common::HermitSecrets> = req.secrets.as_ref().and_then(|s| {
+        serde_json::from_str(s).ok()
+    });
+
+    match apply_hermit_config(&config, secrets.as_ref(), db, portmap, unbound) {
         Ok(()) => Response::ok(),
         Err(e) => Response::err(&e),
     }
@@ -850,8 +855,11 @@ pub(super) fn handle_apply_config(
 
 /// Apply a HermitConfig: validate, write to DB, and reconcile all subsystems.
 /// Shared by socket handler and REST API.
+/// If `secrets` is provided, blocked config keys (password hashes, private keys, etc.)
+/// are also written to the DB.
 pub fn apply_hermit_config(
     config: &hermitshell_common::HermitConfig,
+    secrets: Option<&hermitshell_common::HermitSecrets>,
     db: &Arc<Mutex<Db>>,
     portmap: &crate::portmap::SharedRegistry,
     unbound: &Arc<Mutex<UnboundManager>>,
@@ -888,6 +896,42 @@ pub fn apply_hermit_config(
         }
         if crate::nftables::is_gateway_ip(&pf.internal_ip) {
             return Err("port forward cannot target the gateway address".to_string());
+        }
+    }
+    // Validate DNS domains
+    for fz in &config.dns.forward_zones {
+        if crate::unbound::validate_domain(&fz.domain).is_err() {
+            return Err(format!("invalid forward zone domain: {}", fz.domain));
+        }
+    }
+    for cr in &config.dns.custom_records {
+        if crate::unbound::validate_domain(&cr.domain).is_err() {
+            return Err(format!("invalid custom record domain: {}", cr.domain));
+        }
+    }
+    // Validate blocklist URLs
+    for bl in &config.dns.blocklists {
+        match reqwest::Url::parse(&bl.url) {
+            Ok(parsed) if parsed.scheme() == "http" || parsed.scheme() == "https" => {}
+            _ => return Err(format!("invalid blocklist URL: {}", bl.url)),
+        }
+    }
+    // Validate syslog target format (host:port)
+    if let Some(ref target) = config.logging.syslog_target {
+        if !target.is_empty() {
+            let parts: Vec<&str> = target.rsplitn(2, ':').collect();
+            if parts.len() != 2 || parts[0].parse::<u16>().is_err() {
+                return Err(format!("invalid syslog_target (expected host:port): {}", target));
+            }
+        }
+    }
+    // Validate webhook URL
+    if let Some(ref url) = config.logging.webhook_url {
+        if !url.is_empty() {
+            match reqwest::Url::parse(url) {
+                Ok(parsed) if parsed.scheme() == "http" || parsed.scheme() == "https" => {}
+                _ => return Err(format!("invalid webhook_url: {}", url)),
+            }
         }
     }
 
@@ -979,9 +1023,33 @@ pub fn apply_hermit_config(
         let _ = db_guard.add_dns_blocklist(&bl.name, &bl.url, &bl.tag);
     }
 
-    // WireGuard
+    // WireGuard settings
     let _ = db_guard.set_config("wg_enabled", if config.wireguard.enabled { "true" } else { "false" });
     let _ = db_guard.set_config("wg_listen_port", &config.wireguard.listen_port.to_string());
+
+    // WireGuard peers: replace all DB entries with config peers.
+    // Runtime wg0 reconciliation (add_peer/remove_peer calls) is deferred
+    // to the next agent restart, same as import_config.
+    let _ = db_guard.conn_exec("DELETE FROM wg_peers");
+    let (dev_base, dev_max) = nftables::device_range();
+    for peer in &config.wireguard.peers {
+        if let Ok(subnet_id) = db_guard.allocate_subnet_id(dev_max + 1) {
+            let _ = db_guard.insert_wg_peer(&peer.public_key, &peer.name, subnet_id, &peer.device_group);
+            // insert_wg_peer always sets enabled=1; disable if needed
+            if !peer.enabled {
+                let _ = db_guard.set_wg_peer_enabled(&peer.public_key, false);
+            }
+            // Set up nftables rules for the peer's subnet
+            if let Some(info) = subnet::compute_subnet(subnet_id, dev_base, dev_max) {
+                let ipv4 = info.device_ipv4.to_string();
+                let ipv6 = info.device_ipv6_ula.to_string();
+                let _ = nftables::add_device_counter(&ipv4);
+                let _ = nftables::add_device_counter_v6(&ipv6);
+                let _ = nftables::add_device_forward_rule(&ipv4, &peer.device_group);
+                let _ = nftables::add_device_forward_rule_v6(&ipv6, &peer.device_group);
+            }
+        }
+    }
 
     // QoS
     let _ = db_guard.set_config("qos_enabled", if config.qos.enabled { "true" } else { "false" });
@@ -1023,9 +1091,29 @@ pub fn apply_hermit_config(
         let _ = db_guard.set_config("upnp_enabled", if upnp { "true" } else { "false" });
     }
 
+    // Apply secrets if provided (bypasses BLOCKED_CONFIG_KEYS since this is a direct DB write)
+    if let Some(s) = secrets {
+        if let Some(ref v) = s.admin_password_hash { let _ = db_guard.set_config("admin_password_hash", v); }
+        if let Some(ref v) = s.session_secret { let _ = db_guard.set_config("session_secret", v); }
+        if let Some(ref v) = s.wg_private_key { let _ = db_guard.set_config("wg_private_key", v); }
+        if let Some(ref tls) = s.tls {
+            if let Some(ref v) = tls.key_pem { let _ = db_guard.set_config("tls_key_pem", v); }
+            if let Some(ref v) = tls.cert_pem { let _ = db_guard.set_config("tls_cert_pem", v); }
+            if let Some(ref v) = tls.acme_cf_api_token { let _ = db_guard.set_config("acme_cf_api_token", v); }
+            if let Some(ref v) = tls.acme_account_key { let _ = db_guard.set_config("acme_account_key", v); }
+        }
+        if let Some(ref integ) = s.integrations {
+            if let Some(ref v) = integ.runzero_token { let _ = db_guard.set_config("runzero_token", v); }
+        }
+    }
+
     // Audit log
-    let _ = db_guard.log_audit("config_apply", &format!("devices={} port_forwards={} peers={}",
-        config.devices.len(), config.firewall.port_forwards.len(), config.wireguard.peers.len()));
+    let peer_names: Vec<&str> = config.wireguard.peers.iter().map(|p| p.name.as_str()).collect();
+    let has_secrets = secrets.is_some();
+    let _ = db_guard.log_audit("config_apply", &format!(
+        "devices={} port_forwards={} peers={} peer_names=[{}] secrets={}",
+        config.devices.len(), config.firewall.port_forwards.len(), config.wireguard.peers.len(),
+        peer_names.join(", "), has_secrets));
 
     // Collect data needed for reconciliation before dropping the lock
     let qos_enabled = config.qos.enabled;

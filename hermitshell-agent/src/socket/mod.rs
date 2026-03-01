@@ -198,6 +198,7 @@ struct Request {
     provider_id: Option<String>,
     site: Option<String>,
     api_key: Option<String>,
+    secrets: Option<String>,
 }
 
 /// JSON response envelope. `ok` indicates success; `error` carries failure details.
