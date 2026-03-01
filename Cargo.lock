@@ -1264,7 +1264,7 @@ dependencies = [
  "native-tls",
  "nix",
  "rand 0.8.5",
- "rcgen 0.13.2",
+ "rcgen",
  "reqwest",
  "rusqlite",
  "rustls",
@@ -1665,7 +1665,7 @@ dependencies = [
  "hyper",
  "hyper-rustls",
  "hyper-util",
- "rcgen 0.14.7",
+ "rcgen",
  "ring",
  "rustls",
  "rustls-pki-types",
@@ -2762,19 +2762,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
 dependencies = [
  "getrandom 0.3.4",
-]
-
-[[package]]
-name = "rcgen"
-version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75e669e5202259b5314d1ea5397316ad400819437857b90861765f24c4cf80a2"
-dependencies = [
- "pem",
- "ring",
- "rustls-pki-types",
- "time",
- "yasna",
 ]
 
 [[package]]

@@ -25,7 +25,7 @@ hex = "0.4"
 rand = "0.8"
 aes-gcm = "0.10"
 hkdf = "0.12"
-rcgen = "0.13"
+rcgen = "0.14"
 rustls-pemfile = "2"
 x509-parser = "0.16"
 instant-acme = { version = "0.8", default-features = false, features = ["ring", "hyper-rustls"] }
