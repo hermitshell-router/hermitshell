@@ -34,7 +34,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 native-tls = { version = "0.2", features = ["vendored"] }
 tokio-native-tls = "0.3"
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
-webpki-roots = "0.26"
+webpki-roots = "1.0"
 rustls-pki-types = "1"
 urlencoding = "2"
 nix = { version = "0.31", features = ["fs", "hostname", "signal", "user"] }
