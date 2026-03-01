@@ -30,7 +30,8 @@ rule_blocked() {
 }
 wait_for 10 "Custom rule applied" rule_blocked
 
-blocked=$(vm_exec router "dig +short +time=1 +tries=1 @10.0.0.1 ads.test.hermitshell" || echo "")
+blocked=$(vm_exec router "dig +short +time=2 +tries=2 @10.0.0.1 ads.test.hermitshell" || echo "")
+[ -z "$blocked" ] && blocked=$(vm_exec router "dig +short +time=2 +tries=2 @10.0.0.1 ads.test.hermitshell" || echo "")
 assert_match "$blocked" "0\.0\.0\.0" "Custom rule domain resolves to 0.0.0.0"
 
 # Toggle ad blocking off via API

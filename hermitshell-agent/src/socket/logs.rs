@@ -138,7 +138,7 @@ pub(super) fn handle_ingest_dns_logs(_req: &Request, db: &Arc<Mutex<Db>>, log_tx
         }
     *last = Some(std::time::Instant::now());
     drop(last);
-    crate::dns_log::ingest_once(db, log_tx);
+    crate::dns_log::ingest_once(db, log_tx, true);
     Response::ok()
 }
 

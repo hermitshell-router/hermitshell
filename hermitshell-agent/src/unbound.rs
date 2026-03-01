@@ -168,7 +168,10 @@ impl UnboundManager {
         // --- server: block ---
         cfg.push_str("server:\n");
         cfg.push_str(&format!("    interface: 0.0.0.0@{}\n", self.listen_port));
-        cfg.push_str(&format!("    interface: ::0@{}\n", self.listen_port));
+        let ipv6_ok = std::path::Path::new("/proc/net/if_inet6").exists();
+        if ipv6_ok {
+            cfg.push_str(&format!("    interface: ::0@{}\n", self.listen_port));
+        }
 
         // Restrict queries to loopback, LAN subnet, and ULA — defense in
         // depth behind nftables which also blocks WAN→53/5354.

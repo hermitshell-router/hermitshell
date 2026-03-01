@@ -305,7 +305,7 @@ pub(super) fn handle_set_tls_mode(req: &Request, db: &Arc<Mutex<Db>>) -> Respons
             match rcgen::generate_simple_self_signed(sans) {
                 Ok(cert) => {
                     let _ = db.set_config("tls_cert_pem", &cert.cert.pem());
-                    let _ = db.set_config("tls_key_pem", &cert.key_pair.serialize_pem());
+                    let _ = db.set_config("tls_key_pem", &cert.signing_key.serialize_pem());
                     let _ = db.set_config("tls_mode", "self_signed");
                     info!(mode = "self_signed", "TLS mode changed, cert regenerated");
                     Response::ok()

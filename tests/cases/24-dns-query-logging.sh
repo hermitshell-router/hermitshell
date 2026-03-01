@@ -12,12 +12,15 @@ assert_match "$device_ip" "10\." "LAN device has 10.x IP"
 # Make a specific DNS query we can identify in logs
 vm_exec lan "dig +short dns-log-test.example.com @10.0.0.1 2>/dev/null" || true
 
-# Trigger immediate DNS log ingest instead of waiting for 30s cycle
-vm_exec router 'echo "{\"method\":\"ingest_dns_logs\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' > /dev/null
+# Flush unbound's buffered log output (1.19+ buffers writes) and trigger ingest.
+# ingest_dns_logs requires root (admin-only method) and sends SIGHUP internally.
+sleep 1
+vm_sudo router 'echo "{\"method\":\"ingest_dns_logs\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' > /dev/null
 dns_logged() {
+    vm_sudo router 'echo "{\"method\":\"ingest_dns_logs\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' > /dev/null 2>&1
     vm_exec router 'echo "{\"method\":\"list_dns_logs\",\"limit\":100}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' | grep -q 'dns-log-test'
 }
-wait_for 10 "DNS query logged in database" dns_logged
+wait_for 15 "DNS query logged in database" dns_logged
 
 # Query DNS logs (unfiltered)
 result=$(vm_exec router 'echo "{\"method\":\"list_dns_logs\",\"limit\":100}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')

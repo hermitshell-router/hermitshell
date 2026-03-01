@@ -2,8 +2,8 @@
 DISTRO_BOXES = {
   "debian12"    => "generic/debian12",
   "debian13"    => "debian/trixie64",
-  "ubuntu2204"  => "generic/ubuntu2204",     # boots but no mgmt DHCP lease
-  "ubuntu2404"  => "bento/ubuntu-24.04",     # boots but no mgmt DHCP lease
+  "ubuntu2204"  => "generic/ubuntu2204",
+  "ubuntu2404"  => "cloud-image/ubuntu-24.04",
   "nixos"       => "nixbox/nixos",
 }
 
@@ -12,6 +12,7 @@ router_box = DISTRO_BOXES.fetch(distro) {
   abort "Unknown distro '#{distro}'. Valid: #{DISTRO_BOXES.keys.join(', ')}"
 }
 is_nixos = (distro == 'nixos')
+is_ubuntu = distro.start_with?('ubuntu')
 
 Vagrant.configure("2") do |config|
   config.vm.provider :libvirt do |libvirt|
@@ -39,6 +40,15 @@ Vagrant.configure("2") do |config|
       lv.driver = "kvm"
     end
     router.vm.synced_folder ".", "/vagrant", disabled: true
+    if is_ubuntu
+      # Ubuntu 22.04+ initrd decompression OOMs with 512MB.
+      # systemd-networkd-wait-online blocks ~120s on extra NICs;
+      # increase boot_timeout so vagrant doesn't give up.
+      router.vm.provider :libvirt do |lv|
+        lv.memory = 1024
+      end
+      router.vm.boot_timeout = 300
+    end
     if is_nixos
       # NixOS /etc/fstab is a symlink to the read-only nix store.
       # Vagrant 2.4.7+ tries to append to it and fails.

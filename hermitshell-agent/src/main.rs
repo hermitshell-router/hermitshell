@@ -471,7 +471,7 @@ async fn main() -> Result<()> {
             match rcgen::generate_simple_self_signed(subject_alt_names) {
                 Ok(cert) => {
                     let cert_pem = cert.cert.pem();
-                    let key_pem = cert.key_pair.serialize_pem();
+                    let key_pem = cert.signing_key.serialize_pem();
                     let _ = db_guard.set_config("tls_cert_pem", &cert_pem);
                     let _ = db_guard.set_config("tls_key_pem", &key_pem);
                     info!("self-signed TLS certificate generated");
