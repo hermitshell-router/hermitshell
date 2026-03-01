@@ -4,6 +4,29 @@
 
 HERMIT_MODE="${HERMIT_MODE:-direct}"
 
+# Resolve nix-store binary paths on the NixOS router VM.
+# Called once, results cached in _NIX_PATHS_RESOLVED.
+# NixOS SSH sessions have a minimal PATH that excludes /run/current-system/sw/bin,
+# so we prepend it explicitly.
+_NIX_PATHS_RESOLVED=""
+_resolve_nix_paths() {
+    if [ -n "$_NIX_PATHS_RESOLVED" ]; then return; fi
+    local nix_which="PATH=/run/current-system/sw/bin:\$PATH which"
+    _NIX_NFT=$(vm_exec router "$nix_which nft")
+    _NIX_IP=$(vm_exec router "$nix_which ip")
+    _NIX_WG=$(vm_exec router "$nix_which wg")
+    _NIX_TC=$(vm_exec router "$nix_which tc")
+    _NIX_MODPROBE=$(vm_exec router "$nix_which modprobe")
+    _NIX_CONNTRACK=$(vm_exec router "$nix_which conntrack")
+    _NIX_PATHS_RESOLVED=1
+}
+
+# Build the env var string for launching the agent on NixOS
+_nix_agent_env() {
+    _resolve_nix_paths
+    echo "WAN_IFACE=eth1 LAN_IFACE=eth2 HERMITSHELL_NFT_PATH=$_NIX_NFT HERMITSHELL_IP_PATH=$_NIX_IP HERMITSHELL_WG_PATH=$_NIX_WG HERMITSHELL_TC_PATH=$_NIX_TC HERMITSHELL_MODPROBE_PATH=$_NIX_MODPROBE HERMITSHELL_CONNTRACK_PATH=$_NIX_CONNTRACK"
+}
+
 # Build artifacts on the host
 deploy_build() {
     (cd "$TESTS_DIR/.." && bash scripts/build-agent.sh)
@@ -17,7 +40,35 @@ deploy_build() {
 
 # Rsync to router VM
 deploy_send() {
-    (cd "$TESTS_DIR" && vagrant rsync router)
+    if [ "$HERMIT_MODE" = "nix" ]; then
+        # NixOS has read-only /etc so 'vagrant rsync' fails (writes to /etc/fstab).
+        # Use raw rsync via SSH instead.
+        _deploy_rsync_nix "$TESTS_DIR/../target/release/" "/opt/hermitshell/"
+        _deploy_rsync_nix "$TESTS_DIR/../" "/hermitshell-src/" \
+            --exclude target/ --exclude .git/ --exclude tests/.vagrant/ \
+            --exclude docker-ctx/ --exclude .worktrees/
+    else
+        (cd "$TESTS_DIR" && vagrant rsync router)
+    fi
+}
+
+# Rsync a local path to the NixOS router via SSH.
+# Usage: _deploy_rsync_nix <local_path> <remote_path> [extra rsync args...]
+_deploy_rsync_nix() {
+    local src="$1" dest="$2"
+    shift 2
+    local args
+    args=$(_vm_ssh_args router)
+    # Parse ssh args: "-i /key -p PORT user@host"
+    local key port userhost
+    key=$(echo "$args" | grep -oP '(?<=-i )\S+')
+    port=$(echo "$args" | grep -oP '(?<=-p )\S+')
+    userhost=$(echo "$args" | grep -oP '\S+@\S+$')
+    vm_sudo router "mkdir -p $dest && chown vagrant:vagrant $dest"
+    rsync -az --delete \
+        -e "ssh $SSH_COMMON -i $key -p $port" \
+        "$@" \
+        "$src" "${userhost}:${dest}"
 }
 
 # Stop all hermitshell processes/containers
@@ -64,6 +115,12 @@ deploy_start() {
             vm_sudo router "rm -f /run/hermitshell/*.sock && cp /opt/hermitshell/hermitshell-agent.service /etc/systemd/system/ && systemctl daemon-reload && systemctl restart hermitshell-agent"
             vm_sudo router "if [ -f /opt/hermitshell/hermitshell-container.tar ]; then docker load -i /opt/hermitshell/hermitshell-container.tar; docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --restart unless-stopped --network host --read-only --cap-drop ALL --security-opt no-new-privileges -v /run/hermitshell:/run/hermitshell hermitshell:latest; fi"
             ;;
+        nix)
+            local env
+            env=$(_nix_agent_env)
+            vm_sudo router "rm -f /run/hermitshell/*.sock && $env setsid /opt/hermitshell/hermitshell-agent > /var/log/hermitshell-agent.log 2>&1 &"
+            vm_sudo router "if [ -f /opt/hermitshell/hermitshell-container.tar ]; then docker load -i /opt/hermitshell/hermitshell-container.tar; docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --restart unless-stopped --network host --read-only --cap-drop ALL --security-opt no-new-privileges -v /run/hermitshell:/run/hermitshell hermitshell:latest; fi"
+            ;;
     esac
 }
 
@@ -73,7 +130,7 @@ deploy_stop_agent() {
         docker)
             vm_sudo router "docker stop hermitshell-aio"
             ;;
-        install|direct|deb)
+        install|direct|deb|nix)
             vm_sudo router "systemctl stop hermitshell-agent 2>/dev/null; pkill -f hermitshell-agent 2>/dev/null; pkill -f hermitshell-dhcp 2>/dev/null; pkill unbound 2>/dev/null; true"
             ;;
     esac
@@ -99,6 +156,11 @@ deploy_start_agent() {
         direct)
             vm_sudo router "rm -f /run/hermitshell/*.sock && systemctl restart hermitshell-agent"
             ;;
+        nix)
+            local env
+            env=$(_nix_agent_env)
+            vm_sudo router "rm -f /run/hermitshell/*.sock && $env setsid /opt/hermitshell/hermitshell-agent > /var/log/hermitshell-agent.log 2>&1 &"
+            ;;
     esac
 }
 
@@ -111,7 +173,7 @@ deploy_agent_dead() {
             state=$(vm_exec router "docker inspect -f '{{.State.Running}}' hermitshell-aio 2>/dev/null" 2>/dev/null || echo "false")
             [ "$state" != "true" ]
             ;;
-        install|direct|deb)
+        install|direct|deb|nix)
             ! vm_exec router "pgrep -f hermitshell-agent" 2>/dev/null | grep -q '[0-9]'
             ;;
     esac
@@ -123,7 +185,7 @@ deploy_check_dns_running() {
         docker)
             vm_exec router "docker exec hermitshell-aio pgrep unbound" 2>/dev/null | grep -q '[0-9]'
             ;;
-        install|direct|deb)
+        install|direct|deb|nix)
             vm_exec router "pgrep unbound" 2>/dev/null | grep -q '[0-9]'
             ;;
     esac
@@ -134,7 +196,7 @@ deploy_check_dhcp_running() {
         docker)
             vm_exec router "docker exec hermitshell-aio pgrep -x hermitshell-dhc" 2>/dev/null | grep -q '[0-9]'
             ;;
-        install|direct|deb)
+        install|direct|deb|nix)
             vm_exec router "pgrep -x hermitshell-dhc" 2>/dev/null | grep -q '[0-9]'
             ;;
     esac
@@ -149,7 +211,7 @@ deploy_restart_webui() {
         install|deb)
             vm_sudo router "systemctl restart hermitshell-ui"
             ;;
-        direct)
+        direct|nix)
             vm_sudo router "docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --restart unless-stopped --network host --read-only --cap-drop ALL --security-opt no-new-privileges -v /run/hermitshell:/run/hermitshell hermitshell:latest"
             ;;
     esac
@@ -169,6 +231,9 @@ deploy_get_agent_log() {
             ;;
         install|direct|deb)
             vm_sudo router "journalctl -u hermitshell-agent --no-pager -n 500"
+            ;;
+        nix)
+            vm_sudo router "tail -500 /var/log/hermitshell-agent.log 2>/dev/null || true"
             ;;
     esac
 }

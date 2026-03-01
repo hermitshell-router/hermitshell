@@ -9,9 +9,13 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --mode) HERMIT_MODE="$2"; shift 2 ;;
         --distro) HERMIT_DISTRO="$2"; shift 2 ;;
-        *) echo "Usage: $0 [--mode docker|install|deb|direct] [--distro debian12|ubuntu2404]"; exit 1 ;;
+        *) echo "Usage: $0 [--mode docker|install|deb|direct|nix] [--distro debian12|debian13|ubuntu2204|ubuntu2404|nixos]"; exit 1 ;;
     esac
 done
+# NixOS defaults to nix deploy mode
+if [ "$HERMIT_DISTRO" = "nixos" ] && [ "$HERMIT_MODE" = "direct" ]; then
+    HERMIT_MODE="nix"
+fi
 export HERMIT_MODE
 export HERMIT_DISTRO
 
@@ -228,6 +232,10 @@ run_phase "session-ttl" \
 
 run_phase "csrf" \
     "cases/32-csrf-protection.sh"
+
+# NixOS-specific: flake validation (skips automatically on non-NixOS)
+run_phase "nix" \
+    "cases/52-nix-flake.sh"
 
 test_time=$((SECONDS - test_start_time))
 

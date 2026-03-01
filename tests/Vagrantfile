@@ -1,15 +1,17 @@
 # -*- mode: ruby -*-
 DISTRO_BOXES = {
   "debian12"    => "generic/debian12",
+  "debian13"    => "debian/trixie64",
+  "ubuntu2204"  => "generic/ubuntu2204",
   "ubuntu2404"  => "bento/ubuntu-24.04",
-  # ubuntu2204 boxes don't boot under qemu emulation (no KVM);
-  # install.sh still supports 22.04 on real hardware
+  "nixos"       => "nixbox/nixos",
 }
 
 distro = ENV['HERMIT_DISTRO'] || 'debian12'
 router_box = DISTRO_BOXES.fetch(distro) {
   abort "Unknown distro '#{distro}'. Valid: #{DISTRO_BOXES.keys.join(', ')}"
 }
+is_nixos = (distro == 'nixos')
 
 Vagrant.configure("2") do |config|
   config.vm.provider :libvirt do |libvirt|
@@ -32,8 +34,30 @@ Vagrant.configure("2") do |config|
   # Router VM - runs HermitShell (distro-selectable)
   config.vm.define "router" do |router|
     router.vm.box = router_box
-    router.vm.hostname = "router"
-    router.vm.synced_folder "../target/release", "/opt/hermitshell", type: "rsync", create: true
+    router.vm.hostname = "router" unless is_nixos
+    router.vm.provider :libvirt do |lv|
+      lv.driver = "kvm"
+    end
+    router.vm.synced_folder ".", "/vagrant", disabled: true
+    if is_nixos
+      # NixOS /etc/fstab is a symlink to the read-only nix store.
+      # Vagrant 2.4.7+ tries to append to it and fails.
+      # See: https://github.com/hashicorp/vagrant/issues/13688
+      router.vm.allow_fstab_modification = false
+      # Keep insecure key — NixOS read-only /etc breaks key insertion
+      router.ssh.insert_key = false
+      # nixos-rebuild downloads packages (~10 min)
+      router.vm.boot_timeout = 900
+      router.ssh.keep_alive = true
+      # Disable synced folders — deploy_send() rsyncs via SSH instead.
+      router.vm.synced_folder "../target/release", "/opt/hermitshell", disabled: true
+      router.vm.provider :libvirt do |lv|
+        lv.memory = 4096
+        lv.cpus = 2
+      end
+    else
+      router.vm.synced_folder "../target/release", "/opt/hermitshell", type: "rsync", create: true
+    end
     # WAN interface
     router.vm.network :private_network,
       libvirt__network_name: "hermit-wan",
@@ -46,7 +70,18 @@ Vagrant.configure("2") do |config|
       libvirt__dhcp_enabled: false,
       libvirt__forward_mode: "none",
       auto_config: false
-    router.vm.provision "shell", path: "provision/router.sh"
+    if is_nixos
+      # Phase 1: nixos-rebuild boot (installs packages, stages config for reboot)
+      router.vm.provision "nixos-configure", type: "shell",
+        path: "provision/router-nixos.sh",
+        upload_path: "/tmp/vagrant-nixos-provision.sh"
+      # Phase 2: start agent (runs after reboot via run.sh calling vagrant provision)
+      router.vm.provision "nixos-agent", type: "shell", run: "never",
+        path: "provision/router-nixos-agent.sh",
+        upload_path: "/tmp/vagrant-nixos-agent.sh"
+    else
+      router.vm.provision "shell", path: "provision/router.sh"
+    end
   end
 
   # LAN VM - test client (always Debian 12)
