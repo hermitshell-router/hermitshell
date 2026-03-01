@@ -522,6 +522,45 @@ pub fn validate_domain(domain: &str) -> Result<()> {
     Ok(())
 }
 
+/// Validate that a URL is safe for outbound requests (anti-SSRF).
+///
+/// Checks:
+/// - Scheme must be HTTPS (unless `allow_http` is true)
+/// - If the host is an IP literal, it must not be a private/loopback/link-local address
+/// - Hostnames are allowed (DNS rebinding is a separate concern)
+///
+/// Returns `Ok(())` if the URL passes validation.
+pub fn validate_outbound_url(url: &str, allow_http: bool) -> Result<()> {
+    let parsed = reqwest::Url::parse(url).context("invalid URL")?;
+
+    // Scheme check
+    match parsed.scheme() {
+        "https" => {}
+        "http" if allow_http => {}
+        "http" => bail!("URL must use HTTPS"),
+        other => bail!("unsupported URL scheme: {}", other),
+    }
+
+    // If the host is an IP literal, reject private/internal ranges.
+    // host_str() keeps brackets for IPv6 (e.g., "[::1]"), so strip them.
+    if let Some(host) = parsed.host_str() {
+        let bare = host
+            .strip_prefix('[')
+            .and_then(|s| s.strip_suffix(']'))
+            .unwrap_or(host);
+        if let Ok(addr) = bare.parse::<std::net::IpAddr>() {
+            if !crate::qos::is_public_ip(&addr) {
+                bail!(
+                    "URL must not point to a private/loopback/link-local address: {}",
+                    bare
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Download a hosts-format blocklist and convert to Unbound local-zone config.
 fn download_and_convert_blocklist(url: &str, tag: &str) -> Result<String> {
     let body = http_download(url).context("blocklist download failed")?;
@@ -553,6 +592,10 @@ fn convert_blocklist_body(body: &str, tag: &str) -> String {
         }
         // Basic sanity: skip lines that don't look like domains
         if !domain.contains('.') {
+            continue;
+        }
+        // Validate domain to prevent config injection via malicious blocklists
+        if validate_domain(domain).is_err() {
             continue;
         }
         out.push_str(&format!("local-zone: \"{}\" always_refuse\n", domain));
@@ -1028,5 +1071,70 @@ mod tests {
         assert!(config.contains("access-control: fd00::/8 allow"));
         // Must NOT have the old wide-open allow
         assert!(!config.contains("access-control: 0.0.0.0/0 allow"));
+    }
+
+    // --- validate_outbound_url tests (SSRF protection) ---
+
+    #[test]
+    fn test_validate_outbound_url_https_ok() {
+        assert!(validate_outbound_url("https://example.com/blocklist.txt", false).is_ok());
+    }
+
+    #[test]
+    fn test_validate_outbound_url_http_rejected_by_default() {
+        assert!(validate_outbound_url("http://example.com/blocklist.txt", false).is_err());
+    }
+
+    #[test]
+    fn test_validate_outbound_url_http_allowed_when_flag_set() {
+        assert!(validate_outbound_url("http://example.com/blocklist.txt", true).is_ok());
+    }
+
+    #[test]
+    fn test_validate_outbound_url_rejects_loopback() {
+        assert!(validate_outbound_url("https://127.0.0.1/path", false).is_err());
+        assert!(validate_outbound_url("https://[::1]/path", false).is_err());
+    }
+
+    #[test]
+    fn test_validate_outbound_url_rejects_private_ipv4() {
+        assert!(validate_outbound_url("https://10.0.0.1/path", false).is_err());
+        assert!(validate_outbound_url("https://192.168.1.1/path", false).is_err());
+        assert!(validate_outbound_url("https://172.16.0.1/path", false).is_err());
+    }
+
+    #[test]
+    fn test_validate_outbound_url_rejects_link_local() {
+        assert!(validate_outbound_url("https://169.254.1.1/path", false).is_err());
+    }
+
+    #[test]
+    fn test_validate_outbound_url_rejects_ula_ipv6() {
+        assert!(validate_outbound_url("https://[fd00::1]/path", false).is_err());
+    }
+
+    #[test]
+    fn test_validate_outbound_url_accepts_public_ip() {
+        assert!(validate_outbound_url("https://1.1.1.1/path", false).is_ok());
+        assert!(validate_outbound_url("https://8.8.8.8/path", false).is_ok());
+    }
+
+    #[test]
+    fn test_validate_outbound_url_accepts_hostname() {
+        // Hostnames are allowed (DNS rebinding is a separate concern)
+        assert!(validate_outbound_url("https://raw.githubusercontent.com/list.txt", false).is_ok());
+    }
+
+    #[test]
+    fn test_validate_outbound_url_rejects_bad_scheme() {
+        assert!(validate_outbound_url("ftp://example.com/list.txt", false).is_err());
+        assert!(validate_outbound_url("file:///etc/passwd", false).is_err());
+        assert!(validate_outbound_url("gopher://evil.com", false).is_err());
+    }
+
+    #[test]
+    fn test_validate_outbound_url_rejects_invalid() {
+        assert!(validate_outbound_url("not a url", false).is_err());
+        assert!(validate_outbound_url("", false).is_err());
     }
 }

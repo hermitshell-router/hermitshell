@@ -130,6 +130,9 @@ async fn auth_middleware(
         .verify_password(token.as_bytes(), &parsed_hash)
         .is_err()
     {
+        warn!("REST API authentication failed: invalid API key");
+        let db = state.db.lock().unwrap();
+        let _ = db.log_audit("api_auth_failure", "invalid API key");
         return json_error(StatusCode::UNAUTHORIZED, "invalid API key");
     }
 

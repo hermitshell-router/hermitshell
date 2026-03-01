@@ -6,7 +6,7 @@ Requires=hermitshell-agent.service
 [Service]
 Type=simple
 ExecStartPre=-/usr/bin/docker rm -f hermitshell-ui
-ExecStart=/usr/bin/docker run --name hermitshell-ui --network host --read-only --cap-drop ALL --security-opt no-new-privileges -v /run/hermitshell:/run/hermitshell -v /var/lib/hermitshell:/var/lib/hermitshell:ro hermitshell:latest
+ExecStart=/usr/bin/docker run --name hermitshell-ui --network host --read-only --tmpfs /tmp:size=16m --cap-drop ALL --security-opt no-new-privileges --pids-limit 100 -v /run/hermitshell:/run/hermitshell -v /var/lib/hermitshell:/var/lib/hermitshell:ro hermitshell:latest
 ExecStop=/usr/bin/docker stop hermitshell-ui
 Restart=on-failure
 RestartSec=5

@@ -30,6 +30,10 @@ pub enum LogEvent {
         message: String,
         details: Option<String>,
     },
+    Audit {
+        action: String,
+        detail: String,
+    },
 }
 
 /// Escape characters required by RFC 5424 §6.3.3 for SD-PARAM values.
@@ -143,6 +147,12 @@ impl LogEvent {
                     }
                 json
             },
+            LogEvent::Audit { action, detail } => serde_json::json!({
+                "type": "audit",
+                "timestamp": ts,
+                "action": action,
+                "detail": detail,
+            }),
         }
     }
 
@@ -205,6 +215,15 @@ impl LogEvent {
                     escape_sd_param(rule),
                     escape_sd_param(severity),
                     escape_sd_param(message)
+                )
+            },
+            LogEvent::Audit { action, detail } => {
+                // PRI 14 = user.info (facility 1, severity 6)
+                format!(
+                    "<14>1 {} {} hermitshell-agent - audit [audit@hermitshell action=\"{}\" detail=\"{}\"]",
+                    ts, hostname,
+                    escape_sd_param(action),
+                    escape_sd_param(detail)
                 )
             },
         }
@@ -400,6 +419,14 @@ fn emit_tracing(event: &LogEvent) {
             ..
         } => {
             info!(device_mac, rule, severity, message, "alert");
+        }
+        LogEvent::Audit { action, detail } => {
+            info!(
+                log_type = "audit",
+                action = %action,
+                detail = %detail,
+                "audit_event"
+            );
         }
     }
 }

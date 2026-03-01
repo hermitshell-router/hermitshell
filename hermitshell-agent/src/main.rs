@@ -483,7 +483,7 @@ async fn main() -> Result<()> {
         }
         // Generate session secret if missing
         if db_guard.get_config("session_secret").ok().flatten().is_none() {
-            let secret = hex::encode(rand::Rng::r#gen::<[u8; 32]>(&mut rand::thread_rng()));
+            let secret = hex::encode(rand::Rng::r#gen::<[u8; 32]>(&mut rand::rngs::OsRng));
             let _ = db_guard.set_config("session_secret", &secret);
             info!("session secret generated");
         }
@@ -492,10 +492,12 @@ async fn main() -> Result<()> {
     // Encrypt any legacy plaintext WiFi provider passwords
     {
         let db_lock = db.lock().unwrap();
-        if let Ok(Some(secret)) = db_lock.get_config("session_secret")
-            && let Err(e) = db_lock.encrypt_wifi_provider_passwords(&secret) {
+        if let Ok(Some(secret)) = db_lock.get_config("session_secret") {
+            let secret = zeroize::Zeroizing::new(secret);
+            if let Err(e) = db_lock.encrypt_wifi_provider_passwords(&secret) {
                 warn!(error = %e, "failed to encrypt legacy WiFi passwords");
             }
+        }
     }
 
     // Start WAN lifecycle (DHCP or static)
@@ -770,7 +772,7 @@ async fn main() -> Result<()> {
             db: db.clone(),
             portmap: portmap_registry.clone(),
             unbound: unbound_mgr.clone(),
-            start_time: start_time,
+            start_time,
         };
         let rest_port: u16 = std::env::var("REST_API_PORT")
             .ok()
@@ -926,6 +928,11 @@ async fn main() -> Result<()> {
             }
             if let Err(e) = db_guard.rotate_alerts(retention_days * 86400) {
                 error!(error = %e, "alert rotation failed");
+            }
+            // Audit log retention: 90 days minimum, or log_retention_days if larger
+            let audit_retention_days = std::cmp::max(retention_days, 90);
+            if let Err(e) = db_guard.rotate_audit_logs(audit_retention_days * 86400) {
+                error!(error = %e, "audit log rotation failed");
             }
             // Bandwidth rollups
             match db_guard.rollup_all_pending() {

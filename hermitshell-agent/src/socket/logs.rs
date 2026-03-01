@@ -90,7 +90,7 @@ pub(super) fn handle_acknowledge_all_alerts(req: &Request, db: &Arc<Mutex<Db>>) 
     }
 }
 
-pub(super) fn handle_log_audit(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+pub(super) fn handle_log_audit(req: &Request, db: &Arc<Mutex<Db>>, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>) -> Response {
     let Some(ref action) = req.value else {
         return Response::err("value required (action name)");
     };
@@ -103,7 +103,13 @@ pub(super) fn handle_log_audit(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     }
     let db = db.lock().unwrap();
     match db.log_audit(action, detail) {
-        Ok(()) => Response::ok(),
+        Ok(()) => {
+            let _ = log_tx.send(LogEvent::Audit {
+                action: action.clone(),
+                detail: detail.to_string(),
+            });
+            Response::ok()
+        }
         Err(e) => Response::err(&e.to_string()),
     }
 }

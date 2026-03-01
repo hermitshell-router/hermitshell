@@ -117,7 +117,7 @@ pub(super) fn handle_export_config(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
         }
 
         // Decrypt WiFi provider passwords and API keys
-        let session_secret = db.get_config("session_secret").ok().flatten().unwrap_or_default();
+        let session_secret = Zeroizing::new(db.get_config("session_secret").ok().flatten().unwrap_or_default());
         let mut wifi_provider_passwords = serde_json::Map::new();
         let mut wifi_provider_api_keys = serde_json::Map::new();
         for provider in &wifi_providers {
@@ -408,7 +408,7 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
 
     // Import WiFi providers: best-effort per-entry.
     if let Some(wifi_providers) = parsed.get("wifi_providers").and_then(|v| v.as_array()) {
-        let session_secret = db.get_config("session_secret").ok().flatten().unwrap_or_default();
+        let session_secret = Zeroizing::new(db.get_config("session_secret").ok().flatten().unwrap_or_default());
         let provider_passwords = secrets_obj.as_ref()
             .and_then(|s| s.get("wifi_provider_passwords"))
             .and_then(|v| v.as_object());
@@ -505,7 +505,7 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
     // If wifi_providers section is absent but wifi_aps has credential fields, create providers.
     if parsed.get("wifi_providers").is_none()
         && let Some(wifi_aps) = parsed.get("wifi_aps").and_then(|v| v.as_array()) {
-            let session_secret = db.get_config("session_secret").ok().flatten().unwrap_or_default();
+            let session_secret = Zeroizing::new(db.get_config("session_secret").ok().flatten().unwrap_or_default());
             let ap_passwords = secrets_obj.as_ref()
                 .and_then(|s| s.get("wifi_ap_passwords"))
                 .and_then(|v| v.as_object());
@@ -578,7 +578,7 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
         }
     }
 
-    // Import DNS blocklists
+    // Import DNS blocklists (SSRF protection: require HTTPS, reject internal IPs)
     let _ = db.conn_exec("DELETE FROM dns_blocklists");
     if let Some(lists) = parsed.get("dns_blocklists").and_then(|v| v.as_array()) {
         let valid_tags = ["ads", "custom", "strict"];
@@ -587,8 +587,7 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
             let url = bl.get("url").and_then(|v| v.as_str()).unwrap_or("");
             let tag = bl.get("tag").and_then(|v| v.as_str()).unwrap_or("ads");
             if !name.is_empty() && !url.is_empty() && valid_tags.contains(&tag)
-                && let Ok(parsed_url) = reqwest::Url::parse(url)
-                && (parsed_url.scheme() == "http" || parsed_url.scheme() == "https") {
+                && crate::unbound::validate_outbound_url(url, false).is_ok() {
                         let _ = db.add_dns_blocklist(name, url, tag);
                     }
         }
@@ -859,15 +858,15 @@ pub fn apply_hermit_config(
 
     // Agent-level validation (nftables-specific checks)
     // Validate interfaces
-    if let Some(ref iface) = config.network.wan_interface {
-        if crate::nftables::validate_iface(iface).is_err() {
-            return Err(format!("invalid WAN interface: {}", iface));
-        }
+    if let Some(ref iface) = config.network.wan_interface
+        && crate::nftables::validate_iface(iface).is_err()
+    {
+        return Err(format!("invalid WAN interface: {}", iface));
     }
-    if let Some(ref iface) = config.network.lan_interface {
-        if crate::nftables::validate_iface(iface).is_err() {
-            return Err(format!("invalid LAN interface: {}", iface));
-        }
+    if let Some(ref iface) = config.network.lan_interface
+        && crate::nftables::validate_iface(iface).is_err()
+    {
+        return Err(format!("invalid LAN interface: {}", iface));
     }
     // Validate device MACs
     for dev in &config.devices {
@@ -895,29 +894,27 @@ pub fn apply_hermit_config(
             return Err(format!("invalid custom record domain: {}", cr.domain));
         }
     }
-    // Validate blocklist URLs
+    // Validate blocklist URLs (SSRF protection: require HTTPS, reject internal IPs)
     for bl in &config.dns.blocklists {
-        match reqwest::Url::parse(&bl.url) {
-            Ok(parsed) if parsed.scheme() == "http" || parsed.scheme() == "https" => {}
-            _ => return Err(format!("invalid blocklist URL: {}", bl.url)),
+        if let Err(e) = crate::unbound::validate_outbound_url(&bl.url, false) {
+            return Err(format!("invalid blocklist URL '{}': {}", bl.url, e));
         }
     }
     // Validate syslog target format (host:port)
-    if let Some(ref target) = config.logging.syslog_target {
-        if !target.is_empty() {
-            let parts: Vec<&str> = target.rsplitn(2, ':').collect();
-            if parts.len() != 2 || parts[0].parse::<u16>().is_err() {
-                return Err(format!("invalid syslog_target (expected host:port): {}", target));
-            }
+    if let Some(ref target) = config.logging.syslog_target
+        && !target.is_empty()
+    {
+        let parts: Vec<&str> = target.rsplitn(2, ':').collect();
+        if parts.len() != 2 || parts[0].parse::<u16>().is_err() {
+            return Err(format!("invalid syslog_target (expected host:port): {}", target));
         }
     }
-    // Validate webhook URL
-    if let Some(ref url) = config.logging.webhook_url {
-        if !url.is_empty() {
-            match reqwest::Url::parse(url) {
-                Ok(parsed) if parsed.scheme() == "http" || parsed.scheme() == "https" => {}
-                _ => return Err(format!("invalid webhook_url: {}", url)),
-            }
+    // Validate webhook URL (SSRF protection: require HTTPS, reject internal IPs)
+    if let Some(ref url) = config.logging.webhook_url
+        && !url.is_empty()
+    {
+        if let Err(e) = crate::unbound::validate_outbound_url(url, false) {
+            return Err(format!("invalid webhook_url: {}", e));
         }
     }
 
@@ -1088,8 +1085,10 @@ pub fn apply_hermit_config(
             if let Some(ref v) = tls.acme_cf_api_token { let _ = db_guard.set_config("acme_cf_api_token", v); }
             if let Some(ref v) = tls.acme_account_key { let _ = db_guard.set_config("acme_account_key", v); }
         }
-        if let Some(ref integ) = s.integrations {
-            if let Some(ref v) = integ.runzero_token { let _ = db_guard.set_config("runzero_token", v); }
+        if let Some(ref integ) = s.integrations
+            && let Some(ref v) = integ.runzero_token
+        {
+            let _ = db_guard.set_config("runzero_token", v);
         }
     }
 
@@ -1203,6 +1202,15 @@ pub(super) fn handle_set_log_config(req: &Request, db: &Arc<Mutex<Db>>) -> Respo
         Ok(v) => v,
         Err(e) => return Response::err(&format!("invalid JSON: {}", e)),
     };
+    // Validate webhook URL before storing (SSRF protection)
+    if let Some(url) = parsed.get("webhook_url").and_then(|v| v.as_str()) {
+        if !url.is_empty() {
+            if let Err(e) = crate::unbound::validate_outbound_url(url, false) {
+                return Response::err(&format!("invalid webhook_url: {}", e));
+            }
+        }
+    }
+
     let db = db.lock().unwrap();
     let allowed_keys = ["log_format", "syslog_target", "webhook_url", "webhook_secret", "log_retention_days"];
     if let Some(obj) = parsed.as_object() {

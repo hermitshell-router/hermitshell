@@ -115,10 +115,10 @@ pub async fn run(db: Arc<Mutex<Db>>) {
 
             // Decrypt password
             let password: Zeroizing<String> = {
-                let session_secret = {
+                let session_secret = Zeroizing::new({
                     let db_lock = db.lock().unwrap();
                     db_lock.get_config("session_secret").ok().flatten().unwrap_or_default()
-                };
+                });
                 if session_secret.is_empty() || !crate::crypto::is_encrypted(&password_enc) {
                     Zeroizing::new(password_enc)
                 } else {
@@ -135,10 +135,10 @@ pub async fn run(db: Arc<Mutex<Db>>) {
             // Decrypt API key if present
             let api_key: Option<Zeroizing<String>> = api_key_enc.and_then(|enc| {
                 if enc.is_empty() { return None; }
-                let session_secret = {
+                let session_secret = Zeroizing::new({
                     let db_lock = db.lock().unwrap();
                     db_lock.get_config("session_secret").ok().flatten().unwrap_or_default()
-                };
+                });
                 if session_secret.is_empty() || !crate::crypto::is_encrypted(&enc) {
                     Some(Zeroizing::new(enc))
                 } else {

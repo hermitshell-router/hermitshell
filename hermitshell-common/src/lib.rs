@@ -419,6 +419,7 @@ pub struct DnsBypassConfig {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BlocklistConfig {
     pub name: String,
     pub url: String,
@@ -431,6 +432,7 @@ pub struct BlocklistConfig {
 fn default_ads_tag() -> String { "ads".to_string() }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ForwardZoneConfig {
     pub domain: String,
     pub forward_to: String,
@@ -439,6 +441,7 @@ pub struct ForwardZoneConfig {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CustomRecordConfig {
     pub domain: String,
     #[serde(rename = "type")]
@@ -461,6 +464,7 @@ pub struct FirewallConfig {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PortForwardConfig {
     #[serde(default = "default_both")]
     pub protocol: String,
@@ -478,6 +482,7 @@ pub struct PortForwardConfig {
 fn default_both() -> String { "both".to_string() }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Ipv6PinholeConfig {
     pub device: String,
     pub protocol: String,
@@ -511,6 +516,7 @@ impl Default for WireguardConfig {
 fn default_wg_port() -> u16 { 51820 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WgPeerConfig {
     pub name: String,
     pub public_key: String,
@@ -523,6 +529,7 @@ pub struct WgPeerConfig {
 fn default_trusted() -> String { "trusted".to_string() }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DeviceConfig {
     pub mac: String,
     #[serde(default)]
@@ -542,6 +549,7 @@ pub struct DhcpConfig {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DhcpReservationConfig {
     pub mac: String,
     pub subnet_id: i64,
@@ -685,6 +693,7 @@ pub struct WifiSecrets {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WifiProviderSecrets {
     pub name: String,
     #[serde(default)]

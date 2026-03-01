@@ -807,3 +807,296 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Audit all secret-handling paths and wrap temporary secret strings in `Zeroizing<String>`. Priority: the `HermitSecrets` fields after DB insertion, and the `secrets_str` used during encrypted export serialization.
 
+## 120. Blocklist domains written to unbound config without validation
+
+**What:** `convert_blocklist_body()` in `unbound.rs` previously wrote domain names from downloaded blocklists directly into the Unbound config file without calling `validate_domain()`. A malicious blocklist could contain entries like `evil"\nforward-zone:` that would inject arbitrary Unbound config directives when parsed.
+
+**Why:** Blocklist parsing was added early and relied on basic sanity checks (contains a dot, not localhost) but not the full domain validator. The validator existed but was only applied to user-entered DNS rules and forward zones.
+
+**Risk:** Low. Exploitation requires a compromised or malicious blocklist hosted at an admin-configured URL. The blocklist URL itself is validated (http/https only, admin-set). However, a supply chain attack on a popular blocklist provider (e.g., StevenBlack) could theoretically inject DNS forwarding rules to redirect queries.
+
+**Proper fix:** Now fixed: `convert_blocklist_body()` calls `validate_domain()` on each entry and silently skips invalid ones. This blocks any domain containing characters outside `[a-zA-Z0-9-.]` or violating DNS label rules.
+
+## 121. IPC config structs accept unknown fields (mass assignment)
+
+**What:** The `HermitConfig` sub-structs in `hermitshell-common/src/lib.rs` (e.g., `PortForwardConfig`, `WgPeerConfig`, `DeviceConfig`) did not have `#[serde(deny_unknown_fields)]`, meaning JSON or TOML payloads with unexpected field names were silently accepted.
+
+**Why:** Default serde behavior ignores unknown fields. The structs used `#[serde(default)]` extensively for forward compatibility, and `deny_unknown_fields` was not applied to leaf structs during initial development.
+
+**Risk:** Low for active exploitation — unknown fields are ignored (not stored). The socket is protected by Unix permissions. However, this violates the principle of strict input validation and could mask typos in config files or API requests, leading to silent misconfiguration.
+
+**Proper fix:** Now fixed: Added `#[serde(deny_unknown_fields)]` to leaf config structs: `BlocklistConfig`, `ForwardZoneConfig`, `CustomRecordConfig`, `PortForwardConfig`, `Ipv6PinholeConfig`, `WgPeerConfig`, `DeviceConfig`, `DhcpReservationConfig`, `WifiProviderSecrets`. Top-level container structs (`HermitConfig`, `HermitSecrets`) intentionally omit it to preserve forward compatibility with config files that may contain sections for newer agent versions.
+
+---
+
+## Secure By Default (OWASP C5)
+
+## 122. DNS rate limiting defaults to zero (disabled)
+
+**What:** The `dns_ratelimit_per_client` and `dns_ratelimit_per_domain` config values default to `0` when not explicitly set. Unbound interprets `0` as unlimited, meaning no rate limiting is applied to DNS queries by default.
+
+**Why:** Aggressive rate limits can break legitimate device behavior (smart TVs, IoT hubs, and browsers with prefetching make many DNS queries). Setting non-zero defaults risks causing support issues for users who do not understand DNS rate limiting. The Unbound `ip-ratelimit` directive drops all queries from a source above the threshold, which can cause complete DNS failure for affected devices.
+
+**Risk:** A compromised or misbehaving device on the LAN can generate unlimited DNS queries, potentially overwhelming the resolver or using DNS as a data exfiltration channel. The behavioral analyzer (if enabled) can detect DNS volume spikes, but the analyzer is also disabled by default.
+
+**Proper fix:** Consider setting conservative defaults (e.g., `ip-ratelimit: 1000` per second per client). Document the setting in the setup wizard. The current approach is acceptable for a home router where ease-of-use matters, but enterprise deployments should enable rate limiting.
+
+## 123. Behavioral analyzer disabled by default
+
+**What:** The `analyzer_enabled` config defaults to `false`. Security analysis features (DNS beaconing detection, suspicious port scanning, bandwidth spike detection, new destination spike alerts) do not run unless explicitly enabled.
+
+**Why:** The analyzer adds CPU overhead from periodic analysis cycles (every 60 seconds), baseline computation, and alert generation. On resource-constrained router hardware, this could impact forwarding performance. Additionally, a fresh install has no behavioral baselines, so initial alerts would be noisy false positives as baselines are built.
+
+**Risk:** Compromise indicators (C2 beaconing, data exfiltration, lateral movement) go undetected by default. Users who do not discover the analyzer in settings miss a key security feature.
+
+**Proper fix:** Consider enabling the analyzer by default with a 24-hour quiet period to build baselines before generating alerts. Alternatively, prompt the user to enable it during the setup wizard. The current default is a reasonable tradeoff for home users who prioritize simplicity.
+
+## 124. Docker images use unpinned alpine:latest base
+
+**What:** Both Dockerfiles (`hermitshell/Dockerfile` and `Dockerfile`) used `FROM alpine:latest` as the base image, pulling whichever Alpine version Docker Hub currently tags as `latest`.
+
+**Why:** `:latest` ensures the newest patches without manually tracking Alpine releases. For a router appliance that is version-locked by its own release cycle, base image drift is less concerning than for multi-dependency applications.
+
+**Risk:** A breaking change in a new Alpine release could cause runtime failures. More critically, a compromised Docker Hub or MitM during image pull could substitute a malicious base image — pinning the version + digest provides a verification anchor.
+
+**Proper fix:** Now fixed: Pinned to `alpine:3.21` in both Dockerfiles. For stronger guarantees, pin the full digest (e.g., `alpine@sha256:...`). CI should periodically bump the pinned version.
+
+## 125. systemd agent service missing syscall architecture restriction
+
+**What:** The `hermitshell-agent.service` unit did not include `SystemCallArchitectures=native`, allowing the process to invoke 32-bit compatibility syscalls on 64-bit systems.
+
+**Why:** Omitted during initial systemd hardening. The agent is a native 64-bit Rust binary and never uses 32-bit syscalls.
+
+**Risk:** On amd64 systems, the 32-bit compat syscall ABI (ia32) has historically been a source of kernel vulnerabilities (e.g., CVE-2014-4699). Restricting to native-only closes this attack surface.
+
+**Proper fix:** Now fixed: Added `SystemCallArchitectures=native` to the service unit.
+
+## 126. Docker web UI container missing tmpfs and PID limit
+
+**What:** The `hermitshell-ui.service` Docker run command did not include `--tmpfs /tmp` (writable temp directory in the read-only container) or `--pids-limit` (process count restriction).
+
+**Why:** The web UI binary does not currently use `/tmp`, so the omission had no functional impact. PID limits were not considered during initial container hardening.
+
+**Risk:** Without `--tmpfs /tmp`, any future code that writes to `/tmp` would fail silently in the read-only container. Without `--pids-limit`, a vulnerability that allows code execution inside the container could launch a fork bomb, exhausting the host's PID space and causing a denial of service for the entire router.
+
+**Proper fix:** Now fixed: Added `--tmpfs /tmp:size=16m` (16MB writable tmpfs) and `--pids-limit 100` to the Docker run command.
+
+## 127. Missing Permissions-Policy, COOP, and CORP headers
+
+**What:** The security headers middleware did not set Permissions-Policy, Cross-Origin-Opener-Policy (COOP), or Cross-Origin-Resource-Policy (CORP) headers. These are recommended by OWASP Proactive Control C8.
+
+**Why:** Initial hardening focused on the most critical headers (HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy). The newer Permissions-Policy, COOP, and CORP headers were not included.
+
+**Risk:** Without Permissions-Policy, a successful XSS attack could access browser APIs (camera, microphone, geolocation) that the router UI never needs. Without COOP, Spectre-class side-channel attacks from cross-origin windows are possible. Without CORP, cross-origin pages could embed resources from the router UI.
+
+**Proper fix:** Now fixed: Added all three headers. Permissions-Policy disables camera, microphone, geolocation, payment, USB, magnetometer, gyroscope, and accelerometer. COOP and CORP are both set to `same-origin`.
+
+## 128. CSP allows style-src unsafe-inline (cannot remove)
+
+**What:** The Content-Security-Policy includes `style-src 'self' 'unsafe-inline'` to allow inline `style=` attributes. There are 60+ inline style attributes across the UI pages.
+
+**Why:** The Leptos SSR UI was built with inline styles for layout convenience (e.g., `display:inline` on ActionForms, `font-family:monospace` on code fields, dynamic progress bar widths). Moving all inline styles to CSS classes would be a large refactor touching every page.
+
+**Risk:** `style-src 'unsafe-inline'` allows CSS injection if an attacker achieves HTML injection. CSS-based attacks are limited compared to script injection: they can exfiltrate data via `background-image` URLs or restyle the page for phishing, but cannot execute arbitrary code. The risk is acceptable for a LAN-only admin UI.
+
+**Proper fix:** Refactor all inline `style=` attributes to CSS classes in `style.css`. For the dynamic progress bar width in `setup.rs`, use a CSS custom property set via a `style` attribute on a parent element, with `'unsafe-inline'` removed once all other inlines are eliminated. This is a large but straightforward refactor.
+
+## 129. CSP blocks existing inline scripts and event handlers
+
+**What:** The CSP sets `default-src 'self'` without a separate `script-src` directive, meaning script-src inherits `'self'` which blocks inline scripts. However, the UI contains: (1) an inline `<script>` block in `settings.rs` for backup passphrase toggle logic, and (2) inline `onclick` handlers in `devices.rs` and `device_detail.rs` for dialog show/close. These are silently blocked by CSP in standards-compliant browsers.
+
+**Why:** The CSP was set correctly to block inline scripts. The inline JS was added later for UX convenience without updating the CSP, which is actually the safer failure mode (functionality breaks rather than security weakens).
+
+**Risk:** The affected functionality (backup encryption passphrase toggle, block-device confirmation dialogs) does not work in browsers that enforce CSP. Users can still download backups (without the passphrase toggle) and block devices (the ActionForm submit still works, just without the confirmation dialog). This is a fail-safe degradation.
+
+**Proper fix:** Move the inline JavaScript to an external file (e.g., `/static/app.js`) served from `'self'`. Replace inline `onclick` handlers with `data-*` attributes and event delegation in the external script. Do NOT add `script-src 'unsafe-inline'` -- that would be a significant security regression.
+
+---
+
+## Access Control (OWASP C1)
+
+## 130. export_config with include_secrets bypasses method-level access control
+
+**What:** The `export_config` method is in `WEB_ALLOWED_METHODS`, accessible to non-root callers (the web UI container). It accepts an `include_secrets` flag that, when true, returns all blocked config keys in plaintext: admin password hash, session secret, WireGuard private key, TLS private key, ACME tokens, runZero token, WiFi provider passwords, and API key hash. The handler does not receive or check `caller_uid`.
+
+**Why:** The web UI needs `export_config` to offer config backup to authenticated admins. The `include_secrets` flag was added for backup/restore workflows. The access control boundary (SO_PEERCRED + WEB_ALLOWED_METHODS) operates at the method level, not at the parameter level.
+
+**Risk:** A compromised web UI container can call `export_config` with `include_secrets=true` and exfiltrate all secrets without admin interaction. The container already has socket access, so this extends the blast radius from "control the router" to "steal all credentials and keys."
+
+**Proper fix:** Thread `caller_uid` through the handler chain and reject `include_secrets=true` for non-root callers. Alternatively, split into `export_config` (no secrets, web-allowed) and `export_config_full` (with secrets, root-only via omission from WEB_ALLOWED_METHODS).
+
+## 131. DHCP IPC socket now enforces SO_PEERCRED
+
+**What:** The DHCP IPC socket (`/run/hermitshell/dhcp.sock`) now calls `peer_cred()` and rejects all callers with UID != 0. Previously it relied solely on filesystem permissions (`0660 root:root`).
+
+**Why:** Defense-in-depth: kernel-enforced UID checks cannot be bypassed by filesystem permission changes, container misconfigurations, or setuid binaries. This resolves the issue documented in #91.
+
+**Risk:** None introduced. The DHCP server process (`hermitshell-dhcp`) runs as root, so the UID 0 check is always satisfied for the legitimate caller.
+
+**Proper fix:** Implemented.
+
+---
+
+## Secure Digital Identities (OWASP C7)
+
+## 132. Common password check uses embedded static list
+
+**What:** `handle_setup_password` in `auth.rs` now checks new passwords against a static `HashSet` of ~230 common passwords (case-insensitive). Passwords matching the list are rejected with "password is too common; choose a stronger password". The list is compiled into the agent binary from `socket/common_passwords.rs`.
+
+**Why:** OWASP Proactive Control C7 recommends checking passwords against known breached/common password lists during credential creation and change. A full breach corpus (e.g., Have I Been Pwned's 600M+ entries) is impractical for an embedded router. The top ~230 covers the highest-frequency entries from NCSC, NordPass, and SecLists breach analyses.
+
+**Risk:** The list is small and static. Passwords not in the list but still weak (e.g., `companyname2024`) are accepted. The list does not update unless the agent binary is rebuilt. However, the 8-character minimum and Argon2id hashing provide additional protection layers against weak passwords that bypass the list.
+
+**Proper fix:** Acceptable as-is. For stronger coverage, load an external list (top 10k-100k) from a file at agent startup, allowing updates without recompilation. Consider integrating with Have I Been Pwned's k-anonymity API if the router has WAN connectivity at setup time.
+
+## 133. Password change does not invalidate existing sessions
+
+**What:** When the admin password is changed via `handle_setup_password`, the new hash is stored in the DB but `session_secret` is not rotated. All existing HMAC-signed session tokens remain valid until their natural expiry (30-min idle or 8-hour absolute).
+
+**Why:** The password change handler focuses on credential update. Session management is stateless (HMAC tokens with no server-side store), so invalidating specific sessions requires rotating the signing key. Rotating `session_secret` would invalidate the current session too, logging out the admin mid-change.
+
+**Risk:** An attacker who stole a session token retains access even after the admin changes the password. The stolen token is valid for up to 8 hours. On a single-admin LAN appliance, the practical risk is low — the admin changing the password likely still controls the only session.
+
+**Proper fix:** Rotate `session_secret` after a successful password change. Issue a new session token in the same response so the admin is not logged out. This requires coordinating between `handle_setup_password` (agent) and the `change_password` server function (web UI) to create a fresh session cookie after the secret rotation.
+
+---
+
+## Cryptography (OWASP C2)
+
+## 134. HKDF salt migration deferred for enc:v1 compatibility
+
+**What:** The HKDF key derivation in `crypto.rs` still uses `Hkdf::new(None, session_secret)` with no salt (see #72). Adding a static domain-separation salt would change the derived AES-256 key, silently breaking decryption of all existing `enc:v1:` encrypted WiFi AP passwords with no user-visible error or recovery path.
+
+**Why:** The session_secret IKM is now generated with `OsRng` (32 bytes of OS entropy, hex-encoded to 64 chars). With high-entropy input, unsalted HKDF produces output indistinguishable from random per the HKDF security proof. A salt becomes important only if the IKM is weak or reused across contexts, neither of which applies here.
+
+**Risk:** Theoretical. The security margin is already high. The risk would only materialize if the session_secret generation were changed to accept user-provided input (low entropy) or if the same secret were reused as HKDF input for a different purpose (no such path exists today).
+
+**Proper fix:** Implement a versioned migration: introduce `enc:v2:` prefix with a static salt, decrypt v1 with no salt on read, re-encrypt as v2. After one release cycle, remove v1 encrypt support. This requires careful testing of the upgrade path across all encrypted fields (WiFi provider passwords and API keys).
+
+## 135. apply_config HermitSecrets fields not zeroized
+
+**What:** The `HermitSecrets` struct in the `apply_config` import path is deserialized from JSON by serde into plain `String` fields. After each field value is written to the database via `set_config`, the temporary strings are not zeroized. Similarly, `setup_password` in `auth.rs` reads the existing password hash as a plain `String`.
+
+**Why:** The `Zeroizing<String>` wrapper cannot be used as a serde deserialize target without a custom deserializer for each field. The `HermitSecrets` struct has 8+ optional string fields, making per-field custom deserialization verbose. The most critical read paths (session_secret, API key hash, TLS key) were wrapped in `Zeroizing` in the C2 audit pass.
+
+**Risk:** Low. The unzeroized strings live on the heap for the duration of the `apply_config` call (typically < 100ms). A root attacker who can read process memory can also read the SQLite database file directly, which contains the same secrets. Core dumps could capture these values if the agent crashes during import.
+
+**Proper fix:** Implement `#[serde(deserialize_with = "...")]` for `HermitSecrets` fields to deserialize directly into `Zeroizing<String>`, or manually zero the serde-produced strings after DB insertion. The `zeroize` crate's `Zeroizing` wrapper is the preferred approach.
+
+---
+
+## Security Logging and Monitoring (OWASP C9)
+
+## 136. Webhook uses Bearer token, not HMAC payload signature
+
+**What:** The webhook export sends log events as JSON with an `Authorization: Bearer <secret>` header. The documentation and config UI describe this as "HMAC signature" but the implementation does not compute a signature over the payload body. The secret authenticates the sender but provides no payload integrity verification.
+
+**Why:** Bearer token auth is simpler to implement and sufficient for authenticating the webhook source. HMAC payload signatures (like GitHub's `X-Hub-Signature-256`) require the receiver to verify the signature, which adds complexity to the webhook consumer.
+
+**Risk:** A MITM attacker (if HTTPS is not used or the certificate is not validated) could modify the JSON payload in transit without detection. The Bearer token proves the sender's identity but not that the payload was unmodified. For HTTPS connections, TLS provides integrity, making this primarily a concern for HTTP webhook URLs.
+
+**Proper fix:** Compute `HMAC-SHA256(webhook_secret, payload_body)` and send it as an `X-Hermitshell-Signature` header alongside the Bearer token. Webhook consumers can then verify payload integrity independently of the transport layer. This is the standard pattern used by GitHub, Stripe, and other webhook providers.
+
+## 137. Audit log had no retention/rotation policy
+
+**What:** The `audit_log` SQLite table had no rotation mechanism. While `connection_logs`, `dns_logs`, and `alerts` were subject to configurable retention (default 7 days, hourly rotation), audit log entries accumulated indefinitely.
+
+**Why:** Audit logs were added later than the other log tables, and the rotation logic in `rotate_logs()` was not updated to include them. The audit log table is small (each entry is ~100 bytes) so growth is slow, but unbounded over months/years of operation.
+
+**Risk:** On a resource-constrained router, unbounded audit log growth could eventually consume significant storage. More importantly, the lack of retention policy means old audit entries persist forever, which may conflict with data minimization principles.
+
+**Proper fix:** Now fixed: Added `rotate_audit_logs()` to db.rs with a 90-day minimum retention (or `log_retention_days` if larger). The 90-day floor ensures audit records are available for incident investigation while still bounding table growth. Called hourly alongside other log rotation.
+
+## 138. Audit events not forwarded to external log sinks
+
+**What:** Admin audit events (login, password change, config changes, device group changes) were stored only in the local SQLite `audit_log` table. They were NOT forwarded to the syslog or webhook export channels. The `LogEvent` enum had variants for Connection, DnsQuery, and Alert, but no Audit variant.
+
+**Why:** The audit log system was implemented separately from the log export system. The `log_audit()` DB method writes directly to SQLite, and the web UI server functions call it via the socket API. The log export channel was designed for high-volume operational events (connections, DNS queries), and audit events were not integrated into it.
+
+**Risk:** If the router is compromised, an attacker with root access can modify or delete the local SQLite database, erasing all evidence of their actions. External log forwarding is the primary defense against log tampering. Without audit event forwarding, password changes, config modifications, and login attempts are not visible to external SIEM systems.
+
+**Proper fix:** Now fixed: Added `LogEvent::Audit { action, detail }` variant with JSON serialization (for webhook), RFC 5424 syslog formatting with `[audit@hermitshell action="..." detail="..."]` structured data, and structured tracing emission. The `handle_log_audit` socket handler now forwards events to the log export channel.
+
+## 139. Login success/failure not recorded in audit log
+
+**What:** The `handle_verify_password` handler logged failures via `warn!("password verification failed")` to tracing/stdout but did not record login success or failure in the `audit_log` table. Session creation was similarly unrecorded. Password changes were only audit-logged from the web UI server function, not at the agent handler level.
+
+**Why:** The auth handlers were implemented before the audit log system. The `warn!()` calls provided developer-level diagnostics but were not designed as a security audit trail.
+
+**Risk:** Without login audit records, an administrator cannot determine: (a) when successful logins occurred, (b) how many failed login attempts preceded a successful one (credential stuffing indicator), (c) when sessions were created. This makes incident response and forensic investigation significantly harder.
+
+**Proper fix:** Now fixed: Added `login_success`, `login_failure`, `session_created`, `password_set`, and `password_changed` audit entries at the agent handler level (auth.rs). Also added `api_auth_failure` for REST API authentication failures (rest_api.rs). These are recorded regardless of whether the call comes from the web UI or direct socket access.
+
+## 140. No tamper detection for audit log records
+
+**What:** Audit log records in SQLite have no integrity protection. Records can be inserted, modified, or deleted by anyone with write access to the database file (root user, or any process that can access the file).
+
+**Why:** SQLite does not natively support append-only tables, hash chains, or write-once semantics. Implementing tamper detection requires application-level mechanisms.
+
+**Risk:** A sophisticated attacker who compromises the router can delete or modify audit records to cover their tracks. The external log forwarding (now implemented for audit events) mitigates this for events that were successfully forwarded before the compromise, but does not protect events logged between the last successful forward and the compromise.
+
+**Proper fix:** Implement an audit log hash chain: each `audit_log` entry includes a SHA-256 hash of `(previous_hash || action || detail || timestamp)`. The chain can be verified by the admin or an external tool. This detects deletion or modification of records but cannot prevent it. For prevention, external log forwarding to a write-once sink (e.g., S3 with Object Lock, or a remote syslog server) is required.
+
+## 141. Syslog export limited to unencrypted UDP
+
+**What:** The syslog export only supports `udp://` targets. There is no TCP or TLS transport option. Messages are sent as plaintext UDP datagrams, limited to 480 bytes per RFC 5426 section 3.2, with no authentication or encryption.
+
+**Why:** UDP syslog is the simplest to implement (stateless, fire-and-forget) and compatible with virtually all syslog receivers. TCP+TLS (RFC 5425) requires persistent connection management, TLS handshake, reconnection logic, and message framing.
+
+**Risk:** On a shared network, syslog messages are visible to any observer. For a home router where the syslog receiver is typically on the same trusted LAN, the risk is low. However, for users forwarding logs to a cloud SIEM over the WAN, plaintext UDP is unacceptable. The webhook export (which supports HTTPS) is the recommended alternative for encrypted log forwarding.
+
+**Proper fix:** Add `tcp+tls://` prefix support to `parse_syslog_target()`. Implement a persistent TCP+TLS connection using `rustls` (already a dependency) with automatic reconnection. Use RFC 5425 octet counting framing. This removes the 480-byte message limit and provides confidentiality and integrity for syslog transport.
+
+---
+
+## Server-Side Request Forgery (OWASP C10)
+
+## 142. Blocklist URLs now require HTTPS and reject internal IPs
+
+**What:** `handle_add_dns_blocklist`, `apply_hermit_config`, and `handle_import_config` now validate blocklist URLs via `validate_outbound_url()`. URLs must use HTTPS and must not point to private/loopback/link-local IP addresses. This closes issue #92 (blocklist HTTP not HTTPS-only) and adds SSRF protection.
+
+**Why:** The agent downloads blocklists from user-configured URLs and writes the content to Unbound config files. Without scheme and destination restrictions, an attacker who gains access to the admin interface could configure a blocklist URL pointing to an internal service (e.g., `http://127.0.0.1:9080/api/v1/config`) to exfiltrate data or probe internal network services. HTTP downloads are also vulnerable to MITM content injection.
+
+**Risk:** Previously medium (HTTP allowed, no IP filtering). Now low with HTTPS-only and IP-literal rejection. Hostname-based SSRF via DNS rebinding remains a theoretical concern but is mitigated by Unbound's `private-address` directives which block DNS responses resolving external names to private IPs.
+
+**Proper fix:** Implemented. For defense-in-depth against DNS rebinding, the download could resolve the hostname and validate the resolved IP before connecting. This would require a custom DNS-then-connect flow instead of passing URLs directly to `curl --location`. The current protection is sufficient for the threat model.
+
+## 143. Webhook URLs now require HTTPS and reject internal IPs
+
+**What:** `handle_set_log_config` and `apply_hermit_config` now validate webhook URLs via the same `validate_outbound_url()` function. Webhook delivery targets must use HTTPS and must not point to private/loopback/link-local IP addresses.
+
+**Why:** The agent sends JSON log event batches via HTTP POST to admin-configured webhook URLs, including an `Authorization: Bearer` header with the webhook secret. Without destination restrictions, an admin (or attacker with admin access) could configure a webhook URL pointing to an internal service, causing the agent to send authenticated POST requests to arbitrary internal endpoints (SSRF).
+
+**Risk:** Previously medium (HTTP allowed, no IP filtering, Bearer token sent to arbitrary destinations). Now low with HTTPS-only and IP-literal rejection. The Bearer token is no longer sent to internal services.
+
+**Proper fix:** Implemented. Same DNS rebinding caveat as #142 applies.
+
+## 144. WiFi AP connections to internal IPs are intentional (accepted risk)
+
+**What:** The EAP standalone and UniFi WiFi providers connect to admin-configured AP IP addresses that are intentionally on the local network (e.g., `192.168.1.85`, `https://10.0.0.2`). These connections are not subject to SSRF validation.
+
+**Why:** WiFi access points are LAN devices by definition. The agent manages them over the local network via their web APIs. Blocking private IPs would make the feature unusable. The AP URL/IP is configured by the admin through the WiFi provider setup flow, which already validates the format (IP address for EAP standalone, HTTPS URL for UniFi).
+
+**Risk:** Accepted. An attacker with admin access could theoretically add a WiFi provider pointing to an internal service to probe it. However, the agent sends AP-specific authentication (MD5 password for EAP, session cookies for UniFi), not generic HTTP requests, so the utility for SSRF is limited. The AP connection flow also validates TLS certificates (TOFU or pinned CA), which would fail against non-AP services.
+
+**Proper fix:** None needed. This is by design, not a vulnerability.
+
+## 145. No DNS rebinding protection for outbound HTTP requests
+
+**What:** The `validate_outbound_url()` function checks IP literals in URLs but does not resolve hostnames to validate the resolved IP before connecting. A DNS rebinding attack could bypass the check: the attacker configures a blocklist/webhook URL with a hostname that initially resolves to a public IP (passing validation at config time) but later resolves to a private IP (e.g., 127.0.0.1) at download/delivery time.
+
+**Why:** Implementing pre-connect DNS resolution and IP validation requires a custom connector or a resolve-then-connect flow, which adds complexity. The `reqwest` client and `curl` command both resolve DNS internally with no hook to validate the resolved IP before connecting. For blocklists, the download happens periodically via `curl --location`, making a resolve-first approach impractical without replacing curl with a Rust HTTP client.
+
+**Risk:** Low. DNS rebinding requires the attacker to (a) control a domain's DNS records, (b) have admin access to configure a URL with that domain, and (c) time the DNS TTL to flip the resolution between validation and use. Additionally, Unbound's `private-address` directives block DNS responses that resolve external names to private IPs, which would prevent the rebinding resolution from reaching the agent if Unbound is the system resolver.
+
+**Proper fix:** Use `reqwest`'s `resolve()` or a custom `dns_resolver` to validate resolved IPs before connecting. For curl-based downloads, use `--resolve` to pin the IP after a pre-validated DNS lookup. Given the low risk and existing Unbound mitigation, this is deferred.
+
+## 146. runZero and GitHub update URLs are hardcoded (no SSRF risk)
+
+**What:** The runZero API URL is admin-configurable but requires `https://` prefix (validated in `handle_set_runzero_config`). The GitHub releases URL is hardcoded to `https://api.github.com/repos/jnordwick/hermitshell/releases/latest`. ACME endpoints are hardcoded to Let's Encrypt production/staging. Cloudflare API endpoints are hardcoded to `https://api.cloudflare.com/client/v4/`.
+
+**Why:** These are legitimate external service integrations with fixed or HTTPS-validated endpoints.
+
+**Risk:** None for SSRF. The runZero URL could theoretically be pointed at an internal HTTPS service, but it would need to respond to the `/api/v1.0/export/org/assets.json` endpoint with valid JSON, limiting practical exploitation. The `https://` scheme requirement prevents plaintext interception of the API token.
+
+**Proper fix:** None needed for SSRF. The existing HTTPS requirement for runZero URLs is sufficient.

@@ -1606,6 +1606,13 @@ impl Db {
         Ok(())
     }
 
+    pub fn rotate_audit_logs(&self, retention_secs: i64) -> Result<usize> {
+        let cutoff = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64 - retention_secs;
+        Ok(self.conn.execute("DELETE FROM audit_log WHERE created_at < ?1", [cutoff])?)
+    }
+
     pub fn list_audit_logs(&self, limit: i64) -> Result<Vec<AuditEntry>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, action, detail, created_at FROM audit_log ORDER BY created_at DESC LIMIT ?1"

@@ -55,8 +55,12 @@ pub(super) fn handle_verify_password(req: &Request, db: &Arc<Mutex<Db>>, login_r
     if !valid {
         warn!("password verification failed");
         record_login_failure(login_rate_limit);
+        let db = db.lock().unwrap();
+        let _ = db.log_audit("login_failure", "invalid password");
     } else {
         reset_login_rate_limit(login_rate_limit);
+        let db = db.lock().unwrap();
+        let _ = db.log_audit("login_success", "");
     }
     let mut resp = Response::ok();
     resp.config_value = Some(if valid { "true" } else { "false" }.to_string());
@@ -72,6 +76,9 @@ pub(super) fn handle_setup_password(req: &Request, db: &Arc<Mutex<Db>>, login_ra
     }
     if value.len() > 128 {
         return Response::err("password too long (maximum 128 characters)");
+    }
+    if super::common_passwords::is_common_password(value) {
+        return Response::err("password is too common; choose a stronger password");
     }
     let _pw_guard = password_lock.lock().unwrap();
     let existing_hash = {
@@ -106,9 +113,12 @@ pub(super) fn handle_setup_password(req: &Request, db: &Arc<Mutex<Db>>, login_ra
         Err(e) => return Response::err(&format!("hashing failed: {}", e)),
     };
     let db = db.lock().unwrap();
+    let is_change = existing_hash.is_some();
     match db.set_config("admin_password_hash", &new_hash) {
         Ok(()) => {
             let _ = db.set_config("setup_step", "6");
+            let action = if is_change { "password_changed" } else { "password_set" };
+            let _ = db.log_audit(action, "");
             Response::ok()
         }
         Err(e) => Response::err(&e.to_string()),
@@ -120,7 +130,7 @@ pub(super) fn handle_create_session(_req: &Request, db: &Arc<Mutex<Db>>) -> Resp
     let secret = match db.get_config("session_secret").ok().flatten() {
         Some(s) => Zeroizing::new(s),
         None => {
-            let s = hex::encode(rand::Rng::r#gen::<[u8; 32]>(&mut rand::thread_rng()));
+            let s = hex::encode(rand::Rng::r#gen::<[u8; 32]>(&mut rand::rngs::OsRng));
             if let Err(e) = db.set_config("session_secret", &s) {
                 return Response::err(&format!("failed to store secret: {}", e));
             }
@@ -136,6 +146,7 @@ pub(super) fn handle_create_session(_req: &Request, db: &Arc<Mutex<Db>>) -> Resp
     mac.update(payload.as_bytes());
     let sig = hex::encode(mac.finalize().into_bytes());
     let cookie = format!("{}.{}", payload, sig);
+    let _ = db.log_audit("session_created", "");
     let mut resp = Response::ok();
     resp.config_value = Some(cookie);
     resp

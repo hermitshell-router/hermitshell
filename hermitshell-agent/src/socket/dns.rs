@@ -238,14 +238,9 @@ pub(super) fn handle_add_dns_blocklist(
     };
     let tag = req.key.as_deref().unwrap_or("ads");
 
-    // Validate URL
-    match reqwest::Url::parse(url) {
-        Ok(parsed) => {
-            if parsed.scheme() != "http" && parsed.scheme() != "https" {
-                return Response::err("url must be http or https");
-            }
-        }
-        Err(_) => return Response::err("invalid url"),
+    // Validate URL: require HTTPS, reject internal IPs (SSRF protection)
+    if let Err(e) = crate::unbound::validate_outbound_url(url, false) {
+        return Response::err(&format!("invalid blocklist URL: {}", e));
     }
 
     // Validate tag

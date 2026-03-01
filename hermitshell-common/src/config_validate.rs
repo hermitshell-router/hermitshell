@@ -29,21 +29,21 @@ impl HermitConfig {
     }
 
     fn validate_network(&self, errors: &mut Vec<ValidationError>) {
-        if let Some(ref iface) = self.network.wan_interface {
-            if !is_valid_iface(iface) {
-                errors.push(ValidationError {
-                    field: "network.wan_interface".into(),
-                    message: format!("invalid interface name: {}", iface),
-                });
-            }
+        if let Some(ref iface) = self.network.wan_interface
+            && !is_valid_iface(iface)
+        {
+            errors.push(ValidationError {
+                field: "network.wan_interface".into(),
+                message: format!("invalid interface name: {}", iface),
+            });
         }
-        if let Some(ref iface) = self.network.lan_interface {
-            if !is_valid_iface(iface) {
-                errors.push(ValidationError {
-                    field: "network.lan_interface".into(),
-                    message: format!("invalid interface name: {}", iface),
-                });
-            }
+        if let Some(ref iface) = self.network.lan_interface
+            && !is_valid_iface(iface)
+        {
+            errors.push(ValidationError {
+                field: "network.lan_interface".into(),
+                message: format!("invalid interface name: {}", iface),
+            });
         }
         match self.network.wan.mode.as_str() {
             "dhcp" | "static" | "pppoe" => {}
@@ -96,13 +96,13 @@ impl HermitConfig {
     }
 
     fn validate_firewall(&self, errors: &mut Vec<ValidationError>) {
-        if let Some(ref dmz) = self.firewall.dmz_host {
-            if dmz.parse::<std::net::Ipv4Addr>().is_err() {
-                errors.push(ValidationError {
-                    field: "firewall.dmz_host".into(),
-                    message: format!("invalid IPv4 address: {}", dmz),
-                });
-            }
+        if let Some(ref dmz) = self.firewall.dmz_host
+            && dmz.parse::<std::net::Ipv4Addr>().is_err()
+        {
+            errors.push(ValidationError {
+                field: "firewall.dmz_host".into(),
+                message: format!("invalid IPv4 address: {}", dmz),
+            });
         }
         for (i, pf) in self.firewall.port_forwards.iter().enumerate() {
             match pf.protocol.as_str() {

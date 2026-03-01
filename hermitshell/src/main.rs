@@ -94,6 +94,18 @@ async fn security_headers_middleware(
         axum::http::header::REFERRER_POLICY,
         axum::http::HeaderValue::from_static("strict-origin-when-cross-origin"),
     );
+    h.insert(
+        axum::http::HeaderName::from_static("permissions-policy"),
+        axum::http::HeaderValue::from_static("camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()"),
+    );
+    h.insert(
+        axum::http::HeaderName::from_static("cross-origin-opener-policy"),
+        axum::http::HeaderValue::from_static("same-origin"),
+    );
+    h.insert(
+        axum::http::HeaderName::from_static("cross-origin-resource-policy"),
+        axum::http::HeaderValue::from_static("same-origin"),
+    );
     response
 }
 

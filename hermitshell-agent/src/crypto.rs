@@ -3,13 +3,18 @@ use aes_gcm::aead::Aead;
 use anyhow::{Context, Result};
 use base64::Engine;
 use hkdf::Hkdf;
+use rand::Rng;
 use sha2::Sha256;
 
 const HKDF_INFO: &[u8] = b"hermitshell-wifi-password-encryption";
 const ENCRYPTED_PREFIX: &str = "enc:v1:";
 
 /// Derive a 32-byte AES-256 key from the session_secret using HKDF-SHA256.
-/// Salt is omitted because the session_secret is already 32 bytes of random data.
+/// Salt is omitted (see SECURITY.md #72): the session_secret is 32 bytes of
+/// OS-sourced random data, making unsalted HKDF output indistinguishable from
+/// random.  Adding a salt now would break decryption of all existing enc:v1:
+/// values with no recovery path.  A future enc:v2: scheme should include a
+/// static domain-separation salt and a transparent migration from v1.
 fn derive_key(session_secret: &str) -> Result<[u8; 32]> {
     if session_secret.len() < 32 {
         anyhow::bail!("session_secret too short for key derivation");
@@ -27,7 +32,7 @@ pub fn encrypt_password(plaintext: &str, session_secret: &str) -> Result<String>
     let cipher = Aes256Gcm::new_from_slice(&key)
         .map_err(|e| anyhow::anyhow!("AES key init: {}", e))?;
 
-    let nonce_bytes: [u8; 12] = rand::random();
+    let nonce_bytes: [u8; 12] = rand::rngs::OsRng.r#gen();
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let ciphertext = cipher.encrypt(nonce, plaintext.as_bytes())
@@ -85,11 +90,11 @@ fn derive_key_from_passphrase(passphrase: &str, salt: &[u8; 16]) -> Result<[u8; 
 /// Encrypt a plaintext string with a user passphrase.
 /// Returns base64(salt(16) || nonce(12) || ciphertext).
 pub fn encrypt_with_passphrase(plaintext: &str, passphrase: &str) -> Result<String> {
-    let salt: [u8; 16] = rand::random();
+    let salt: [u8; 16] = rand::rngs::OsRng.r#gen();
     let key = derive_key_from_passphrase(passphrase, &salt)?;
     let cipher = Aes256Gcm::new_from_slice(&key)
         .map_err(|e| anyhow::anyhow!("AES key init: {}", e))?;
-    let nonce_bytes: [u8; 12] = rand::random();
+    let nonce_bytes: [u8; 12] = rand::rngs::OsRng.r#gen();
     let nonce = Nonce::from_slice(&nonce_bytes);
     let ciphertext = cipher.encrypt(nonce, plaintext.as_bytes())
         .map_err(|e| anyhow::anyhow!("AES encrypt: {}", e))?;

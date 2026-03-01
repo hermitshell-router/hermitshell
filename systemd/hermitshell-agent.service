@@ -34,6 +34,8 @@ RestrictRealtime=yes
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 SystemCallFilter=~@mount @reboot @swap @debug @module @cpu-emulation
+SystemCallArchitectures=native
+UMask=0077
 ProtectProc=invisible
 
 [Install]

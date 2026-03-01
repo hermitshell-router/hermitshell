@@ -1,4 +1,4 @@
-FROM alpine:latest
+FROM alpine:3.21
 
 ARG S6_OVERLAY_VERSION=3.2.0.2
 ARG TARGETARCH

@@ -1,4 +1,5 @@
 mod auth;
+mod common_passwords;
 pub mod config;
 mod devices;
 mod dns;
@@ -35,6 +36,7 @@ const BLOCKED_CONFIG_KEYS: &[&str] = &[
     "runzero_token",
     "runzero_ca_cert",
     "acme_cf_api_token",
+    "acme_cf_zone_id",
     "acme_account_key",
     "webhook_secret",
     "update_latest_version",
@@ -513,7 +515,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "get_alert" => logs::handle_get_alert(&req, db),
         "acknowledge_alert" => logs::handle_acknowledge_alert(&req, db),
         "acknowledge_all_alerts" => logs::handle_acknowledge_all_alerts(&req, db),
-        "log_audit" => logs::handle_log_audit(&req, db),
+        "log_audit" => logs::handle_log_audit(&req, db, log_tx),
         "list_audit_logs" => logs::handle_list_audit_logs(&req, db),
         "ingest_dns_logs" => logs::handle_ingest_dns_logs(&req, db, log_tx),
         "run_analysis" => logs::handle_run_analysis(&req, db, log_tx),
@@ -575,6 +577,18 @@ pub async fn run_dhcp_socket(socket_path: &str, db: Arc<Mutex<Db>>, lan_iface: S
     let conn_limit = Arc::new(Semaphore::new(100));
     loop {
         let (stream, _) = listener.accept().await?;
+        // Enforce SO_PEERCRED: only root (UID 0) may connect to the DHCP socket
+        match stream.peer_cred() {
+            Ok(cred) if cred.uid() == 0 => {}
+            Ok(cred) => {
+                warn!(uid = cred.uid(), "DHCP IPC rejected non-root caller");
+                continue;
+            }
+            Err(e) => {
+                warn!(error = %e, "DHCP IPC failed to get peer credentials");
+                continue;
+            }
+        }
         let permit = match conn_limit.clone().try_acquire_owned() {
             Ok(p) => p,
             Err(_) => {

@@ -46,6 +46,20 @@ jobs:
             cargo build --release -p hermitshell-agent -p hermitshell-dhcp -p hermitshell --target ${{ matrix.target }}
           fi
 
+      - name: Generate SBOM (CycloneDX)
+        if: matrix.arch == 'x86_64'
+        run: |
+          cargo install cargo-cyclonedx
+          cargo cyclonedx --manifest-path Cargo.toml --format json --describe crate
+          VERSION="${GITHUB_REF_NAME}"
+          # Collect per-crate SBOMs into a single directory
+          mkdir -p sbom
+          for bom in $(find . -name "bom.json" -not -path "./sbom/*" -not -path "./target/*"); do
+            crate_dir="$(dirname "$bom")"
+            crate_name="$(basename "$crate_dir")"
+            cp "$bom" "sbom/hermitshell-${crate_name}-${VERSION}.cdx.json"
+          done
+
       - name: Package tarball
         run: |
           VERSION="${GITHUB_REF_NAME}"
@@ -71,6 +85,13 @@ jobs:
             hermitshell-*.tar.gz*
             target/${{ matrix.target }}/debian/*.deb
 
+      - name: Upload SBOM artifacts
+        if: matrix.arch == 'x86_64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom/*.cdx.json
+
   release:
     needs: build
     runs-on: ubuntu-latest
@@ -86,6 +107,7 @@ jobs:
             hermitshell-*.tar.gz
             hermitshell-*.tar.gz.sha256
             *.deb
+            *.cdx.json
 
   docker:
     needs: build

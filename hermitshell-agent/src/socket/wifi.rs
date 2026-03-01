@@ -102,11 +102,11 @@ pub(super) fn handle_wifi_add_provider(req: &Request, db: &Arc<Mutex<Db>>) -> Re
     }
 
     // Encrypt password
-    let session_secret = {
+    let session_secret = Zeroizing::new({
         let db_locked = db.lock().unwrap();
         db_locked.get_config("session_secret").ok().flatten()
             .unwrap_or_default()
-    };
+    });
     let password_enc = if session_secret.is_empty() {
         password.clone()
     } else {
@@ -253,10 +253,10 @@ async fn connect_to_provider(provider_id: &str, db: &Arc<Mutex<Db>>) -> Result<B
 
     // Decrypt password
     let password: Zeroizing<String> = {
-        let session_secret = {
+        let session_secret = Zeroizing::new({
             let db = db.lock().unwrap();
             db.get_config("session_secret").ok().flatten().unwrap_or_default()
-        };
+        });
         if session_secret.is_empty() || !crate::crypto::is_encrypted(&password_enc) {
             Zeroizing::new(password_enc)
         } else {
@@ -270,10 +270,10 @@ async fn connect_to_provider(provider_id: &str, db: &Arc<Mutex<Db>>) -> Result<B
     // Decrypt API key if present
     let api_key: Option<Zeroizing<String>> = api_key_enc.and_then(|enc| {
         if enc.is_empty() { return None; }
-        let session_secret = {
+        let session_secret = Zeroizing::new({
             let db = db.lock().unwrap();
             db.get_config("session_secret").ok().flatten().unwrap_or_default()
-        };
+        });
         if session_secret.is_empty() || !crate::crypto::is_encrypted(&enc) {
             Some(Zeroizing::new(enc))
         } else {
