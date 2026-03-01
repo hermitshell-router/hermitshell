@@ -7,7 +7,7 @@ license = "MIT"
 [dependencies]
 anyhow = "1"
 hermitshell-common = { path = "../hermitshell-common" }
-dhcproto = "0.12"
+dhcproto = "0.14"
 ipnet = "2"
 lru = "0.12"
 socket2 = { version = "0.6", features = ["all"] }
