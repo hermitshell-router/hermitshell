@@ -1093,7 +1093,7 @@ This document tracks security compromises made during implementation, why they w
 
 ## 146. runZero and GitHub update URLs are hardcoded (no SSRF risk)
 
-**What:** The runZero API URL is admin-configurable but requires `https://` prefix (validated in `handle_set_runzero_config`). The GitHub releases URL is hardcoded to `https://api.github.com/repos/jnordwick/hermitshell/releases/latest`. ACME endpoints are hardcoded to Let's Encrypt production/staging. Cloudflare API endpoints are hardcoded to `https://api.cloudflare.com/client/v4/`.
+**What:** The runZero API URL is admin-configurable but requires `https://` prefix (validated in `handle_set_runzero_config`). The GitHub releases URL is hardcoded to `https://api.github.com/repos/hermitshell-router/hermitshell/releases/latest`. ACME endpoints are hardcoded to Let's Encrypt production/staging. Cloudflare API endpoints are hardcoded to `https://api.cloudflare.com/client/v4/`.
 
 **Why:** These are legitimate external service integrations with fixed or HTTPS-validated endpoints.
 

@@ -136,10 +136,10 @@ TASKS (research/documentation only — no code changes):
    e. Security controls per boundary (reference existing controls)
    f. Accepted risks (reference SECURITY.md issue numbers)
 4. Create docs/.well-known/security.txt (RFC 9116) with:
-   - Contact: security@hermitshell.dev
+   - Contact: security@hermitshell.org
    - Preferred-Languages: en
-   - Canonical: https://hermitshell.dev/.well-known/security.txt
-   - Policy: https://github.com/hermitshell/hermitshell/blob/main/docs/SECURITY.md
+   - Canonical: https://hermitshell.org/.well-known/security.txt
+   - Policy: https://github.com/hermitshell-router/hermitshell/blob/main/docs/SECURITY.md
 5. Write findings to /tmp/owasp-c4-findings.md
 ```
 

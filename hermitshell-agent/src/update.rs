@@ -4,8 +4,8 @@ use tracing::{debug, info, warn};
 use crate::paths;
 
 const GITHUB_RELEASES_URL: &str =
-    "https://api.github.com/repos/jnordwick/hermitshell/releases/latest";
-const GITHUB_DOWNLOAD_URL: &str = "https://github.com/jnordwick/hermitshell/releases/download";
+    "https://api.github.com/repos/hermitshell-router/hermitshell/releases/latest";
+const GITHUB_DOWNLOAD_URL: &str = "https://github.com/hermitshell-router/hermitshell/releases/download";
 const CHECK_INTERVAL_SECS: u64 = 86400; // 24 hours
 const BINARIES: &[&str] = &["hermitshell-agent", "hermitshell-dhcp", "hermitshell"];
 

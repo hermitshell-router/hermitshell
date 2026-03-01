@@ -48,7 +48,7 @@ dhcproto = "0.14"
 
 [package.metadata.deb]
 name = "hermitshell"
-maintainer = "HermitShell <hello@hermitshell.dev>"
+maintainer = "HermitShell <hello@hermitshell.org>"
 copyright = "2025-2026, HermitShell contributors"
 license-file = ["../LICENSE", "0"]
 depends = "nftables, conntrack, wireguard-tools, iproute2, unbound"

@@ -70,7 +70,7 @@ A single script that downloads the latest release, installs system dependencies,
 
 ```bash
 # Download and run
-curl -fsSL https://github.com/hermitshell/hermitshell/releases/latest/download/install.sh -o install.sh
+curl -fsSL https://github.com/hermitshell-router/hermitshell/releases/latest/download/install.sh -o install.sh
 sudo bash install.sh --wan eth0 --lan eth1
 ```
 
@@ -93,7 +93,7 @@ sudo bash install.sh --wan eth0 --lan eth1 --local hermitshell-v1.0.0-x86_64-lin
 
 ## Method 4: .deb Package (Manual)
 
-Each GitHub release includes `.deb` packages for amd64 and arm64. Download from the [releases page](https://github.com/hermitshell/hermitshell/releases).
+Each GitHub release includes `.deb` packages for amd64 and arm64. Download from the [releases page](https://github.com/hermitshell-router/hermitshell/releases).
 
 ```bash
 sudo dpkg -i hermitshell_*.deb
@@ -147,7 +147,7 @@ The module automatically:
 
 ## Method 6: Static Binaries (Any Linux Distro)
 
-Every release includes static musl-linked binaries that run on any Linux distro without runtime dependencies. Download the tarball for your architecture from the [releases page](https://github.com/hermitshell/hermitshell/releases).
+Every release includes static musl-linked binaries that run on any Linux distro without runtime dependencies. Download the tarball for your architecture from the [releases page](https://github.com/hermitshell-router/hermitshell/releases).
 
 The tarball contains:
 - `hermitshell-agent` — the router daemon

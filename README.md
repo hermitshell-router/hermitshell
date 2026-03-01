@@ -47,7 +47,7 @@ docker run -d --name hermitshell \
 ### Install Script (Debian/Ubuntu)
 
 ```bash
-curl -fsSL https://github.com/hermitshell/hermitshell/releases/latest/download/install.sh -o install.sh
+curl -fsSL https://github.com/hermitshell-router/hermitshell/releases/latest/download/install.sh -o install.sh
 sudo bash install.sh --wan eth0 --lan eth1
 ```
 

@@ -653,11 +653,11 @@ Prior to this audit, no structured threat model document existed. Security trade
 No `security.txt` existed for coordinated vulnerability disclosure.
 
 **Action taken:** Created `docs/.well-known/security.txt` with:
-- `Contact: mailto:security@hermitshell.dev`
+- `Contact: mailto:security@hermitshell.org`
 - `Expires: 2027-03-01T00:00:00.000Z`
 - `Preferred-Languages: en`
-- `Canonical: https://hermitshell.dev/.well-known/security.txt`
-- `Policy: https://github.com/hermitshell/hermitshell/blob/main/docs/SECURITY.md`
+- `Canonical: https://hermitshell.org/.well-known/security.txt`
+- `Policy: https://github.com/hermitshell-router/hermitshell/blob/main/docs/SECURITY.md`
 
 **Assessment:** Gap remediated. The file should be served at the canonical URL on the project website.
 
@@ -1975,7 +1975,7 @@ SSRF utility is limited because:
 **SECURITY.md:** #148
 
 - **runZero:** Admin-configurable but already requires `https://` prefix. The agent sends requests to a specific API path (`/api/v1.0/export/org/assets.json`), limiting SSRF utility.
-- **GitHub releases:** Hardcoded to `https://api.github.com/repos/jnordwick/hermitshell/releases/latest`.
+- **GitHub releases:** Hardcoded to `https://api.github.com/repos/hermitshell-router/hermitshell/releases/latest`.
 - **ACME:** Hardcoded to Let's Encrypt production/staging directories.
 - **Cloudflare:** Hardcoded to `https://api.cloudflare.com/client/v4/`.
 

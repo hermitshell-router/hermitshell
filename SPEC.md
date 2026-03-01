@@ -797,16 +797,16 @@ The agent runs on the host with carefully scoped privileges.
 **Installation:**
 ```bash
 # Quick install
-curl -sSL https://install.hermitshell.dev/agent | sudo bash
+curl -sSL https://install.hermitshell.org/agent | sudo bash
 
 # With options
-curl -sSL https://install.hermitshell.dev/agent | sudo bash -s -- \
+curl -sSL https://install.hermitshell.org/agent | sudo bash -s -- \
     --wan eth0 \
     --lan eth1 \
     --yes           # Non-interactive
 
 # Uninstall
-curl -sSL https://install.hermitshell.dev/agent | sudo bash -s -- --uninstall
+curl -sSL https://install.hermitshell.org/agent | sudo bash -s -- --uninstall
 ```
 
 **Config at /etc/hermitshell/agent.toml:**
@@ -2073,23 +2073,23 @@ The editor shows warnings for rules that may conflict with HermitShell's isolati
 
 ```bash
 # One-liner install
-curl -sSL https://install.hermitshell.dev | bash
+curl -sSL https://install.hermitshell.org | bash
 
 # Non-interactive (for automation)
-curl -sSL https://install.hermitshell.dev | bash -s -- --yes
+curl -sSL https://install.hermitshell.org | bash -s -- --yes
 
 # With custom options
-curl -sSL https://install.hermitshell.dev | bash -s -- \
+curl -sSL https://install.hermitshell.org | bash -s -- \
     --wan eth0 \
     --lan eth1 \
     --data-dir /var/lib/hermitshell
 
 # Upgrade existing installation
-curl -sSL https://install.hermitshell.dev | bash -s -- --upgrade
+curl -sSL https://install.hermitshell.org | bash -s -- --upgrade
 
 # Uninstall (preserves data by default)
-curl -sSL https://install.hermitshell.dev | bash -s -- --uninstall
-curl -sSL https://install.hermitshell.dev | bash -s -- --uninstall --purge  # Remove data too
+curl -sSL https://install.hermitshell.org | bash -s -- --uninstall
+curl -sSL https://install.hermitshell.org | bash -s -- --uninstall --purge  # Remove data too
 ```
 
 **Installer steps:**

@@ -1,5 +1,5 @@
-Contact: mailto:security@hermitshell.dev
+Contact: mailto:security@hermitshell.org
 Expires: 2027-03-01T00:00:00.000Z
 Preferred-Languages: en
-Canonical: https://hermitshell.dev/.well-known/security.txt
-Policy: https://github.com/hermitshell/hermitshell/blob/main/docs/SECURITY.md
+Canonical: https://hermitshell.org/.well-known/security.txt
+Policy: https://github.com/hermitshell-router/hermitshell/blob/main/docs/SECURITY.md

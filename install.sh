@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-REPO="hermitshell/hermitshell"
+REPO="hermitshell-router/hermitshell"
 INSTALL_DIR="/opt/hermitshell"
 DATA_DIR="/var/lib/hermitshell"
 RUN_DIR="/run/hermitshell"
@@ -238,7 +238,7 @@ UNIT
     echo "HermitShell installed successfully."
     echo ""
     echo "Tip: For easier upgrades, use the apt repository instead:"
-    echo "  https://github.com/hermitshell/hermitshell#install-via-apt"
+    echo "  https://github.com/hermitshell-router/hermitshell#install-via-apt"
     echo "  Web UI: https://10.0.0.1 (self-signed cert)"
     echo "  Logs:   journalctl -u hermitshell-agent -f"
 }

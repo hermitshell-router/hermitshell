@@ -205,7 +205,7 @@ Query logs from Unbound reveal browsing activity for every device on the network
 
 **Protocol:** DHCPv4 (UDP 67/68), DHCPv6 (UDP 546/547).
 
-**Threats:** Rogue DHCP server on LAN, DHCP starvation (mitigated by per-device /30 subnets), DHCP fingerprint spoofing (#85). The DHCP IPC socket now enforces SO_PEERCRED (SECURITY.md #131).
+**Threats:** Rogue DHCP server on LAN, DHCP starvation (mitigated by per-device /32 point-to-point addressing), DHCP fingerprint spoofing (#85). The DHCP IPC socket now enforces SO_PEERCRED (SECURITY.md #131).
 
 ### 4.4 WireGuard (Configurable UDP Port)
 

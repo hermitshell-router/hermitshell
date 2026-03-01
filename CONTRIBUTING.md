@@ -109,7 +109,7 @@ Open an issue on GitHub. Include:
 
 ## Security Issues
 
-If you find a security vulnerability, please report it privately rather than opening a public issue. Email security@hermitshell.dev or use GitHub's private vulnerability reporting.
+If you find a security vulnerability, please report it privately rather than opening a public issue. Email security@hermitshell.org or use GitHub's private vulnerability reporting.
 
 ## License
 
