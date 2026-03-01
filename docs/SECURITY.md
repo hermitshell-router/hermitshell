@@ -703,3 +703,107 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Acceptable for test infrastructure. If NixOS-specific systemd hardening needs testing, add a test case that enables the module and verifies the service starts with the expected restrictions.
 
+---
+
+## Declarative Config System
+
+## 110. apply_config bypasses BLOCKED_CONFIG_KEYS for secrets
+
+**What:** The `apply_hermit_config` function in `socket/config.rs` directly writes secrets to the database when `HermitSecrets` is provided, bypassing the `BLOCKED_CONFIG_KEYS` protection that normally prevents socket clients from reading or writing these values via `get_config`/`set_config`.
+
+**Why:** The declarative config pattern requires applying secrets (password hashes, private keys, API tokens) as part of a complete configuration restore. The `BLOCKED_CONFIG_KEYS` allowlist protects against ad-hoc socket reads/writes, but `apply_config` must accept secrets as a batch operation.
+
+**Risk:** If `apply_config` is called with malicious secrets (e.g., a forged admin password hash or WireGuard private key), they are written to the database with no additional per-secret validation. The caller is trusted to have authenticated via the session or API key mechanism. A compromised web UI container — which has `apply_config` in its `WEB_ALLOWED_METHODS` set — could rewrite all secrets in one call.
+
+**Proper fix:** Add per-secret format validation before writing (e.g., verify WireGuard keys are valid base64, password hashes match the argon2 format). Consider requiring a separate confirmation step when the secrets parameter includes `api_key_hash` or `admin_password_hash`.
+
+## 111. WireGuard peer reconciliation deferred to agent restart
+
+**What:** When `apply_config` processes WireGuard peers, it deletes all rows from `wg_peers` and re-inserts the declared peers with fresh subnet allocations and nftables rules. However, runtime changes to the `wg0` interface (adding/removing peers via the `wg` command) are not performed — they are deferred to the next agent restart.
+
+**Why:** Reconciling the live wg0 interface requires kernel syscalls for each peer add/remove and must coordinate with the interface's private key and listen port. The same deferral pattern is used by `import_config`.
+
+**Risk:** Between apply and restart, the database and running WireGuard interface are out of sync. Peers deleted from the config can still connect via wg0, and newly declared peers cannot connect until the agent restarts. If the agent crashes before restarting, the DB has the new state while wg0 retains the old state.
+
+**Proper fix:** Reconcile WireGuard peers live by computing a diff (peers to add, remove, keep) and applying changes via `wg set` commands. Use a transaction to ensure DB and wg0 changes are atomic.
+
+## 112. Secrets transmitted as plaintext JSON over Unix socket
+
+**What:** The `apply_config` socket handler accepts secrets as a JSON string in the `req.secrets` field. The entire `HermitSecrets` struct (admin password hash, WireGuard private key, TLS key, API tokens) is serialized as plaintext JSON.
+
+**Why:** The declarative config system sends secrets alongside the config for atomic application. Hermitctl loads both from files and transmits them in a single socket request.
+
+**Risk:** Unix socket traffic can be intercepted by root with `strace` or `socat`. In practice, a root attacker can already read the DB directly, so the additional exposure is marginal. This follows the same pattern as `verify_password` (issue #33), which also sends plaintext over the socket.
+
+**Proper fix:** Acceptable for the threat model — root access is already game over. For defense-in-depth, secrets could be encrypted with a shared key before transmission, but the complexity is not justified when the socket is already root-restricted.
+
+## 113. apply_config has no transaction atomicity
+
+**What:** `apply_hermit_config` writes to multiple database tables (config, port_forwards, dhcp_reservations, dns_forward_zones, dns_custom_records, wg_peers) via individual SQL statements without wrapping them in an explicit `BEGIN`/`COMMIT` transaction. If a crash or disk error occurs mid-write, the database is left partially updated.
+
+**Why:** The "best-effort" pattern with `let _ = db_guard.set_config(...)` provides graceful degradation — partial success is preferred over a full rollback that leaves the system unchanged. SQLite's WAL mode provides some durability for individual writes.
+
+**Risk:** A power loss or crash during apply_config leaves the database inconsistent (e.g., DHCP reservations updated but DNS forward zones still old). Reconciliation code (nftables, Unbound, QoS) runs after the DB lock is dropped and reads whatever state exists, which may be a mix of old and new config.
+
+**Proper fix:** Wrap all database writes in an explicit SQLite transaction. If any write fails, roll back the entire transaction and return an error. Only run reconciliation (nftables, DNS, QoS) after a successful commit.
+
+## 114. DELETE-then-INSERT pattern for WireGuard peers
+
+**What:** `apply_config` executes `DELETE FROM wg_peers` before re-inserting the declared peers. If the apply fails after the DELETE but before re-INSERT (disk full, crash), the wg_peers table is left empty.
+
+**Why:** The declarative model treats the config file as the source of truth. DELETE-then-INSERT is the simplest reconciliation strategy — no diffing required.
+
+**Risk:** An incomplete or corrupted config file applied via `hermitctl apply` could delete all peers. Combined with the lack of transaction atomicity (issue #113), a mid-apply failure leaves the peers table empty.
+
+**Proper fix:** Use a transaction (see #113) so DELETE and INSERT are atomic. Alternatively, compute a diff against the current peers and only modify rows that differ.
+
+## 115. No rate limiting on REST API authentication
+
+**What:** The REST API (`rest_api.rs`) verifies bearer tokens via argon2 on every request with no rate limiting. An attacker on the router host can attempt many API keys in rapid succession.
+
+**Why:** The REST API binds to localhost only (`127.0.0.1:9080`), limiting the attacker surface to local processes. Rate limiting adds complexity for a localhost-only service.
+
+**Risk:** Argon2 verification is moderately slow (~100ms), but an attacker can still try ~36,000 keys per hour. The web UI's login endpoint has exponential backoff (issue #41), but the REST API does not share that rate limiter.
+
+**Proper fix:** Implement exponential backoff on failed bearer token verifications, similar to the web UI's per-IP rate limiter. Log all authentication failures for alerting.
+
+## 116. Config export includes full state via REST API
+
+**What:** `GET /api/v1/config` returns the full router configuration as JSON, including all non-secret settings. The `export_config` socket command (used by `hermitctl export`) can additionally include secrets.
+
+**Why:** The REST API config endpoint enables external tooling (monitoring, backup scripts) to read the current state. Secrets are excluded from the REST endpoint (only the socket-based export supports `include_secrets`).
+
+**Risk:** A compromised process with a valid API key can read the full router configuration (network topology, device list, firewall rules, DNS settings, WiFi provider configs) via the REST API. This provides reconnaissance value but does not directly expose secrets.
+
+**Proper fix:** Acceptable for the threat model. The REST API requires a valid bearer token, and the response excludes secrets. For finer-grained access, consider read-only API keys that can only access status endpoints.
+
+## 117. Validation split between hermitshell-common and agent
+
+**What:** Config validation occurs in two layers: structural validation in `hermitshell-common/src/config_validate.rs` (field types, ranges, enum values) and agent-level validation in `socket/config.rs` (nftables-specific checks, DNS domain validation, URL parsing). A config that passes structural validation may still be rejected by agent-level validation.
+
+**Why:** The common library is shared by hermitctl (offline validation) and the agent. Agent-level validation adds domain-specific checks (e.g., `nftables::validate_ip`, `nftables::is_gateway_ip`, `unbound::validate_domain`) that depend on agent internals.
+
+**Risk:** If the two layers diverge, hermitctl's `validate` subcommand may report a config as valid while `apply` rejects it. The agent layer is strictly more restrictive, so false positives (validate passes, apply fails) are possible but false negatives (validate fails, apply would succeed) are not.
+
+**Proper fix:** Add a `validate` socket command that runs both validation layers on the agent side. Have hermitctl's `validate` subcommand use this instead of only the common library. This ensures offline and online validation produce identical results.
+
+## 118. hermitctl requires root for socket access
+
+**What:** The hermitctl CLI connects directly to the agent's Unix socket (`/run/hermitshell/agent.sock`, permissions `0660 root:root`). It must be run as root or via sudo.
+
+**Why:** The socket enforces SO_PEERCRED checks, and root access is required for privileged operations (apply_config, export with secrets). This is consistent with other router CLI tools (e.g., `uci` on OpenWrt requires root).
+
+**Risk:** Users must elevate to root to use hermitctl, which grants full system privileges. A compromised hermitctl binary (supply chain attack) would run with root access. No per-user audit trail — the audit log records the action but not which sudo user ran hermitctl.
+
+**Proper fix:** Acceptable for the threat model — router administration inherently requires root. For defense-in-depth, hermitctl could use the REST API (which requires a bearer token but not root) for read-only operations like `export` and `status`.
+
+## 119. Secrets not zeroized in all code paths
+
+**What:** Some secret values are wrapped in `Zeroizing<String>` (e.g., API key hash lookups in `rest_api.rs`, runZero token checks in `socket/config.rs`), but plaintext secrets in the `apply_config` path — specifically the `HermitSecrets` struct deserialized from JSON and the individual string values written to the DB — are not zeroized after use.
+
+**Why:** Zeroization was applied incrementally to the most sensitive read paths. The `apply_config` write path creates temporary String values from serde deserialization that are not wrapped in `Zeroizing`.
+
+**Risk:** Plaintext secrets may remain in heap memory after `apply_config` completes, accessible to a debugger or core dump. In practice, a root attacker who can attach a debugger can also read the DB directly.
+
+**Proper fix:** Audit all secret-handling paths and wrap temporary secret strings in `Zeroizing<String>`. Priority: the `HermitSecrets` fields after DB insertion, and the `secrets_str` used during encrypted export serialization.
+
