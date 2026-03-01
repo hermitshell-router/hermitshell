@@ -659,6 +659,16 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Validate all fields before writing any of them to the DB. Collect the validated values into local variables first, then write them all in a batch. This applies to both the wizard and post-wizard versions.
 
+## 108. REST API serves plaintext HTTP on localhost
+
+**What:** The REST API (`/api/v1/*`) listens on `127.0.0.1:9080` using plaintext HTTP. It is only reachable from the router itself (e.g., web UI container, hermitctl CLI). API keys are transmitted in the `Authorization: Bearer` header.
+
+**Why:** The REST API binds to localhost only, so it is not exposed to the LAN or WAN. The web UI container (on the same host) can proxy to it over HTTPS. Adding direct TLS would duplicate the web UI's cert management.
+
+**Risk:** A process on the router host with network access to localhost can reach the API. Since the router runs only trusted agent and container processes, this is acceptable. If the router is compromised at the process level, the attacker already has access to the Unix socket and DB file.
+
+**Proper fix:** Add TLS to the REST API for defense-in-depth, or front it with the web UI's HTTPS reverse proxy for external access.
+
 ## 107. Post-wizard interface change can lock out the admin
 
 **What:** The wizard's `handle_set_interfaces` can only run before a password is set — meaning before the admin has a management session and before real traffic flows. The post-wizard `handle_update_interfaces` has no such guard. An admin can swap WAN and LAN assignments on a live router.

@@ -665,6 +665,509 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
     Response::ok()
 }
 
+pub(super) fn handle_get_full_config(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let db = db.lock().unwrap();
+    let config = build_hermit_config(&db);
+    let mut resp = Response::ok();
+    resp.config_value = Some(serde_json::to_string(&config).unwrap_or_default());
+    resp
+}
+
+/// Build a HermitConfig from the current DB state.
+pub fn build_hermit_config(db: &Db) -> hermitshell_common::HermitConfig {
+    use hermitshell_common::*;
+
+    let devices = db.list_devices().unwrap_or_default();
+    let reservations = db.list_dhcp_reservations().unwrap_or_default();
+    let forwards = db.list_port_forwards().unwrap_or_default();
+    let peers = db.list_wg_peers().unwrap_or_default();
+    let pinholes = db.list_ipv6_pinholes().unwrap_or_default();
+    let wifi_providers = db.list_wifi_providers().unwrap_or_default();
+    let dns_forwards = db.list_dns_forward_zones().unwrap_or_default();
+    let dns_rules = db.list_dns_custom_rules().unwrap_or_default();
+    let dns_blocklists = db.list_dns_blocklists().unwrap_or_default();
+
+    HermitConfig {
+        network: NetworkConfig {
+            wan_interface: db.get_config("wan_iface").ok().flatten(),
+            lan_interface: db.get_config("lan_iface").ok().flatten(),
+            hostname: None, // hostname is system-level, read from /etc/hostname
+            timezone: None, // timezone is system-level
+            upstream_dns: Vec::new(), // stored in unbound config, not DB KV
+            wan: WanConfig::default(),
+        },
+        dns: DnsConfig {
+            ad_blocking: db.get_config_bool("ad_blocking_enabled", true),
+            ratelimit_per_second: db.get_config("dns_ratelimit_per_client").ok().flatten()
+                .and_then(|v| v.parse().ok()),
+            blocklists: dns_blocklists.iter().map(|bl| BlocklistConfig {
+                name: bl.name.clone(),
+                url: bl.url.clone(),
+                tag: bl.tag.clone(),
+                enabled: bl.enabled,
+            }).collect(),
+            forward_zones: dns_forwards.iter().map(|fz| ForwardZoneConfig {
+                domain: fz.domain.clone(),
+                forward_to: fz.forward_addr.clone(),
+                enabled: fz.enabled,
+            }).collect(),
+            custom_records: dns_rules.iter().map(|cr| CustomRecordConfig {
+                domain: cr.domain.clone(),
+                record_type: cr.record_type.clone(),
+                value: cr.value.clone(),
+                enabled: cr.enabled,
+            }).collect(),
+            bypass_allowed: Some(DnsBypassConfig {
+                trusted: db.get_config_bool("dns_bypass_allowed_trusted", false),
+                guest: db.get_config_bool("dns_bypass_allowed_guest", false),
+                quarantine: db.get_config_bool("dns_bypass_allowed_quarantine", false),
+                iot: db.get_config_bool("dns_bypass_allowed_iot", false),
+                servers: db.get_config_bool("dns_bypass_allowed_servers", false),
+            }),
+        },
+        firewall: FirewallConfig {
+            dmz_host: db.get_config("dmz_host_ip").ok().flatten().filter(|s| !s.is_empty()),
+            port_forwards: forwards.iter().filter(|f| f.source == "manual" || f.source.is_empty()).map(|f| PortForwardConfig {
+                protocol: f.protocol.clone(),
+                external_port: f.external_port_start,
+                external_port_end: if f.external_port_end != f.external_port_start { Some(f.external_port_end) } else { None },
+                internal_ip: f.internal_ip.clone(),
+                internal_port: f.internal_port,
+                enabled: f.enabled,
+                description: f.description.clone(),
+            }).collect(),
+            ipv6_pinholes: pinholes.iter().filter_map(|p| {
+                Some(Ipv6PinholeConfig {
+                    device: p.get("device_mac")?.as_str()?.to_string(),
+                    protocol: p.get("protocol")?.as_str()?.to_string(),
+                    port_start: p.get("port_start")?.as_i64()? as u16,
+                    port_end: p.get("port_end").and_then(|v| v.as_i64()).map(|v| v as u16),
+                    description: p.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                })
+            }).collect(),
+            upnp_enabled: db.get_config("upnp_enabled").ok().flatten().map(|v| v == "true"),
+        },
+        wireguard: WireguardConfig {
+            enabled: db.get_config_bool("wg_enabled", false),
+            listen_port: db.get_config("wg_listen_port").ok().flatten()
+                .and_then(|v| v.parse().ok()).unwrap_or(51820),
+            peers: peers.iter().map(|p| WgPeerConfig {
+                name: p.name.clone(),
+                public_key: p.public_key.clone(),
+                device_group: p.device_group.clone(),
+                enabled: p.enabled,
+            }).collect(),
+        },
+        devices: devices.iter().filter(|d| d.subnet_id.is_some()).map(|d| DeviceConfig {
+            mac: d.mac.clone(),
+            hostname: d.hostname.clone(),
+            nickname: d.nickname.clone(),
+            group: d.device_group.clone(),
+        }).collect(),
+        dhcp: DhcpConfig {
+            reservations: reservations.iter().map(|r| DhcpReservationConfig {
+                mac: r.mac.clone(),
+                subnet_id: r.subnet_id,
+            }).collect(),
+        },
+        qos: QosConfig {
+            enabled: db.get_config_bool("qos_enabled", false),
+            upload_mbps: db.get_config("qos_upload_mbps").ok().flatten()
+                .and_then(|v| v.parse().ok()).unwrap_or(0),
+            download_mbps: db.get_config("qos_download_mbps").ok().flatten()
+                .and_then(|v| v.parse().ok()).unwrap_or(0),
+        },
+        logging: LoggingConfig {
+            format: db.get_config("log_format").ok().flatten().unwrap_or_else(|| "text".into()),
+            retention_days: db.get_config("log_retention_days").ok().flatten()
+                .and_then(|v| v.parse().ok()).unwrap_or(7),
+            syslog_target: db.get_config("syslog_target").ok().flatten().filter(|s| !s.is_empty()),
+            webhook_url: db.get_config("webhook_url").ok().flatten().filter(|s| !s.is_empty()),
+        },
+        tls: TlsConfig {
+            mode: db.get_config("tls_mode").ok().flatten().unwrap_or_else(|| "self_signed".into()),
+        },
+        analysis: AnalysisConfig {
+            enabled: db.get_config_bool("analyzer_enabled", false),
+            alert_rules: Some(AlertRulesConfig {
+                dns_beaconing: db.get_config("alert_rule_dns_beaconing").ok().flatten().map(|v| v == "true"),
+                dns_volume_spike: db.get_config("alert_rule_dns_volume_spike").ok().flatten().map(|v| v == "true"),
+                new_dest_spike: db.get_config("alert_rule_new_dest_spike").ok().flatten().map(|v| v == "true"),
+                suspicious_ports: db.get_config("alert_rule_suspicious_ports").ok().flatten().map(|v| v == "true"),
+                bandwidth_spike: db.get_config("alert_rule_bandwidth_spike").ok().flatten().map(|v| v == "true"),
+            }),
+        },
+        wifi: WifiConfig {
+            providers: wifi_providers.iter().map(|p| {
+                let creds = db.get_wifi_provider_credentials(&p.id).ok().flatten();
+                let (site, username) = creds.map(|c| (c.4, Some(c.2))).unwrap_or((None, None));
+                WifiProviderConfig {
+                    name: p.name.clone(),
+                    provider_type: p.provider_type.clone(),
+                    url: p.url.clone(),
+                    enabled: p.enabled,
+                    site,
+                    username,
+                }
+            }).collect(),
+        },
+    }
+}
+
+pub(super) fn handle_apply_config(
+    req: &Request,
+    db: &Arc<Mutex<Db>>,
+    portmap: &crate::portmap::SharedRegistry,
+    unbound: &Arc<Mutex<UnboundManager>>,
+) -> Response {
+    let Some(ref data) = req.value else {
+        return Response::err("value required (JSON HermitConfig)");
+    };
+    let config: hermitshell_common::HermitConfig = match serde_json::from_str(data) {
+        Ok(v) => v,
+        Err(e) => return Response::err(&format!("invalid config JSON: {}", e)),
+    };
+
+    // Parse optional secrets
+    let secrets: Option<hermitshell_common::HermitSecrets> = req.secrets.as_ref().and_then(|s| {
+        serde_json::from_str(s).ok()
+    });
+
+    match apply_hermit_config(&config, secrets.as_ref(), db, portmap, unbound) {
+        Ok(()) => Response::ok(),
+        Err(e) => Response::err(&e),
+    }
+}
+
+/// Apply a HermitConfig: validate, write to DB, and reconcile all subsystems.
+/// Shared by socket handler and REST API.
+/// If `secrets` is provided, blocked config keys (password hashes, private keys, etc.)
+/// are also written to the DB.
+pub fn apply_hermit_config(
+    config: &hermitshell_common::HermitConfig,
+    secrets: Option<&hermitshell_common::HermitSecrets>,
+    db: &Arc<Mutex<Db>>,
+    portmap: &crate::portmap::SharedRegistry,
+    unbound: &Arc<Mutex<UnboundManager>>,
+) -> Result<(), String> {
+    // Structural validation
+    let errors = config.validate();
+    if !errors.is_empty() {
+        let msg = errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; ");
+        return Err(format!("validation failed: {}", msg));
+    }
+
+    // Agent-level validation (nftables-specific checks)
+    // Validate interfaces
+    if let Some(ref iface) = config.network.wan_interface {
+        if crate::nftables::validate_iface(iface).is_err() {
+            return Err(format!("invalid WAN interface: {}", iface));
+        }
+    }
+    if let Some(ref iface) = config.network.lan_interface {
+        if crate::nftables::validate_iface(iface).is_err() {
+            return Err(format!("invalid LAN interface: {}", iface));
+        }
+    }
+    // Validate device MACs
+    for dev in &config.devices {
+        if crate::nftables::validate_mac(&dev.mac).is_err() {
+            return Err(format!("invalid device MAC: {}", dev.mac));
+        }
+    }
+    // Validate port forward IPs
+    for pf in &config.firewall.port_forwards {
+        if crate::nftables::validate_ip(&pf.internal_ip).is_err() {
+            return Err(format!("invalid port forward IP: {}", pf.internal_ip));
+        }
+        if crate::nftables::is_gateway_ip(&pf.internal_ip) {
+            return Err("port forward cannot target the gateway address".to_string());
+        }
+    }
+    // Validate DNS domains
+    for fz in &config.dns.forward_zones {
+        if crate::unbound::validate_domain(&fz.domain).is_err() {
+            return Err(format!("invalid forward zone domain: {}", fz.domain));
+        }
+    }
+    for cr in &config.dns.custom_records {
+        if crate::unbound::validate_domain(&cr.domain).is_err() {
+            return Err(format!("invalid custom record domain: {}", cr.domain));
+        }
+    }
+    // Validate blocklist URLs
+    for bl in &config.dns.blocklists {
+        match reqwest::Url::parse(&bl.url) {
+            Ok(parsed) if parsed.scheme() == "http" || parsed.scheme() == "https" => {}
+            _ => return Err(format!("invalid blocklist URL: {}", bl.url)),
+        }
+    }
+    // Validate syslog target format (host:port)
+    if let Some(ref target) = config.logging.syslog_target {
+        if !target.is_empty() {
+            let parts: Vec<&str> = target.rsplitn(2, ':').collect();
+            if parts.len() != 2 || parts[0].parse::<u16>().is_err() {
+                return Err(format!("invalid syslog_target (expected host:port): {}", target));
+            }
+        }
+    }
+    // Validate webhook URL
+    if let Some(ref url) = config.logging.webhook_url {
+        if !url.is_empty() {
+            match reqwest::Url::parse(url) {
+                Ok(parsed) if parsed.scheme() == "http" || parsed.scheme() == "https" => {}
+                _ => return Err(format!("invalid webhook_url: {}", url)),
+            }
+        }
+    }
+
+    // Count limits
+    if config.devices.len() > MAX_IMPORT_DEVICES {
+        return Err(format!("too many devices ({}, max {})", config.devices.len(), MAX_IMPORT_DEVICES));
+    }
+    if config.firewall.port_forwards.len() > MAX_IMPORT_PORT_FORWARDS {
+        return Err(format!("too many port forwards ({}, max {})", config.firewall.port_forwards.len(), MAX_IMPORT_PORT_FORWARDS));
+    }
+    if config.firewall.ipv6_pinholes.len() > MAX_IMPORT_PINHOLES {
+        return Err(format!("too many pinholes ({}, max {})", config.firewall.ipv6_pinholes.len(), MAX_IMPORT_PINHOLES));
+    }
+
+    let db_guard = db.lock().unwrap();
+
+    // --- Write config to DB ---
+
+    // Network config
+    if let Some(ref iface) = config.network.wan_interface {
+        let _ = db_guard.set_config("wan_iface", iface);
+    }
+    if let Some(ref iface) = config.network.lan_interface {
+        let _ = db_guard.set_config("lan_iface", iface);
+    }
+
+    // Devices
+    for dev in &config.devices {
+        let _ = db_guard.set_device_group(&dev.mac, &dev.group);
+        if let Some(ref hostname) = dev.hostname {
+            let clean = sanitize_hostname(hostname);
+            if !clean.is_empty() {
+                let _ = db_guard.set_device_hostname(&dev.mac, &clean);
+            }
+        }
+        if let Some(ref nickname) = dev.nickname {
+            let mut clean: String = nickname.chars().filter(|c| !c.is_control()).collect();
+            if clean.len() > 256 {
+                let mut end = 256;
+                while !clean.is_char_boundary(end) { end -= 1; }
+                clean.truncate(end);
+            }
+            let _ = db_guard.set_device_nickname(&dev.mac, &clean);
+        }
+    }
+
+    // DHCP reservations
+    let _ = db_guard.conn_exec("DELETE FROM dhcp_reservations");
+    for r in &config.dhcp.reservations {
+        let _ = db_guard.set_dhcp_reservation(&r.mac, r.subnet_id);
+    }
+
+    // Port forwards (manual only -- UPnP/NAT-PMP managed separately)
+    let _ = db_guard.conn_exec("DELETE FROM port_forwards WHERE source = 'manual' OR source = ''");
+    for pf in &config.firewall.port_forwards {
+        let ext_end = pf.external_port_end.unwrap_or(pf.external_port);
+        let _ = db_guard.add_port_forward(&pf.protocol, pf.external_port, ext_end, &pf.internal_ip, pf.internal_port, &pf.description);
+    }
+
+    // IPv6 pinholes
+    let _ = db_guard.conn_exec("DELETE FROM ipv6_pinholes");
+    for ph in &config.firewall.ipv6_pinholes {
+        let port_end = ph.port_end.unwrap_or(ph.port_start) as i64;
+        let _ = db_guard.add_ipv6_pinhole(&ph.device, &ph.protocol, ph.port_start as i64, port_end, &ph.description);
+    }
+
+    // DNS config
+    let _ = db_guard.set_config("ad_blocking_enabled", if config.dns.ad_blocking { "true" } else { "false" });
+    if let Some(rl) = config.dns.ratelimit_per_second {
+        let _ = db_guard.set_config("dns_ratelimit_per_client", &rl.to_string());
+    }
+    if let Some(ref bypass) = config.dns.bypass_allowed {
+        let _ = db_guard.set_config("dns_bypass_allowed_trusted", if bypass.trusted { "true" } else { "false" });
+        let _ = db_guard.set_config("dns_bypass_allowed_guest", if bypass.guest { "true" } else { "false" });
+        let _ = db_guard.set_config("dns_bypass_allowed_quarantine", if bypass.quarantine { "true" } else { "false" });
+        let _ = db_guard.set_config("dns_bypass_allowed_iot", if bypass.iot { "true" } else { "false" });
+        let _ = db_guard.set_config("dns_bypass_allowed_servers", if bypass.servers { "true" } else { "false" });
+    }
+    let _ = db_guard.conn_exec("DELETE FROM dns_forward_zones");
+    for fz in &config.dns.forward_zones {
+        let _ = db_guard.add_dns_forward_zone(&fz.domain, &fz.forward_to);
+    }
+    let _ = db_guard.conn_exec("DELETE FROM dns_custom_rules");
+    for cr in &config.dns.custom_records {
+        let _ = db_guard.add_dns_custom_rule(&cr.domain, &cr.record_type, &cr.value);
+    }
+    let _ = db_guard.conn_exec("DELETE FROM dns_blocklists");
+    for bl in &config.dns.blocklists {
+        let _ = db_guard.add_dns_blocklist(&bl.name, &bl.url, &bl.tag);
+    }
+
+    // WireGuard settings
+    let _ = db_guard.set_config("wg_enabled", if config.wireguard.enabled { "true" } else { "false" });
+    let _ = db_guard.set_config("wg_listen_port", &config.wireguard.listen_port.to_string());
+
+    // WireGuard peers: replace all DB entries with config peers.
+    // Runtime wg0 reconciliation (add_peer/remove_peer calls) is deferred
+    // to the next agent restart, same as import_config.
+    let _ = db_guard.conn_exec("DELETE FROM wg_peers");
+    let (dev_base, dev_max) = nftables::device_range();
+    for peer in &config.wireguard.peers {
+        if let Ok(subnet_id) = db_guard.allocate_subnet_id(dev_max + 1) {
+            let _ = db_guard.insert_wg_peer(&peer.public_key, &peer.name, subnet_id, &peer.device_group);
+            // insert_wg_peer always sets enabled=1; disable if needed
+            if !peer.enabled {
+                let _ = db_guard.set_wg_peer_enabled(&peer.public_key, false);
+            }
+            // Set up nftables rules for the peer's subnet
+            if let Some(info) = subnet::compute_subnet(subnet_id, dev_base, dev_max) {
+                let ipv4 = info.device_ipv4.to_string();
+                let ipv6 = info.device_ipv6_ula.to_string();
+                let _ = nftables::add_device_counter(&ipv4);
+                let _ = nftables::add_device_counter_v6(&ipv6);
+                let _ = nftables::add_device_forward_rule(&ipv4, &peer.device_group);
+                let _ = nftables::add_device_forward_rule_v6(&ipv6, &peer.device_group);
+            }
+        }
+    }
+
+    // QoS
+    let _ = db_guard.set_config("qos_enabled", if config.qos.enabled { "true" } else { "false" });
+    let _ = db_guard.set_config("qos_upload_mbps", &config.qos.upload_mbps.to_string());
+    let _ = db_guard.set_config("qos_download_mbps", &config.qos.download_mbps.to_string());
+
+    // Logging
+    let _ = db_guard.set_config("log_format", &config.logging.format);
+    let _ = db_guard.set_config("log_retention_days", &config.logging.retention_days.to_string());
+    if let Some(ref target) = config.logging.syslog_target {
+        let _ = db_guard.set_config("syslog_target", target);
+    }
+    if let Some(ref url) = config.logging.webhook_url {
+        let _ = db_guard.set_config("webhook_url", url);
+    }
+
+    // TLS
+    let _ = db_guard.set_config("tls_mode", &config.tls.mode);
+
+    // Analysis
+    let _ = db_guard.set_config("analyzer_enabled", if config.analysis.enabled { "true" } else { "false" });
+    if let Some(ref rules) = config.analysis.alert_rules {
+        if let Some(v) = rules.dns_beaconing { let _ = db_guard.set_config("alert_rule_dns_beaconing", if v { "true" } else { "false" }); }
+        if let Some(v) = rules.dns_volume_spike { let _ = db_guard.set_config("alert_rule_dns_volume_spike", if v { "true" } else { "false" }); }
+        if let Some(v) = rules.new_dest_spike { let _ = db_guard.set_config("alert_rule_new_dest_spike", if v { "true" } else { "false" }); }
+        if let Some(v) = rules.suspicious_ports { let _ = db_guard.set_config("alert_rule_suspicious_ports", if v { "true" } else { "false" }); }
+        if let Some(v) = rules.bandwidth_spike { let _ = db_guard.set_config("alert_rule_bandwidth_spike", if v { "true" } else { "false" }); }
+    }
+
+    // DMZ
+    if let Some(ref dmz) = config.firewall.dmz_host {
+        let _ = db_guard.set_config("dmz_host_ip", dmz);
+    } else {
+        let _ = db_guard.set_config("dmz_host_ip", "");
+    }
+
+    // UPnP
+    if let Some(upnp) = config.firewall.upnp_enabled {
+        let _ = db_guard.set_config("upnp_enabled", if upnp { "true" } else { "false" });
+    }
+
+    // Apply secrets if provided (bypasses BLOCKED_CONFIG_KEYS since this is a direct DB write)
+    if let Some(s) = secrets {
+        if let Some(ref v) = s.admin_password_hash { let _ = db_guard.set_config("admin_password_hash", v); }
+        if let Some(ref v) = s.session_secret { let _ = db_guard.set_config("session_secret", v); }
+        if let Some(ref v) = s.wg_private_key { let _ = db_guard.set_config("wg_private_key", v); }
+        if let Some(ref tls) = s.tls {
+            if let Some(ref v) = tls.key_pem { let _ = db_guard.set_config("tls_key_pem", v); }
+            if let Some(ref v) = tls.cert_pem { let _ = db_guard.set_config("tls_cert_pem", v); }
+            if let Some(ref v) = tls.acme_cf_api_token { let _ = db_guard.set_config("acme_cf_api_token", v); }
+            if let Some(ref v) = tls.acme_account_key { let _ = db_guard.set_config("acme_account_key", v); }
+        }
+        if let Some(ref integ) = s.integrations {
+            if let Some(ref v) = integ.runzero_token { let _ = db_guard.set_config("runzero_token", v); }
+        }
+    }
+
+    // Audit log
+    let peer_names: Vec<&str> = config.wireguard.peers.iter().map(|p| p.name.as_str()).collect();
+    let has_secrets = secrets.is_some();
+    let _ = db_guard.log_audit("config_apply", &format!(
+        "devices={} port_forwards={} peers={} peer_names=[{}] secrets={}",
+        config.devices.len(), config.firewall.port_forwards.len(), config.wireguard.peers.len(),
+        peer_names.join(", "), has_secrets));
+
+    // Collect data needed for reconciliation before dropping the lock
+    let qos_enabled = config.qos.enabled;
+    let qos_upload = config.qos.upload_mbps;
+    let qos_download = config.qos.download_mbps;
+    let qos_devices: Vec<(String, String)> = if qos_enabled {
+        let assigned = db_guard.list_assigned_devices().unwrap_or_default();
+        assigned.iter()
+            .filter_map(|d| d.ipv4.as_ref().map(|ip| (ip.clone(), d.device_group.clone())))
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    drop(db_guard);
+
+    // --- Full reconciliation ---
+
+    // 1. Port forwards + DMZ (existing)
+    portmap.reapply_rules();
+
+    // 2. QoS (existing)
+    let wan_iface = portmap.wan_iface();
+    if qos_enabled && qos_upload > 0 && qos_download > 0 {
+        let _ = crate::qos::enable(wan_iface, qos_upload, qos_download);
+        let _ = crate::qos::apply_dscp_rules(&qos_devices);
+    } else {
+        let _ = crate::qos::disable(wan_iface);
+        let _ = crate::qos::remove_dscp_rules();
+    }
+
+    // 3. DNS reconciliation (write_config + reload unbound)
+    {
+        let mgr = unbound.lock().unwrap();
+        let _ = mgr.write_config(db);
+        let _ = mgr.reload();
+    }
+
+    Ok(())
+}
+
+/// Handle `set_api_key` socket command: hash a plaintext API key and store it.
+pub(super) fn handle_set_api_key(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref key) = req.value else {
+        return Response::err("value required (plaintext API key)");
+    };
+    if key.len() < 16 {
+        return Response::err("API key must be at least 16 characters");
+    }
+    if key.len() > 256 {
+        return Response::err("API key must be at most 256 characters");
+    }
+    let salt = SaltString::generate(&mut rand::rngs::OsRng);
+    let argon2 = Argon2::default();
+    let hash = match argon2.hash_password(key.as_bytes(), &salt) {
+        Ok(h) => h.to_string(),
+        Err(e) => return Response::err(&format!("failed to hash API key: {}", e)),
+    };
+    let db = db.lock().unwrap();
+    match db.set_config("api_key_hash", &hash) {
+        Ok(()) => {
+            let _ = db.log_audit("api_key_set", "API key updated");
+            Response::ok()
+        }
+        Err(e) => Response::err(&e.to_string()),
+    }
+}
+
 pub(super) fn handle_backup_database(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let db = db.lock().unwrap();
     let backup = Db::backup_path();

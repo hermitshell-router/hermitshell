@@ -1,5 +1,5 @@
 mod auth;
-mod config;
+pub mod config;
 mod devices;
 mod dns;
 mod logs;
@@ -41,6 +41,7 @@ const BLOCKED_CONFIG_KEYS: &[&str] = &[
     "update_installed_version",
     "setup_complete",
     "setup_step",
+    "api_key_hash",
 ];
 
 fn is_blocked_config_key(key: &str) -> bool {
@@ -91,6 +92,7 @@ const WEB_ALLOWED_METHODS: &[&str] = &[
     "run_bandwidth_rollup",
     "run_analysis",
     "list_mdns_services",
+    "apply_config", "get_full_config", "set_api_key",
     "get_dns_config", "set_dns_config",
     "list_dns_forwards", "add_dns_forward", "remove_dns_forward",
     "list_dns_rules", "add_dns_rule", "remove_dns_rule",
@@ -196,6 +198,7 @@ struct Request {
     provider_id: Option<String>,
     site: Option<String>,
     api_key: Option<String>,
+    secrets: Option<String>,
 }
 
 /// JSON response envelope. `ok` indicates success; `error` carries failure details.
@@ -489,6 +492,9 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "set_ad_blocking" => config::handle_set_ad_blocking(&req, db, unbound),
         "export_config" => config::handle_export_config(&req, db),
         "import_config" => config::handle_import_config(&req, db, portmap),
+        "apply_config" => config::handle_apply_config(&req, db, portmap, unbound),
+        "get_full_config" => config::handle_get_full_config(&req, db),
+        "set_api_key" => config::handle_set_api_key(&req, db),
         "backup_database" => config::handle_backup_database(&req, db),
         "get_log_config" => config::handle_get_log_config(&req, db),
         "set_log_config" => config::handle_set_log_config(&req, db),

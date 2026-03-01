@@ -691,6 +691,14 @@ impl Db {
         Ok(())
     }
 
+    pub fn set_wg_peer_enabled(&self, public_key: &str, enabled: bool) -> Result<()> {
+        self.conn.execute(
+            "UPDATE wg_peers SET enabled = ?1 WHERE public_key = ?2",
+            (if enabled { 1i64 } else { 0i64 }, public_key),
+        )?;
+        Ok(())
+    }
+
     // Port forwarding methods
 
     pub fn list_port_forwards(&self) -> Result<Vec<PortForward>> {

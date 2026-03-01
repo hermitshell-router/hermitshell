@@ -12,6 +12,7 @@ pub(crate) mod paths;
 mod portmap;
 mod qos;
 mod ra;
+mod rest_api;
 mod socket;
 mod tls;
 mod tls_client;
@@ -762,6 +763,25 @@ async fn main() -> Result<()> {
             error!(error = %e, "socket server error");
         }
     });
+
+    // Spawn REST API server (plaintext HTTP on port 9080)
+    {
+        let rest_state = rest_api::AppState {
+            db: db.clone(),
+            portmap: portmap_registry.clone(),
+            unbound: unbound_mgr.clone(),
+            start_time: start_time,
+        };
+        let rest_port: u16 = std::env::var("REST_API_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(9080);
+        tokio::spawn(async move {
+            if let Err(e) = rest_api::start(rest_state, rest_port).await {
+                error!(error = %e, "REST API server error");
+            }
+        });
+    }
 
     // Spawn DHCP IPC socket
     let dhcp_socket_path = paths::dhcp_socket_path();

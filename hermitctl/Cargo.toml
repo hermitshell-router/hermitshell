@@ -1,0 +1,15 @@
+[package]
+name = "hermitctl"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+hermitshell-common = { path = "../hermitshell-common" }
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+anyhow = "1"
+
+[lints]
+workspace = true
