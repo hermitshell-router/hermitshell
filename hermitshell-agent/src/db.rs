@@ -580,6 +580,22 @@ impl Db {
             )?;
         }
 
+        if version < 13 {
+            conn.execute_batch(
+                "ALTER TABLE snmp_switches ADD COLUMN version TEXT NOT NULL DEFAULT '2c';
+                 ALTER TABLE snmp_switches ADD COLUMN v3_username TEXT;
+                 ALTER TABLE snmp_switches ADD COLUMN v3_auth_protocol TEXT;
+                 ALTER TABLE snmp_switches ADD COLUMN v3_cipher TEXT;
+                 ALTER TABLE snmp_switches ADD COLUMN v3_auth_pass_enc TEXT;
+                 ALTER TABLE snmp_switches ADD COLUMN v3_priv_pass_enc TEXT;"
+            )?;
+            conn.execute(
+                "INSERT INTO config (key, value) VALUES ('schema_version', '13')
+                 ON CONFLICT(key) DO UPDATE SET value = '13'",
+                [],
+            )?;
+        }
+
         Ok(())
     }
 
@@ -2117,16 +2133,20 @@ impl Db {
 
     pub fn list_snmp_switches(&self) -> Result<Vec<SnmpSwitchInfo>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, host, enabled, status, last_seen FROM snmp_switches"
+            "SELECT id, name, host, version, v3_username, v3_auth_protocol, v3_cipher, enabled, status, last_seen FROM snmp_switches"
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(SnmpSwitchInfo {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 host: row.get(2)?,
-                enabled: row.get::<_, i32>(3)? != 0,
-                status: row.get(4)?,
-                last_seen: row.get(5)?,
+                version: row.get(3)?,
+                v3_username: row.get(4)?,
+                v3_auth_protocol: row.get(5)?,
+                v3_cipher: row.get(6)?,
+                enabled: row.get::<_, i32>(7)? != 0,
+                status: row.get(8)?,
+                last_seen: row.get(9)?,
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
@@ -2174,6 +2194,33 @@ impl Db {
             rusqlite::params![port_display, mac],
         )?;
         Ok(())
+    }
+
+    pub fn insert_snmp_switch_v3(
+        &self,
+        id: &str,
+        name: &str,
+        host: &str,
+        username: &str,
+        auth_protocol: &str,
+        cipher: &str,
+        auth_pass_enc: &str,
+        priv_pass_enc: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO snmp_switches (id, name, host, community_enc, version, v3_username, v3_auth_protocol, v3_cipher, v3_auth_pass_enc, v3_priv_pass_enc)
+             VALUES (?1, ?2, ?3, '', '3', ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![id, name, host, username, auth_protocol, cipher, auth_pass_enc, priv_pass_enc],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_snmp_switch_v3_credentials(&self, id: &str) -> Result<(String, String)> {
+        Ok(self.conn.query_row(
+            "SELECT v3_auth_pass_enc, v3_priv_pass_enc FROM snmp_switches WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?)
     }
 }
 
@@ -2233,6 +2280,8 @@ mod tests {
         assert_eq!(switches.len(), 1);
         assert_eq!(switches[0].name, "Main Switch");
         assert_eq!(switches[0].host, "192.168.1.100");
+        assert_eq!(switches[0].version, "2c");
+        assert!(switches[0].v3_username.is_none());
         let community = db.get_snmp_switch_community("sw1").unwrap();
         assert_eq!(community, "public");
         db.update_snmp_switch_status("sw1", "connected", 1000).unwrap();
@@ -2241,5 +2290,26 @@ mod tests {
         db.remove_snmp_switch("sw1").unwrap();
         let switches = db.list_snmp_switches().unwrap();
         assert_eq!(switches.len(), 0);
+    }
+
+    #[test]
+    fn test_snmp_switch_v3_crud() {
+        let db = test_db();
+        db.insert_snmp_switch_v3(
+            "sw1", "Main Switch", "192.168.1.100",
+            "snmpuser", "sha256", "aes128",
+            "authpass_enc", "privpass_enc",
+        ).unwrap();
+        let switches = db.list_snmp_switches().unwrap();
+        assert_eq!(switches.len(), 1);
+        assert_eq!(switches[0].version, "3");
+        assert_eq!(switches[0].v3_username.as_deref(), Some("snmpuser"));
+        assert_eq!(switches[0].v3_auth_protocol.as_deref(), Some("sha256"));
+        assert_eq!(switches[0].v3_cipher.as_deref(), Some("aes128"));
+        let creds = db.get_snmp_switch_v3_credentials("sw1").unwrap();
+        assert_eq!(creds.0, "authpass_enc");
+        assert_eq!(creds.1, "privpass_enc");
+        db.remove_snmp_switch("sw1").unwrap();
+        assert!(db.list_snmp_switches().unwrap().is_empty());
     }
 }

@@ -218,10 +218,20 @@ pub struct SnmpSwitchInfo {
     pub id: String,
     pub name: String,
     pub host: String,
+    #[serde(default = "default_v2c")]
+    pub version: String,
+    #[serde(default)]
+    pub v3_username: Option<String>,
+    #[serde(default)]
+    pub v3_auth_protocol: Option<String>,
+    #[serde(default)]
+    pub v3_cipher: Option<String>,
     pub enabled: bool,
     pub status: String,
     pub last_seen: i64,
 }
+
+fn default_v2c() -> String { "2c".to_string() }
 
 /// A registered WiFi provider (controller or direct AP connection).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
