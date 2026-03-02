@@ -19,17 +19,16 @@ const DHCP_CLIENT_PORT: u16 = 68;
 
 /// Represents a WAN lease obtained via DHCP or configured statically.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct WanLease {
     pub ip: Ipv4Addr,
-    pub subnet_mask: Ipv4Addr,
+    pub _subnet_mask: Ipv4Addr,
     pub gateway: Ipv4Addr,
     pub dns_servers: Vec<Ipv4Addr>,
-    pub lease_time: u32,
-    pub renew_at: Instant,
-    pub rebind_at: Instant,
-    pub delegated_prefix: Option<String>,
-    pub prefix_valid_lifetime: Option<u32>,
+    pub _lease_time: u32,
+    pub _renew_at: Instant,
+    pub _rebind_at: Instant,
+    pub _delegated_prefix: Option<String>,
+    pub _prefix_valid_lifetime: Option<u32>,
 }
 
 pub type SharedWanLease = Arc<Mutex<Option<WanLease>>>;
@@ -159,14 +158,14 @@ async fn run_static(
     let now = Instant::now();
     let wan_lease = WanLease {
         ip: ip_addr,
-        subnet_mask,
+        _subnet_mask: subnet_mask,
         gateway,
         dns_servers: dns_servers.clone(),
-        lease_time: u32::MAX, // static — never expires
-        renew_at: now + Duration::from_secs(365 * 24 * 3600),
-        rebind_at: now + Duration::from_secs(365 * 24 * 3600),
-        delegated_prefix: None,
-        prefix_valid_lifetime: None,
+        _lease_time: u32::MAX, // static — never expires
+        _renew_at: now + Duration::from_secs(365 * 24 * 3600),
+        _rebind_at: now + Duration::from_secs(365 * 24 * 3600),
+        _delegated_prefix: None,
+        _prefix_valid_lifetime: None,
     };
 
     {
@@ -986,14 +985,14 @@ async fn run_dhcp(
             let mut guard = lease.lock().unwrap();
             *guard = Some(WanLease {
                 ip: cur_ip,
-                subnet_mask: cur_mask,
+                _subnet_mask: cur_mask,
                 gateway: cur_gw,
                 dns_servers: cur_dns.clone(),
-                lease_time: cur_lease_secs,
-                renew_at: lease_start + lease_dur / 2,
-                rebind_at: lease_start + lease_dur * 7 / 8,
-                delegated_prefix: delegated_prefix.clone(),
-                prefix_valid_lifetime: None,
+                _lease_time: cur_lease_secs,
+                _renew_at: lease_start + lease_dur / 2,
+                _rebind_at: lease_start + lease_dur * 7 / 8,
+                _delegated_prefix: delegated_prefix.clone(),
+                _prefix_valid_lifetime: None,
             });
         }
 
@@ -1034,14 +1033,14 @@ async fn run_dhcp(
                         let mut guard = lease.lock().unwrap();
                         *guard = Some(WanLease {
                             ip: new_ip,
-                            subnet_mask: new_mask,
+                            _subnet_mask: new_mask,
                             gateway: new_gw,
                             dns_servers: new_dns.clone(),
-                            lease_time: new_lease,
-                            renew_at: lease_start + new_dur / 2,
-                            rebind_at: lease_start + new_dur * 7 / 8,
-                            delegated_prefix: delegated_prefix.clone(),
-                            prefix_valid_lifetime: None,
+                            _lease_time: new_lease,
+                            _renew_at: lease_start + new_dur / 2,
+                            _rebind_at: lease_start + new_dur * 7 / 8,
+                            _delegated_prefix: delegated_prefix.clone(),
+                            _prefix_valid_lifetime: None,
                         });
                     }
 

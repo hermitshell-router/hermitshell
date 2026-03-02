@@ -782,7 +782,7 @@ async fn main() -> Result<()> {
     let portmap_for_socket = portmap_registry.clone();
     let socket_path = paths::socket_path();
     tokio::spawn(async move {
-        if let Err(e) = socket::run_server(&socket_path, db_clone, start_time, unbound_clone, wan_for_socket, lan_for_socket, log_tx_socket, bandwidth_rt_for_socket, speed_test_state, mdns_reg_for_socket, portmap_for_socket).await {
+        if let Err(e) = socket::run_server(&socket_path, db_clone, start_time, unbound_clone, wan_for_socket, lan_for_socket, log_tx_socket, bandwidth_rt_for_socket, speed_test_state, mdns_reg_for_socket, portmap_for_socket, wan_lease.clone()).await {
             error!(error = %e, "socket server error");
         }
     });

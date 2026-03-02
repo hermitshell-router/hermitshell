@@ -308,6 +308,12 @@ struct Status {
     uptime_secs: u64,
     device_count: usize,
     ad_blocking_enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wan_ip: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wan_gateway: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wan_dns: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -339,7 +345,7 @@ impl Response {
 
 /// Start the main Unix socket API server that handles all agent commands.
 #[allow(clippy::too_many_arguments)]
-pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::time::Instant, unbound: Arc<Mutex<UnboundManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, bandwidth_rt: BandwidthRealtimeMap, speed_test_state: SpeedTestState, mdns_registry: crate::mdns::SharedRegistry, portmap: crate::portmap::SharedRegistry) -> Result<()> {
+pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::time::Instant, unbound: Arc<Mutex<UnboundManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, bandwidth_rt: BandwidthRealtimeMap, speed_test_state: SpeedTestState, mdns_registry: crate::mdns::SharedRegistry, portmap: crate::portmap::SharedRegistry, wan_lease: crate::wan::SharedWanLease) -> Result<()> {
     // Remove stale socket from previous run (ignore: may not exist)
     let _ = std::fs::remove_file(socket_path);
     if let Some(parent) = std::path::Path::new(socket_path).parent() {
@@ -389,9 +395,10 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
         let sts = speed_test_state.clone();
         let mreg = mdns_registry.clone();
         let pm = portmap.clone();
+        let wl = wan_lease.clone();
         tokio::spawn(async move {
             let _permit = permit; // held until task completes
-            if let Err(e) = handle_client(stream, db, start, unbound, wan, lan, ltx, lrl, pwl, brt, sts, mreg, pm, caller_uid).await {
+            if let Err(e) = handle_client(stream, db, start, unbound, wan, lan, ltx, lrl, pwl, brt, sts, mreg, pm, wl, caller_uid).await {
                 warn!(error = %e, "client error");
             }
         });
@@ -399,7 +406,7 @@ pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, unbound: Arc<Mutex<UnboundManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: LoginRateLimit, password_lock: PasswordLock, bandwidth_rt: BandwidthRealtimeMap, speed_test_state: SpeedTestState, mdns_registry: crate::mdns::SharedRegistry, portmap: crate::portmap::SharedRegistry, caller_uid: u32) -> Result<()> {
+async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::time::Instant, unbound: Arc<Mutex<UnboundManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: LoginRateLimit, password_lock: PasswordLock, bandwidth_rt: BandwidthRealtimeMap, speed_test_state: SpeedTestState, mdns_registry: crate::mdns::SharedRegistry, portmap: crate::portmap::SharedRegistry, wan_lease: crate::wan::SharedWanLease, caller_uid: u32) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
@@ -432,7 +439,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                             "apply_update" => {
                                 config::handle_apply_update(&req, &db).await
                             }
-                            _ => handle_request(req, &db, start_time, &unbound, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt, &speed_test_state, &mdns_registry, &portmap),
+                            _ => handle_request(req, &db, start_time, &unbound, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt, &speed_test_state, &mdns_registry, &portmap, &wan_lease),
                         }
                     }
                 } else {
@@ -449,7 +456,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                         "apply_update" => {
                             config::handle_apply_update(&req, &db).await
                         }
-                        _ => handle_request(req, &db, start_time, &unbound, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt, &speed_test_state, &mdns_registry, &portmap),
+                        _ => handle_request(req, &db, start_time, &unbound, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt, &speed_test_state, &mdns_registry, &portmap, &wan_lease),
                     }
                 }
             }
@@ -464,7 +471,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
 }
 
 #[allow(clippy::too_many_arguments)]
-fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, unbound: &Arc<Mutex<UnboundManager>>, wan_iface: &str, _lan_iface: &str, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: &LoginRateLimit, password_lock: &PasswordLock, bandwidth_rt: &BandwidthRealtimeMap, speed_test_state: &SpeedTestState, mdns_registry: &crate::mdns::SharedRegistry, portmap: &crate::portmap::SharedRegistry) -> Response {
+fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, unbound: &Arc<Mutex<UnboundManager>>, wan_iface: &str, _lan_iface: &str, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: &LoginRateLimit, password_lock: &PasswordLock, bandwidth_rt: &BandwidthRealtimeMap, speed_test_state: &SpeedTestState, mdns_registry: &crate::mdns::SharedRegistry, portmap: &crate::portmap::SharedRegistry, wan_lease: &crate::wan::SharedWanLease) -> Response {
     if let Some(ref mac) = req.mac
         && let Err(e) = nftables::validate_mac(mac) {
             return Response::err(&e.to_string());
@@ -472,7 +479,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
     match req.method.as_str() {
         "list_devices" => devices::handle_list_devices(&req, db),
         "get_device" => devices::handle_get_device(&req, db),
-        "get_status" => devices::handle_get_status(&req, db, start_time),
+        "get_status" => devices::handle_get_status(&req, db, start_time, wan_lease),
         "set_device_group" => devices::handle_set_device_group(&req, db),
         "block_device" => devices::handle_block_device(&req, db),
         "unblock_device" => devices::handle_unblock_device(&req, db),

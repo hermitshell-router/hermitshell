@@ -38,15 +38,33 @@ pub(super) fn handle_get_device(req: &Request, db: &Arc<Mutex<Db>>) -> Response 
     }
 }
 
-pub(super) fn handle_get_status(_req: &Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant) -> Response {
+pub(super) fn handle_get_status(
+    _req: &Request,
+    db: &Arc<Mutex<Db>>,
+    start_time: std::time::Instant,
+    wan_lease: &crate::wan::SharedWanLease,
+) -> Response {
     let db = db.lock().unwrap();
     let device_count = db.list_devices().map(|d| d.len()).unwrap_or(0);
     let ad_blocking = db.get_config_bool("ad_blocking_enabled", true);
+    let lease_guard = wan_lease.lock().unwrap();
+    let (wan_ip, wan_gateway, wan_dns) = match lease_guard.as_ref() {
+        Some(l) => (
+            Some(l.ip.to_string()),
+            Some(l.gateway.to_string()),
+            Some(l.dns_servers.iter().map(|d| d.to_string()).collect()),
+        ),
+        None => (None, None, None),
+    };
+    drop(lease_guard);
     let mut resp = Response::ok();
     resp.status = Some(Status {
         uptime_secs: start_time.elapsed().as_secs(),
         device_count,
         ad_blocking_enabled: ad_blocking,
+        wan_ip,
+        wan_gateway,
+        wan_dns,
     });
     resp
 }
