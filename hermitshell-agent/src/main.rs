@@ -834,6 +834,12 @@ async fn main() -> Result<()> {
         wifi::run(db_wifi).await;
     });
 
+    // Spawn switch polling task
+    let db_switch = db.clone();
+    tokio::spawn(async move {
+        switch::run(db_switch).await;
+    });
+
     // Spawn mDNS proxy
     let db_mdns = db.clone();
     let lan_mdns = lan_iface.to_string();
