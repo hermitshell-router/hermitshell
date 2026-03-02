@@ -12,7 +12,7 @@ pub fn SwitchSettings() -> impl IntoView {
     );
 
     view! {
-        <Layout title="Switch Management" active_page="switches">
+        <Layout title="SNMP Switches" active_page="switches">
             <Suspense fallback=move || view! { <p>"Loading..."</p> }>
                 {move || switches.get().map(|result| match result {
                     Ok(list) => {
@@ -20,7 +20,8 @@ pub fn SwitchSettings() -> impl IntoView {
 
                         view! {
                             <div class="settings-section">
-                                <h3>"Managed Switches"</h3>
+                                <h3>"SNMP Switches"</h3>
+                                <p class="settings-description">"Add managed switches for MAC-to-port discovery. Uses SNMP v2c read-only polling."</p>
                                 {if list.is_empty() {
                                     view! { <p class="settings-empty">"No switches configured"</p> }.into_any()
                                 } else {
@@ -30,9 +31,6 @@ pub fn SwitchSettings() -> impl IntoView {
                                                 <tr>
                                                     <th>"Name"</th>
                                                     <th>"Host"</th>
-                                                    <th>"Port"</th>
-                                                    <th>"Vendor"</th>
-                                                    <th>"Uplink"</th>
                                                     <th>"Status"</th>
                                                     <th>"Actions"</th>
                                                 </tr>
@@ -48,9 +46,6 @@ pub fn SwitchSettings() -> impl IntoView {
                                                         <tr>
                                                             <td>{sw.name.clone()}</td>
                                                             <td>{sw.host.clone()}</td>
-                                                            <td>{sw.port.to_string()}</td>
-                                                            <td>{sw.vendor_profile.clone()}</td>
-                                                            <td>{sw.uplink_port.clone().unwrap_or_else(|| "-".to_string())}</td>
                                                             <td><span class={status_class}>{sw.status.clone()}</span></td>
                                                             <td>
                                                                 <ActionForm action=test_action attr:style="display:inline">
@@ -80,21 +75,8 @@ pub fn SwitchSettings() -> impl IntoView {
                                     <label>"Host"
                                         <input type="text" name="host" placeholder="192.168.1.100" required />
                                     </label>
-                                    <label>"SSH Port"
-                                        <input type="number" name="port" value="22" min="1" max="65535" />
-                                    </label>
-                                    <label>"Username"
-                                        <input type="text" name="username" required />
-                                    </label>
-                                    <label>"Password"
-                                        <input type="password" name="password" required />
-                                    </label>
-                                    <label>"Vendor Profile"
-                                        <select name="vendor_profile">
-                                            <option value="cisco_ios">"Cisco IOS"</option>
-                                            <option value="tplink_t">"TP-Link T-series"</option>
-                                            <option value="netgear_prosafe">"Netgear ProSafe"</option>
-                                        </select>
+                                    <label>"Community String"
+                                        <input type="password" name="community" value="public" required />
                                     </label>
                                     <button type="submit" class="btn btn-primary">"Add"</button>
                                 </ActionForm>

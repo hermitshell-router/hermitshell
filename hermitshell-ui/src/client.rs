@@ -19,9 +19,6 @@ pub struct SwitchInfo {
     pub id: String,
     pub name: String,
     pub host: String,
-    pub port: u16,
-    pub vendor_profile: String,
-    pub uplink_port: Option<String>,
     pub enabled: bool,
     pub status: String,
     pub last_seen: i64,
@@ -868,15 +865,12 @@ pub fn list_switches() -> Result<Vec<SwitchInfo>, String> {
     serde_json::from_str(&s).map_err(|e| e.to_string())
 }
 
-pub fn add_switch(name: &str, host: &str, port: u16, username: &str, password: &str, vendor_profile: &str) -> Result<(), String> {
+pub fn add_switch(name: &str, host: &str, community: &str) -> Result<(), String> {
     ok_or_err(send(json!({
         "method": "switch_add",
         "name": name,
         "key": host,
-        "value": username,
-        "description": password,
-        "port_start": port,
-        "group": vendor_profile,
+        "value": community,
     }))?)?;
     Ok(())
 }
