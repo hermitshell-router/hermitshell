@@ -3,7 +3,7 @@ use tracing::info;
 use zeroize::Zeroizing;
 
 use crate::db::Db;
-use crate::switch;
+use crate::switch::{self, SnmpCredentials};
 use super::{Request, Response};
 
 pub(super) fn handle_switch_add(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
@@ -95,12 +95,12 @@ pub(super) async fn handle_switch_test(req: &Request, db: &Arc<Mutex<Db>>) -> Re
         return Response::err("name required");
     };
 
-    let (id, host, community) = match get_switch_info(name_or_id, db) {
+    let (id, host, creds) = match get_switch_info(name_or_id, db) {
         Ok(info) => info,
         Err(resp) => return resp,
     };
 
-    match switch::test_connectivity(&host, community.as_bytes()).await {
+    match switch::test_connectivity(&host, &creds).await {
         Ok(sys_descr) => {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -130,30 +130,55 @@ fn resolve_switch_id(name_or_id: &str, db: &Db) -> Result<String, Response> {
 fn get_switch_info(
     name_or_id: &str,
     db: &Arc<Mutex<Db>>,
-) -> Result<(String, String, String), Response> {
+) -> Result<(String, String, SnmpCredentials), Response> {
     let db_guard = db.lock().unwrap();
     let id = resolve_switch_id(name_or_id, &db_guard)?;
 
     let switches = db_guard.list_snmp_switches().unwrap_or_default();
     let sw = switches.iter().find(|s| s.id == id).unwrap();
     let host = sw.host.clone();
+    let version = sw.version.clone();
+    let v3_username = sw.v3_username.clone().unwrap_or_default();
+    let v3_auth_protocol = sw.v3_auth_protocol.clone().unwrap_or_default();
+    let v3_cipher = sw.v3_cipher.clone().unwrap_or_default();
 
-    let community_enc = db_guard
-        .get_snmp_switch_community(&id)
-        .map_err(|e| Response::err(&format!("failed to get community: {}", e)))?;
+    let secret = db_guard
+        .get_config("session_secret")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
 
-    drop(db_guard);
-
-    let secret = {
-        let db_guard = db.lock().unwrap();
-        db_guard.get_config("session_secret").ok().flatten().unwrap_or_default()
+    let decrypt = |enc: &str| -> Result<String, Response> {
+        if secret.is_empty() || !crate::crypto::is_encrypted(enc) {
+            Ok(enc.to_string())
+        } else {
+            crate::crypto::decrypt_password(enc, &secret)
+                .map_err(|e| Response::err(&format!("decrypt failed: {}", e)))
+        }
     };
-    let community = if secret.is_empty() || !crate::crypto::is_encrypted(&community_enc) {
-        community_enc
+
+    let creds = if version == "3" {
+        let (auth_enc, priv_enc) = db_guard
+            .get_snmp_switch_v3_credentials(&id)
+            .map_err(|e| Response::err(&format!("failed to get v3 credentials: {}", e)))?;
+        drop(db_guard);
+        let auth_pass = decrypt(&auth_enc)?;
+        let priv_pass = decrypt(&priv_enc)?;
+        SnmpCredentials::V3 {
+            username: v3_username,
+            auth_protocol: v3_auth_protocol,
+            cipher: v3_cipher,
+            auth_pass,
+            priv_pass,
+        }
     } else {
-        crate::crypto::decrypt_password(&community_enc, &secret)
-            .map_err(|e| Response::err(&format!("decrypt failed: {}", e)))?
+        let community_enc = db_guard
+            .get_snmp_switch_community(&id)
+            .map_err(|e| Response::err(&format!("failed to get community: {}", e)))?;
+        drop(db_guard);
+        let community = decrypt(&community_enc)?;
+        SnmpCredentials::V2c { community }
     };
 
-    Ok((id, host, community))
+    Ok((id, host, creds))
 }

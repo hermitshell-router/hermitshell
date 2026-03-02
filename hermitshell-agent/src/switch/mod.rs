@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
+use snmp2::v3::{Auth, AuthProtocol, Cipher, Security};
 use snmp2::{AsyncSession, Oid, Value};
 use tokio::time::{Duration, interval};
 use tracing::{info, warn};
@@ -14,6 +15,65 @@ const DOT1D_BASE_PORT_IFINDEX: &[u64] = &[1, 3, 6, 1, 2, 1, 17, 1, 4, 1, 2];
 const IF_NAME: &[u64] = &[1, 3, 6, 1, 2, 1, 31, 1, 1, 1, 1];
 const SYS_DESCR: &[u64] = &[1, 3, 6, 1, 2, 1, 1, 1, 0];
 
+/// SNMP credentials for v2c or v3 sessions.
+pub enum SnmpCredentials {
+    V2c { community: String },
+    V3 {
+        username: String,
+        auth_protocol: String,
+        cipher: String,
+        auth_pass: String,
+        priv_pass: String,
+    },
+}
+
+fn parse_auth_protocol(s: &str) -> AuthProtocol {
+    match s {
+        "md5" => AuthProtocol::Md5,
+        "sha1" => AuthProtocol::Sha1,
+        "sha224" => AuthProtocol::Sha224,
+        "sha384" => AuthProtocol::Sha384,
+        "sha512" => AuthProtocol::Sha512,
+        _ => AuthProtocol::Sha256,
+    }
+}
+
+fn parse_cipher(s: &str) -> Cipher {
+    match s {
+        "des" => Cipher::Des,
+        "aes192" => Cipher::Aes192,
+        "aes256" => Cipher::Aes256,
+        _ => Cipher::Aes128,
+    }
+}
+
+async fn create_session(addr: &str, creds: &SnmpCredentials) -> Result<AsyncSession> {
+    match creds {
+        SnmpCredentials::V2c { community } => {
+            AsyncSession::new_v2c(addr, community.as_bytes(), 0)
+                .await
+                .context("SNMP v2c session failed")
+        }
+        SnmpCredentials::V3 {
+            username,
+            auth_protocol,
+            cipher,
+            auth_pass,
+            priv_pass,
+        } => {
+            let security = Security::new(username.as_bytes(), auth_pass.as_bytes())
+                .with_auth(Auth::AuthPriv {
+                    cipher: parse_cipher(cipher),
+                    privacy_password: priv_pass.as_bytes().to_vec(),
+                })
+                .with_auth_protocol(parse_auth_protocol(auth_protocol));
+            AsyncSession::new_v3(addr, 0, security)
+                .await
+                .context("SNMP v3 session failed")
+        }
+    }
+}
+
 /// A discovered MAC-to-port mapping.
 #[derive(Debug)]
 struct MacEntry {
@@ -22,12 +82,10 @@ struct MacEntry {
 }
 
 /// Test connectivity by reading sysDescr.0.
-pub async fn test_connectivity(host: &str, community: &[u8]) -> Result<String> {
+pub async fn test_connectivity(host: &str, creds: &SnmpCredentials) -> Result<String> {
     let addr = format!("{}:161", host);
     let oid = Oid::from(SYS_DESCR).map_err(|e| anyhow::anyhow!("invalid OID: {:?}", e))?;
-    let mut sess = AsyncSession::new_v2c(&addr, community, 0)
-        .await
-        .context("SNMP session failed")?;
+    let mut sess = create_session(&addr, creds).await?;
     let response = sess.get(&oid).await.context("SNMP GET sysDescr failed")?;
     for (_, val) in response.varbinds {
         if let Value::OctetString(bytes) = val {
@@ -126,12 +184,10 @@ where
 }
 
 /// Walk the BRIDGE-MIB forwarding table and IF-MIB to map MACs to port names.
-async fn poll_mac_table(host: &str, community: &[u8]) -> Result<Vec<MacEntry>> {
+async fn poll_mac_table(host: &str, creds: &SnmpCredentials) -> Result<Vec<MacEntry>> {
     let addr = format!("{}:161", host);
 
-    let mut sess = AsyncSession::new_v2c(&addr, community, 0)
-        .await
-        .context("SNMP session failed")?;
+    let mut sess = create_session(&addr, creds).await?;
 
     // Step 1: Walk dot1dTpFdbPort to get MAC -> bridge port number.
     // The trailing 6 suffix components of each OID are the MAC address bytes.
@@ -222,32 +278,68 @@ pub async fn run(db: Arc<Mutex<Db>>) {
                 continue;
             }
 
-            // Decrypt community string
-            let community = {
+            // Build SNMP credentials (v2c or v3)
+            let creds = {
                 let db = db.lock().unwrap();
-                match db.get_snmp_switch_community(&sw.id) {
-                    Ok(enc) => {
-                        let secret = db
-                            .get_config("session_secret")
-                            .ok()
-                            .flatten()
-                            .unwrap_or_default();
-                        if secret.is_empty() || !crate::crypto::is_encrypted(&enc) {
-                            enc
-                        } else {
-                            match crate::crypto::decrypt_password(&enc, &secret) {
-                                Ok(p) => p,
-                                Err(e) => {
-                                    warn!(switch = %sw.name, error = %e, "failed to decrypt community");
-                                    continue;
-                                }
-                            }
+                let secret = db
+                    .get_config("session_secret")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+
+                let decrypt = |enc: &str| -> Result<String, String> {
+                    if secret.is_empty() || !crate::crypto::is_encrypted(enc) {
+                        Ok(enc.to_string())
+                    } else {
+                        crate::crypto::decrypt_password(enc, &secret)
+                            .map_err(|e| e.to_string())
+                    }
+                };
+
+                if sw.version == "3" {
+                    let (auth_enc, priv_enc) = match db.get_snmp_switch_v3_credentials(&sw.id) {
+                        Ok(pair) => pair,
+                        Err(e) => {
+                            warn!(switch = %sw.name, error = %e, "failed to get v3 credentials");
+                            continue;
                         }
+                    };
+                    let auth_pass = match decrypt(&auth_enc) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            warn!(switch = %sw.name, error = %e, "failed to decrypt auth_pass");
+                            continue;
+                        }
+                    };
+                    let priv_pass = match decrypt(&priv_enc) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            warn!(switch = %sw.name, error = %e, "failed to decrypt priv_pass");
+                            continue;
+                        }
+                    };
+                    SnmpCredentials::V3 {
+                        username: sw.v3_username.clone().unwrap_or_default(),
+                        auth_protocol: sw.v3_auth_protocol.clone().unwrap_or_default(),
+                        cipher: sw.v3_cipher.clone().unwrap_or_default(),
+                        auth_pass,
+                        priv_pass,
                     }
-                    Err(e) => {
-                        warn!(switch = %sw.name, error = %e, "failed to get community");
-                        continue;
-                    }
+                } else {
+                    let community = match db.get_snmp_switch_community(&sw.id) {
+                        Ok(enc) => match decrypt(&enc) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                warn!(switch = %sw.name, error = %e, "failed to decrypt community");
+                                continue;
+                            }
+                        },
+                        Err(e) => {
+                            warn!(switch = %sw.name, error = %e, "failed to get community");
+                            continue;
+                        }
+                    };
+                    SnmpCredentials::V2c { community }
                 }
             };
 
@@ -256,7 +348,7 @@ pub async fn run(db: Arc<Mutex<Db>>) {
                 .unwrap_or_default()
                 .as_secs() as i64;
 
-            match poll_mac_table(&sw.host, community.as_bytes()).await {
+            match poll_mac_table(&sw.host, &creds).await {
                 Ok(entries) => {
                     let db = db.lock().unwrap();
                     db.update_snmp_switch_status(&sw.id, "connected", now).ok();
