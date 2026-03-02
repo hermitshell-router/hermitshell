@@ -518,6 +518,26 @@ pub fn wifi_get_clients() -> Result<Vec<hermitshell_common::WifiClient>, String>
     Ok(resp.wifi_clients.unwrap_or_default())
 }
 
+pub fn wifi_kick_client(provider_id: &str, mac: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "wifi_kick_client", "provider_id": provider_id, "mac": mac}))?)?;
+    Ok(())
+}
+
+pub fn wifi_block_client(provider_id: &str, mac: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "wifi_block_client", "provider_id": provider_id, "mac": mac}))?)?;
+    Ok(())
+}
+
+pub fn wifi_unblock_client(provider_id: &str, mac: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "wifi_unblock_client", "provider_id": provider_id, "mac": mac}))?)?;
+    Ok(())
+}
+
+pub fn wifi_get_ap_status(provider_id: &str, mac: &str) -> Result<String, String> {
+    let resp = ok_or_err(send(json!({"method": "wifi_get_ap_status", "provider_id": provider_id, "mac": mac}))?)?;
+    Ok(resp.config_value.unwrap_or_default())
+}
+
 pub fn wifi_get_ssids(provider_id: &str) -> Result<Vec<hermitshell_common::WifiSsidConfig>, String> {
     let resp = ok_or_err(send(json!({"method": "wifi_get_ssids", "provider_id": provider_id}))?)?;
     Ok(resp.wifi_ssids.unwrap_or_default())

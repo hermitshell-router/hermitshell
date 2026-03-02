@@ -412,6 +412,30 @@ pub async fn set_wifi_radio(
 }
 
 #[server]
+pub async fn wifi_kick_client(provider_id: String, mac: String) -> Result<(), ServerFnError> {
+    crate::client::wifi_kick_client(&provider_id, &mac).map_err(ServerFnError::new)?;
+    let _ = crate::client::log_audit("wifi_kick_client", &mac);
+    leptos_axum::redirect("/wifi");
+    Ok(())
+}
+
+#[server]
+pub async fn wifi_block_client(provider_id: String, mac: String) -> Result<(), ServerFnError> {
+    crate::client::wifi_block_client(&provider_id, &mac).map_err(ServerFnError::new)?;
+    let _ = crate::client::log_audit("wifi_block_client", &mac);
+    leptos_axum::redirect("/wifi");
+    Ok(())
+}
+
+#[server]
+pub async fn wifi_unblock_client(provider_id: String, mac: String) -> Result<(), ServerFnError> {
+    crate::client::wifi_unblock_client(&provider_id, &mac).map_err(ServerFnError::new)?;
+    let _ = crate::client::log_audit("wifi_unblock_client", &mac);
+    leptos_axum::redirect("/wifi");
+    Ok(())
+}
+
+#[server]
 pub async fn setup_interfaces(wan: String, lan: String) -> Result<(), ServerFnError> {
     crate::client::set_interfaces(&wan, &lan)
         .map_err(ServerFnError::new)?;

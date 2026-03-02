@@ -3,7 +3,7 @@ use leptos_router::hooks::use_query_map;
 use crate::client;
 use crate::components::layout::Layout;
 use crate::components::toast::ErrorToast;
-use crate::server_fns::{AddWifiProvider, RemoveWifiProvider, SetWifiSsid, DeleteWifiSsid, SetWifiRadio};
+use crate::server_fns::{AddWifiProvider, RemoveWifiProvider, SetWifiSsid, DeleteWifiSsid, SetWifiRadio, WifiKickClient};
 
 #[component]
 pub fn Wifi() -> impl IntoView {
@@ -237,7 +237,12 @@ pub fn Wifi() -> impl IntoView {
             <div class="settings-section">
                 <h3>"WiFi Clients"</h3>
                 <Suspense fallback=move || view! { <p>"Loading..."</p> }>
-                    {move || clients.get().map(|result| match result {
+                    {move || {
+                        let first_provider_id = providers.get()
+                            .and_then(|r| r.ok())
+                            .and_then(|p| p.first().map(|prov| prov.id.clone()))
+                            .unwrap_or_default();
+                        clients.get().map(|result| match result {
                         Ok(clients) => {
                             if clients.is_empty() {
                                 view! { <p class="text-muted">"No WiFi clients detected."</p> }.into_any()
@@ -251,11 +256,15 @@ pub fn Wifi() -> impl IntoView {
                                                 <th>"SSID"</th>
                                                 <th>"Band"</th>
                                                 <th>"RSSI"</th>
+                                                <th>"Actions"</th>
                                             </tr>
                                         </thead>
                                         <tbody>
                                             {clients.iter().map(|c| {
                                                 let rssi_str = c.rssi.map(|r| format!("{} dBm", r)).unwrap_or_else(|| "\u{2014}".to_string());
+                                                let kick_action = ServerAction::<WifiKickClient>::new();
+                                                let pid = first_provider_id.clone();
+                                                let client_mac = c.mac.clone();
                                                 view! {
                                                     <tr>
                                                         <td style="font-family:monospace;font-size:0.85em">{c.mac.clone()}</td>
@@ -263,6 +272,13 @@ pub fn Wifi() -> impl IntoView {
                                                         <td>{c.ssid.clone()}</td>
                                                         <td>{c.band.clone()}</td>
                                                         <td>{rssi_str}</td>
+                                                        <td>
+                                                            <ActionForm action=kick_action attr:style="display:inline">
+                                                                <input type="hidden" name="provider_id" value={pid} />
+                                                                <input type="hidden" name="mac" value={client_mac} />
+                                                                <button type="submit" class="btn btn-warning btn-sm">"Kick"</button>
+                                                            </ActionForm>
+                                                        </td>
                                                     </tr>
                                                 }
                                             }).collect_view()}
@@ -272,7 +288,7 @@ pub fn Wifi() -> impl IntoView {
                             }
                         }
                         Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
-                    })}
+                    })}}
                 </Suspense>
             </div>
         </Layout>
