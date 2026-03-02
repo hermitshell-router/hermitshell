@@ -13,9 +13,6 @@ pub(super) fn handle_switch_add(req: &Request, db: &Arc<Mutex<Db>>) -> Response 
     let Some(ref host) = req.key else {
         return Response::err("key required (host)");
     };
-    let Some(ref community) = req.value else {
-        return Response::err("value required (community string)");
-    };
 
     if name.is_empty() || name.len() > 64
         || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ' ' || c == '.')
@@ -25,31 +22,70 @@ pub(super) fn handle_switch_add(req: &Request, db: &Arc<Mutex<Db>>) -> Response 
     if host.is_empty() {
         return Response::err("host cannot be empty");
     }
-    if community.is_empty() {
-        return Response::err("community string cannot be empty");
-    }
 
-    // Encrypt community string
     let session_secret = Zeroizing::new({
         let db_guard = db.lock().unwrap();
         db_guard.get_config("session_secret").ok().flatten().unwrap_or_default()
     });
-    let community_enc = if session_secret.is_empty() {
-        community.clone()
-    } else {
-        match crate::crypto::encrypt_password(community, &session_secret) {
-            Ok(enc) => enc,
-            Err(e) => return Response::err(&format!("encryption failed: {}", e)),
+
+    let encrypt = |plaintext: &str| -> Result<String, Response> {
+        if session_secret.is_empty() {
+            Ok(plaintext.to_string())
+        } else {
+            crate::crypto::encrypt_password(plaintext, &session_secret)
+                .map_err(|e| Response::err(&format!("encryption failed: {}", e)))
         }
     };
 
+    let is_v3 = req.snmp_version.as_deref() == Some("3");
     let id = uuid::Uuid::new_v4().to_string();
     let db_guard = db.lock().unwrap();
-    if let Err(e) = db_guard.insert_snmp_switch(&id, name, host, &community_enc) {
-        return Response::err(&format!("failed to add switch: {}", e));
-    }
-    let _ = db_guard.log_audit("switch_add", &format!("added SNMP switch {} ({})", name, host));
 
+    if is_v3 {
+        let Some(ref username) = req.v3_username else {
+            return Response::err("v3_username required for SNMPv3");
+        };
+        let Some(ref auth_pass) = req.v3_auth_pass else {
+            return Response::err("v3_auth_pass required for SNMPv3");
+        };
+        let Some(ref priv_pass) = req.v3_priv_pass else {
+            return Response::err("v3_priv_pass required for SNMPv3");
+        };
+        let auth_protocol = req.v3_auth_protocol.as_deref().unwrap_or("sha256");
+        let cipher = req.v3_cipher.as_deref().unwrap_or("aes128");
+
+        let auth_pass_enc = match encrypt(auth_pass) {
+            Ok(enc) => enc,
+            Err(resp) => return resp,
+        };
+        let priv_pass_enc = match encrypt(priv_pass) {
+            Ok(enc) => enc,
+            Err(resp) => return resp,
+        };
+
+        if let Err(e) = db_guard.insert_snmp_switch_v3(
+            &id, name, host, username, auth_protocol, cipher,
+            &auth_pass_enc, &priv_pass_enc,
+        ) {
+            return Response::err(&format!("failed to add switch: {}", e));
+        }
+    } else {
+        let Some(ref community) = req.value else {
+            return Response::err("value required (community string)");
+        };
+        if community.is_empty() {
+            return Response::err("community string cannot be empty");
+        }
+        let community_enc = match encrypt(community) {
+            Ok(enc) => enc,
+            Err(resp) => return resp,
+        };
+        if let Err(e) = db_guard.insert_snmp_switch(&id, name, host, &community_enc) {
+            return Response::err(&format!("failed to add switch: {}", e));
+        }
+    }
+
+    let _ = db_guard.log_audit("switch_add", &format!("added SNMP switch {} ({})", name, host));
     info!(name = %name, host = %host, "SNMP switch added");
     Response::ok()
 }

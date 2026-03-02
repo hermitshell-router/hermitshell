@@ -22,6 +22,11 @@ pub struct SwitchInfo {
     pub enabled: bool,
     pub status: String,
     pub last_seen: i64,
+    #[serde(default)]
+    pub version: String,
+    pub v3_username: Option<String>,
+    pub v3_auth_protocol: Option<String>,
+    pub v3_cipher: Option<String>,
 }
 
 fn socket_path() -> String {
@@ -871,6 +876,30 @@ pub fn add_switch(name: &str, host: &str, community: &str) -> Result<(), String>
         "name": name,
         "key": host,
         "value": community,
+    }))?)?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn add_switch_v3(
+    name: &str,
+    host: &str,
+    username: &str,
+    auth_protocol: &str,
+    cipher: &str,
+    auth_pass: &str,
+    priv_pass: &str,
+) -> Result<(), String> {
+    ok_or_err(send(json!({
+        "method": "switch_add",
+        "name": name,
+        "key": host,
+        "snmp_version": "3",
+        "v3_username": username,
+        "v3_auth_protocol": auth_protocol,
+        "v3_cipher": cipher,
+        "v3_auth_pass": auth_pass,
+        "v3_priv_pass": priv_pass,
     }))?)?;
     Ok(())
 }

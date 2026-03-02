@@ -867,10 +867,27 @@ pub async fn set_alert_rule(rule: String, enabled: String) -> Result<(), ServerF
 pub async fn add_switch(
     name: String,
     host: String,
-    community: String,
+    community: Option<String>,
+    snmp_version: Option<String>,
+    v3_username: Option<String>,
+    v3_auth_protocol: Option<String>,
+    v3_cipher: Option<String>,
+    v3_auth_pass: Option<String>,
+    v3_priv_pass: Option<String>,
 ) -> Result<(), ServerFnError> {
-    crate::client::add_switch(&name, &host, &community)
-        .map_err(ServerFnError::new)?;
+    if snmp_version.as_deref() == Some("3") {
+        let username = v3_username.ok_or_else(|| ServerFnError::new("username required for v3"))?;
+        let auth_pass = v3_auth_pass.ok_or_else(|| ServerFnError::new("auth password required for v3"))?;
+        let priv_pass = v3_priv_pass.ok_or_else(|| ServerFnError::new("privacy password required for v3"))?;
+        let auth_proto = v3_auth_protocol.unwrap_or_else(|| "sha256".to_string());
+        let cipher = v3_cipher.unwrap_or_else(|| "aes128".to_string());
+        crate::client::add_switch_v3(&name, &host, &username, &auth_proto, &cipher, &auth_pass, &priv_pass)
+            .map_err(ServerFnError::new)?;
+    } else {
+        let community = community.ok_or_else(|| ServerFnError::new("community string required for v2c"))?;
+        crate::client::add_switch(&name, &host, &community)
+            .map_err(ServerFnError::new)?;
+    }
     let _ = crate::client::log_audit("switch_add", &name);
     leptos_axum::redirect("/switches");
     Ok(())

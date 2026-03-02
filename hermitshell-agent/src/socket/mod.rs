@@ -208,6 +208,12 @@ struct Request {
     api_key: Option<String>,
     secrets: Option<String>,
     vlan_id: Option<u16>,
+    snmp_version: Option<String>,
+    v3_username: Option<String>,
+    v3_auth_protocol: Option<String>,
+    v3_cipher: Option<String>,
+    v3_auth_pass: Option<String>,
+    v3_priv_pass: Option<String>,
 }
 
 /// JSON response envelope. `ok` indicates success; `error` carries failure details.
