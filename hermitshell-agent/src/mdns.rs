@@ -816,7 +816,7 @@ mod tests {
 
         // Updating an existing record should succeed even at the limit
         dummy_upsert(&mut reg, mac, "_svc0._tcp.local", "name", 300);
-        assert_eq!(reg.records[mac][0].ttl_secs, 300);
+        assert_eq!(reg.records[mac][0]._ttl_secs, 300);
     }
 
     #[test]
