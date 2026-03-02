@@ -11,5 +11,6 @@ pub mod port_forwarding;
 pub mod settings;
 pub mod setup;
 pub mod traffic;
+pub mod vlan_settings;
 pub mod wifi;
 pub mod wireguard;

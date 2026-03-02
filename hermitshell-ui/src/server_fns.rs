@@ -767,6 +767,24 @@ pub async fn set_wg_peer_group(public_key: String, group: String) -> Result<(), 
     Ok(())
 }
 
+// --- VLAN ---
+
+#[server]
+pub async fn enable_vlan() -> Result<(), ServerFnError> {
+    crate::client::vlan_enable().map_err(ServerFnError::new)?;
+    let _ = crate::client::log_audit("vlan_enable", "");
+    leptos_axum::redirect("/vlans");
+    Ok(())
+}
+
+#[server]
+pub async fn disable_vlan() -> Result<(), ServerFnError> {
+    crate::client::vlan_disable().map_err(ServerFnError::new)?;
+    let _ = crate::client::log_audit("vlan_disable", "");
+    leptos_axum::redirect("/vlans");
+    Ok(())
+}
+
 // --- Behavioral analysis toggles ---
 
 #[server]

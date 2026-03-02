@@ -23,6 +23,7 @@ use pages::settings::Settings;
 use pages::setup::{Setup, SetupStep1, SetupStep2, SetupStep3, SetupStep4, SetupStep5, SetupStep6, SetupStep7, SetupStep8};
 use pages::traffic::Traffic;
 use pages::port_forwarding::PortForwarding;
+use pages::vlan_settings::VlanSettings;
 use pages::wifi::Wifi;
 use pages::wireguard::Wireguard;
 
@@ -42,6 +43,7 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/wireguard") view=Wireguard />
                     <Route path=path!("/port-forwarding") view=PortForwarding />
                     <Route path=path!("/wifi") view=Wifi />
+                    <Route path=path!("/vlans") view=VlanSettings />
                     <Route path=path!("/settings") view=Settings />
                     <Route path=path!("/audit") view=Audit />
                     <Route path=path!("/logs") view=Logs />

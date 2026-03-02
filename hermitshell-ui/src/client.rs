@@ -6,6 +6,14 @@ use std::os::unix::net::UnixStream;
 use crate::types::{Device, Status};
 pub use hermitshell_common::{Alert, ConnectionLog, DnsLogEntry};
 
+#[derive(Debug, Clone, serde::Serialize, Deserialize)]
+pub struct VlanStatusEntry {
+    pub group: String,
+    pub vlan_id: u16,
+    pub subnet: String,
+    pub gateway: String,
+}
+
 fn socket_path() -> String {
     let run_dir = std::env::var("HERMITSHELL_RUN_DIR").unwrap_or_else(|_| "/run/hermitshell".into());
     format!("{}/agent.sock", run_dir)
@@ -781,6 +789,28 @@ pub fn remove_ipv6_pinhole(id: i64) -> Result<(), String> {
 
 pub fn set_wg_peer_group(public_key: &str, group: &str) -> Result<(), String> {
     ok_or_err(send(json!({"method": "set_wg_peer_group", "public_key": public_key, "group": group}))?)?;
+    Ok(())
+}
+
+pub fn get_vlan_status() -> Result<(bool, Vec<VlanStatusEntry>), String> {
+    let resp = ok_or_err(send(json!({"method": "vlan_status"}))?)?;
+    let s = resp.config_value.unwrap_or_else(|| "{}".to_string());
+    let val: serde_json::Value = serde_json::from_str(&s)
+        .map_err(|e| e.to_string())?;
+    let enabled = val.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+    let vlans: Vec<VlanStatusEntry> = val.get("vlans")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+    Ok((enabled, vlans))
+}
+
+pub fn vlan_enable() -> Result<(), String> {
+    ok_or_err(send(json!({"method": "vlan_enable"}))?)?;
+    Ok(())
+}
+
+pub fn vlan_disable() -> Result<(), String> {
+    ok_or_err(send(json!({"method": "vlan_disable"}))?)?;
     Ok(())
 }
 

@@ -19,6 +19,7 @@ pub fn Layout(
         ("Alerts", "/alerts"),
         ("WireGuard", "/wireguard"),
         ("WiFi", "/wifi"),
+        ("VLANs", "/vlans"),
         ("Port Forwarding", "/port-forwarding"),
         ("Settings", "/settings"),
         ("Audit", "/audit"),
