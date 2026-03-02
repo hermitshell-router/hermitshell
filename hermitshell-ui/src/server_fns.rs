@@ -811,3 +811,35 @@ pub async fn set_alert_rule(rule: String, enabled: String) -> Result<(), ServerF
     leptos_axum::redirect("/settings");
     Ok(())
 }
+
+#[server]
+pub async fn add_switch(
+    name: String,
+    host: String,
+    port: String,
+    username: String,
+    password: String,
+    vendor_profile: String,
+) -> Result<(), ServerFnError> {
+    let port: u16 = port.parse().unwrap_or(22);
+    crate::client::add_switch(&name, &host, port, &username, &password, &vendor_profile)
+        .map_err(ServerFnError::new)?;
+    let _ = crate::client::log_audit("switch_add", &name);
+    leptos_axum::redirect("/switches");
+    Ok(())
+}
+
+#[server]
+pub async fn remove_switch(name: String) -> Result<(), ServerFnError> {
+    crate::client::remove_switch(&name).map_err(ServerFnError::new)?;
+    let _ = crate::client::log_audit("switch_remove", &name);
+    leptos_axum::redirect("/switches");
+    Ok(())
+}
+
+#[server]
+pub async fn test_switch(name: String) -> Result<(), ServerFnError> {
+    crate::client::test_switch(&name).map_err(ServerFnError::new)?;
+    leptos_axum::redirect("/switches");
+    Ok(())
+}

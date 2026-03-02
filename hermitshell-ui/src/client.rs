@@ -14,6 +14,19 @@ pub struct VlanStatusEntry {
     pub gateway: String,
 }
 
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct SwitchInfo {
+    pub id: String,
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub vendor_profile: String,
+    pub uplink_port: Option<String>,
+    pub enabled: bool,
+    pub status: String,
+    pub last_seen: i64,
+}
+
 fn socket_path() -> String {
     let run_dir = std::env::var("HERMITSHELL_RUN_DIR").unwrap_or_else(|_| "/run/hermitshell".into());
     format!("{}/agent.sock", run_dir)
@@ -811,6 +824,35 @@ pub fn vlan_enable() -> Result<(), String> {
 
 pub fn vlan_disable() -> Result<(), String> {
     ok_or_err(send(json!({"method": "vlan_disable"}))?)?;
+    Ok(())
+}
+
+pub fn list_switches() -> Result<Vec<SwitchInfo>, String> {
+    let resp = ok_or_err(send(json!({"method": "switch_list"}))?)?;
+    let s = resp.config_value.unwrap_or_else(|| "[]".to_string());
+    serde_json::from_str(&s).map_err(|e| e.to_string())
+}
+
+pub fn add_switch(name: &str, host: &str, port: u16, username: &str, password: &str, vendor_profile: &str) -> Result<(), String> {
+    ok_or_err(send(json!({
+        "method": "switch_add",
+        "name": name,
+        "key": host,
+        "value": username,
+        "description": password,
+        "port_start": port,
+        "group": vendor_profile,
+    }))?)?;
+    Ok(())
+}
+
+pub fn remove_switch(name: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "switch_remove", "name": name}))?)?;
+    Ok(())
+}
+
+pub fn test_switch(name: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "switch_test", "name": name}))?)?;
     Ok(())
 }
 
