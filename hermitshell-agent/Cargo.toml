@@ -43,6 +43,7 @@ urlencoding = "2"
 nix = { version = "0.31", features = ["fs", "hostname", "signal", "user"] }
 tempfile = "3"
 zeroize = "1"
+regex = "1"
 simple-dns = "0.11"
 uuid = { version = "1", features = ["v4"] }
 
