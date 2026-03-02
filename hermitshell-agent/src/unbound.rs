@@ -24,10 +24,8 @@ pub const DOH_RESOLVER_DOMAINS: &[&str] = &[
 
 pub struct UnboundManager {
     listen_port: u16,
-    #[allow(dead_code)]
-    listen_addr: String,
-    #[allow(dead_code)]
-    listen_addr_v6: Option<String>,
+    _listen_addr: String,
+    _listen_addr_v6: Option<String>,
     lan_subnet: String,
     tls_cert_path: Option<String>,
     tls_key_path: Option<String>,
@@ -45,8 +43,8 @@ impl UnboundManager {
     ) -> Self {
         Self {
             listen_port,
-            listen_addr,
-            listen_addr_v6,
+            _listen_addr: listen_addr,
+            _listen_addr_v6: listen_addr_v6,
             lan_subnet,
             tls_cert_path,
             tls_key_path,

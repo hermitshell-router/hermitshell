@@ -19,8 +19,7 @@ pub struct ConntrackEvent {
     pub protocol: String,
     pub src_ip: String,
     pub dst_ip: String,
-    #[allow(dead_code)]
-    pub src_port: u16,
+    pub _src_port: u16,
     pub dst_port: u16,
     pub bytes_src: i64,
     pub bytes_dst: i64,
@@ -86,7 +85,7 @@ pub fn parse_event(line: &str, lan_ip: &str) -> Option<ConntrackEvent> {
         protocol,
         src_ip,
         dst_ip,
-        src_port,
+        _src_port: src_port,
         dst_port,
         bytes_src,
         bytes_dst,
@@ -239,7 +238,7 @@ mod tests {
         assert_eq!(ev.protocol, "tcp");
         assert_eq!(ev.src_ip, "10.0.1.2");
         assert_eq!(ev.dst_ip, "93.184.216.34");
-        assert_eq!(ev.src_port, 54321);
+        assert_eq!(ev._src_port, 54321);
         assert_eq!(ev.dst_port, 443);
         assert_eq!(ev.bytes_src, 0);
         assert_eq!(ev.bytes_dst, 0);
@@ -253,7 +252,7 @@ mod tests {
         assert_eq!(ev.protocol, "tcp");
         assert_eq!(ev.src_ip, "10.0.1.2");
         assert_eq!(ev.dst_ip, "93.184.216.34");
-        assert_eq!(ev.src_port, 54321);
+        assert_eq!(ev._src_port, 54321);
         assert_eq!(ev.dst_port, 443);
         assert_eq!(ev.bytes_src, 1500);
         assert_eq!(ev.bytes_dst, 12000);
@@ -278,7 +277,7 @@ mod tests {
         assert_eq!(ev.protocol, "udp");
         assert_eq!(ev.src_ip, "10.0.2.1");
         assert_eq!(ev.dst_ip, "1.1.1.1");
-        assert_eq!(ev.src_port, 5000);
+        assert_eq!(ev._src_port, 5000);
         assert_eq!(ev.dst_port, 53);
     }
 

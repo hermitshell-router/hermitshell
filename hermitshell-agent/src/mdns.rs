@@ -23,8 +23,7 @@ const MAX_TOTAL_RECORDS: usize = 10_000;
 /// Internal service record tracking an mDNS service announcement.
 #[derive(Debug, Clone)]
 struct ServiceRecord {
-    #[allow(dead_code)]
-    device_mac: String,
+    _device_mac: String,
     service_type: String,
     service_name: String,
     port: u16,
@@ -32,8 +31,7 @@ struct ServiceRecord {
     host_ipv4: Ipv4Addr,
     /// The SRV target hostname from the original announcement (e.g., "chromecast-xxx.local").
     target_hostname: String,
-    #[allow(dead_code)]
-    ttl_secs: u32,
+    _ttl_secs: u32,
     expires_at: Instant,
 }
 
@@ -86,14 +84,14 @@ impl ServiceRegistry {
         let clamped_ttl = ttl_secs.min(MAX_TTL_SECS);
         let expires_at = Instant::now() + std::time::Duration::from_secs(clamped_ttl as u64);
         let record = ServiceRecord {
-            device_mac: mac.to_string(),
+            _device_mac: mac.to_string(),
             service_type: service_type.to_string(),
             service_name: service_name.to_string(),
             port,
             txt_records: txt,
             host_ipv4,
             target_hostname: target_hostname.to_string(),
-            ttl_secs: clamped_ttl,
+            _ttl_secs: clamped_ttl,
             expires_at,
         };
 
@@ -783,7 +781,7 @@ mod tests {
         let mut reg = ServiceRegistry::new();
         dummy_upsert(&mut reg, "AA:BB:CC:DD:EE:01", "_http._tcp.local", "web", 999_999);
         let entries = &reg.records["AA:BB:CC:DD:EE:01"];
-        assert_eq!(entries[0].ttl_secs, MAX_TTL_SECS);
+        assert_eq!(entries[0]._ttl_secs, MAX_TTL_SECS);
     }
 
     #[test]
@@ -791,7 +789,7 @@ mod tests {
         let mut reg = ServiceRegistry::new();
         dummy_upsert(&mut reg, "AA:BB:CC:DD:EE:01", "_http._tcp.local", "web", 120);
         let entries = &reg.records["AA:BB:CC:DD:EE:01"];
-        assert_eq!(entries[0].ttl_secs, 120);
+        assert_eq!(entries[0]._ttl_secs, 120);
     }
 
     #[test]
