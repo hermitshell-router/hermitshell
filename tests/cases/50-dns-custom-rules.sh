@@ -16,9 +16,10 @@ rule_resolves() {
 }
 wait_for 10 "Custom rule resolves" rule_resolves
 
-# Verify resolution (retry once if empty — SSH can occasionally return empty)
+# Verify resolution (retry if empty — SSH/unbound can occasionally return empty)
 resolved=$(vm_exec router "dig +short +time=2 +tries=2 @10.0.0.1 myhost.home" || echo "")
-[ -z "$resolved" ] && resolved=$(vm_exec router "dig +short +time=2 +tries=2 @10.0.0.1 myhost.home" || echo "")
+[ -z "$resolved" ] && sleep 1 && resolved=$(vm_exec router "dig +short +time=2 +tries=2 @10.0.0.1 myhost.home" || echo "")
+[ -z "$resolved" ] && sleep 1 && resolved=$(vm_exec router "dig +short +time=2 +tries=2 @10.0.0.1 myhost.home" || echo "")
 assert_match "$resolved" "10\.0\.1\.50" "Custom rule resolves to correct IP"
 
 # List rules and verify

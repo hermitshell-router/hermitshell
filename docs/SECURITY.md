@@ -1100,3 +1100,37 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** None for SSRF. The runZero URL could theoretically be pointed at an internal HTTPS service, but it would need to respond to the `/api/v1.0/export/org/assets.json` endpoint with valid JSON, limiting practical exploitation. The `https://` scheme requirement prevents plaintext interception of the API token.
 
 **Proper fix:** None needed for SSRF. The existing HTTPS requirement for runZero URLs is sufficient.
+
+---
+
+## Multi-Distro Compatibility
+
+## 147. SIGHUP to unbound causes momentary DNS reload on log ingest
+
+**What:** The `ingest_dns_logs` socket method sends SIGHUP to unbound before reading its query log. SIGHUP causes unbound to fully reload its configuration, which momentarily interrupts DNS resolution (~200ms).
+
+**Why:** Unbound 1.19+ (shipped with Ubuntu 24.04) buffers log output in memory and may not flush queries to disk for many seconds. There is no way to flush the log buffer without triggering a reload. Without this, `ingest_dns_logs` returns stale or empty results on newer distros.
+
+**Risk:** Low. The SIGHUP is only sent on explicit `ingest_dns_logs` API calls (admin-only method, rate-limited to one per 10 seconds). The periodic 30-second background ingest loop does **not** send SIGHUP, so normal operation is unaffected. A brief DNS blip (~200ms) occurs during each on-demand ingest, but unbound restores service quickly after reload.
+
+**Proper fix:** Unbound does not expose a log-flush-only mechanism. If a future unbound version adds `USR1` signal handling for log flushing (without full reload), switch to that. Alternatively, unbound's `remote-control` interface could be used (`unbound-control log_reopen`), but it requires configuring control sockets and keys, adding complexity for minimal gain.
+
+## 148. IPv6 unbound binding degrades silently when IPv6 is unavailable
+
+**What:** The unbound config generator (`unbound.rs`) checks for `/proc/net/if_inet6` at startup. If the file does not exist (IPv6 disabled in kernel), unbound only binds to `0.0.0.0` and the `interface: ::0` line is omitted. No warning is logged.
+
+**Why:** Older distros (Ubuntu 22.04 with some kernel configs) or VMs may not have IPv6 enabled. Unbound refuses to start if asked to bind to `::0` when IPv6 is unavailable, which would break all DNS resolution.
+
+**Risk:** Low. If IPv6 is disabled at the kernel level, there are no IPv6 clients to serve anyway. The silent fallback means an admin expecting IPv6 DNS may not realize it's inactive. DNS queries from IPv4 clients are unaffected.
+
+**Proper fix:** Log a warning when IPv6 binding is skipped. Expose IPv6 status in the `get_status` API response so the web UI can display it. Both are low priority since IPv6 availability is a system-level concern outside the agent's control.
+
+## 149. NIC renaming via udev rules at provision time (cloud-image boxes)
+
+**What:** The Vagrant provisioner (`provision/router.sh`) detects cloud-image boxes that use predictable NIC names (e.g., `ens5`, `ens6`, `ens7`) and writes udev rules to rename them to the expected `eth0`, `eth1`, `eth2` names. This runs as root during VM provisioning and requires a reboot to take effect.
+
+**Why:** The agent, nftables rules, and DHCP server all reference interfaces by name (`eth0` = WAN, `eth1` = LAN, `eth2` = isolated). Cloud-image Vagrant boxes use predictable names (`ens*`) that don't match. Rather than making all interface names configurable (touching dozens of files), udev renaming at provision time maps them to the expected names.
+
+**Risk:** Test infrastructure only — this runs in Vagrant VMs, not on production routers. If the NIC naming assumption is wrong (e.g., a cloud-image box with different PCI slot assignments), provisioning would create incorrect mappings. The provisioner detects this by checking for `ens*` interfaces before writing rules.
+
+**Proper fix:** For production, make interface names configurable in the agent config (WAN/LAN/isolated interface names stored in DB). The udev approach is appropriate for test infrastructure where interface topology is known and fixed.

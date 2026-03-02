@@ -26,12 +26,20 @@ _vm_ssh_args() {
     if [ ! -f "$cache_file" ]; then
         local cfg
         cfg=$(cd "$TESTS_DIR" && vagrant ssh-config "$vm" 2>/dev/null)
-        local host port key user
+        local host port user keys_args extra_opts
         host=$(echo "$cfg" | awk '/HostName/ {print $2}')
         port=$(echo "$cfg" | awk '/Port/ {print $2}')
-        key=$(echo "$cfg" | awk '/IdentityFile/ {print $2}')
         user=$(echo "$cfg" | awk '/User / {print $2}')
-        echo "-i $key -p $port ${user}@${host}" > "$cache_file"
+        # Support multiple IdentityFile lines (e.g. NixOS insecure key pair)
+        keys_args=$(echo "$cfg" | awk '/IdentityFile/ {printf "-i %s ", $2}')
+        # Capture PubkeyAcceptedKeyTypes/HostKeyAlgorithms (needed for RSA keys)
+        extra_opts=""
+        local pat
+        pat=$(echo "$cfg" | awk '/PubkeyAcceptedKeyTypes/ {print $2}')
+        [ -n "$pat" ] && extra_opts="$extra_opts -o PubkeyAcceptedKeyTypes=$pat"
+        pat=$(echo "$cfg" | awk '/HostKeyAlgorithms/ {print $2}')
+        [ -n "$pat" ] && extra_opts="$extra_opts -o HostKeyAlgorithms=$pat"
+        echo "${keys_args}-p $port${extra_opts} ${user}@${host}" > "$cache_file"
     fi
     cat "$cache_file"
 }

@@ -32,6 +32,9 @@ cat > /etc/nixos/hermitshell-test.nix <<'NIX'
     git
     rsync
     python3
+    openssl
+    binutils    # provides 'strings' for binary inspection tests
+    bind.host   # 'host' command for DNS lookups in tests
   ];
 
   # Kernel parameters
@@ -45,6 +48,14 @@ cat > /etc/nixos/hermitshell-test.nix <<'NIX'
   # Disable NixOS firewall (HermitShell manages nftables)
   networking.firewall.enable = lib.mkForce false;
   networking.nftables.enable = lib.mkForce false;
+
+  # Don't let systemd-networkd manage WAN/LAN interfaces — the agent handles them.
+  # Also disable system-wide DHCP so it doesn't race with the agent's DHCP client.
+  networking.useDHCP = lib.mkForce false;
+  networking.interfaces.eth0.useDHCP = true;   # Keep management NIC on DHCP
+
+  # Disable system unbound — agent manages its own instance
+  services.unbound.enable = lib.mkForce false;
 
   # Create directories for the agent
   systemd.tmpfiles.rules = [

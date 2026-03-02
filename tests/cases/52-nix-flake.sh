@@ -26,7 +26,7 @@ assert_match "$result" "packages" "flake show lists packages"
 
 # Evaluate the NixOS module (fast — just checks nix expression validity)
 result=$(vm_exec router "cd /hermitshell-src && nix eval .#nixosModules.default 2>&1" || true)
-assert_match "$result" "lambda\|«lambda»\|<LAMBDA>" "NixOS module evaluates"
+assert_match "$result" "lambda|«lambda»|<LAMBDA>" "NixOS module evaluates"
 
 # Full nix build (slow — compiles Rust from source, ~10-30 min)
 # Only run if HERMIT_NIX_BUILD=1 is set (too slow for normal test runs)

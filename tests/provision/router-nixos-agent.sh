@@ -11,6 +11,12 @@ export PATH="/run/current-system/sw/bin:$PATH"
 ip link set eth1 up 2>/dev/null || true
 ip link set eth2 up 2>/dev/null || true
 
+# Initialize DNSSEC root trust anchor for unbound.
+# The agent copies from /var/lib/unbound/root.key, but NixOS may not have it
+# at that path because the NixOS unbound service is disabled.
+mkdir -p /var/lib/unbound
+unbound-anchor -a /var/lib/unbound/root.key 2>/dev/null || true
+
 # Fix default route to go through WAN (eth1) instead of Vagrant management (eth0)
 ip route del default via 192.168.121.1 dev eth0 2>/dev/null || true
 ip route add default via 192.168.100.2 dev eth1 2>/dev/null || true

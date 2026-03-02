@@ -959,7 +959,7 @@ async fn main() -> Result<()> {
             let unbound = unbound_for_loop.clone();
             let db_bl = db_for_counters.clone();
             tokio::task::spawn_blocking(move || {
-                let mgr = unbound.lock().unwrap();
+                let mut mgr = unbound.lock().unwrap();
                 if let Err(e) = mgr.download_blocklists(&db_bl) {
                     error!(error = %e, "blocklist refresh failed");
                 }

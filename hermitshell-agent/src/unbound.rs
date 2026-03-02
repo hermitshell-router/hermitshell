@@ -205,10 +205,18 @@ impl UnboundManager {
         cfg.push_str("    do-ip6: yes\n");
         cfg.push_str("    do-udp: yes\n");
         cfg.push_str("    do-tcp: yes\n");
-        // Skip privilege drop — the agent's systemd unit already sandboxes
-        // with ProtectSystem=strict, PrivateTmp, and restricted capabilities.
-        // Unbound can't call setuid/setgid without CAP_SETUID/CAP_SETGID.
+        // Skip privilege drop and chroot — the agent's systemd unit already
+        // sandboxes with ProtectSystem=strict, PrivateTmp, and restricted
+        // capabilities.  Explicit settings are required because unbound's
+        // compiled-in defaults vary by distro (e.g. NixOS defaults
+        // directory to /etc/unbound which may not exist).
         cfg.push_str("    username: \"\"\n");
+        cfg.push_str("    chroot: \"\"\n");
+        cfg.push_str(&format!("    directory: \"{}\"\n", paths::unbound_dir()));
+        cfg.push_str(&format!(
+            "    pidfile: \"{}/unbound.pid\"\n",
+            paths::unbound_dir()
+        ));
         cfg.push('\n');
 
         // Logging
@@ -308,11 +316,11 @@ impl UnboundManager {
         cfg.push('\n');
 
         // --- remote-control: block ---
-        // Disabled: the agent reloads via SIGHUP, so no control socket is needed.
-        // Enabling the control socket requires CAP_CHOWN which the systemd sandbox
-        // does not grant.
+        // Use a Unix socket for unbound-control reload (no TLS needed).
+        let ctl_sock = format!("{}/unbound-control.sock", paths::unbound_dir());
         cfg.push_str("remote-control:\n");
-        cfg.push_str("    control-enable: no\n");
+        cfg.push_str("    control-enable: yes\n");
+        cfg.push_str(&format!("    control-interface: {}\n", ctl_sock));
         cfg.push('\n');
 
         // --- Forward zones ---
@@ -356,10 +364,14 @@ impl UnboundManager {
             let _ = std::fs::File::create(&log_path);
         }
 
+        let stderr_path = format!("{}/unbound-stderr.log", paths::unbound_dir());
+        let stderr_file = std::fs::File::create(&stderr_path)
+            .unwrap_or_else(|_| std::fs::File::create("/dev/null").unwrap());
+
         let child = Command::new("unbound")
             .args(["-d", "-c", &paths::unbound_config()])
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::from(stderr_file))
             .process_group(0) // own process group so agent signals don't reach it
             .spawn()
             .context("failed to spawn unbound")?;
@@ -377,18 +389,31 @@ impl UnboundManager {
         }
     }
 
-    pub fn reload(&self) -> Result<()> {
-        if let Some(child) = &self.child {
-            let pid = child.id();
-            // Unbound reloads its config on SIGHUP.  This avoids needing
-            // unbound-control and its control socket (which requires
-            // CAP_CHOWN inside the systemd sandbox).
-            nix::sys::signal::kill(
-                nix::unistd::Pid::from_raw(pid as i32),
-                nix::sys::signal::Signal::SIGHUP,
-            )
-            .context("failed to send SIGHUP to unbound")?;
-            debug!(pid, "sent SIGHUP to unbound for reload");
+    pub fn reload(&mut self) -> Result<()> {
+        if self.child.is_some() {
+            // Use unbound-control over the Unix control socket to reload.
+            // This is faster and more portable than SIGHUP (which some
+            // builds treat as a terminate signal rather than reload).
+            let config_path = paths::unbound_config();
+            let output = Command::new("unbound-control")
+                .args(["-c", &config_path, "reload"])
+                .output();
+            match output {
+                Ok(o) if o.status.success() => {
+                    debug!("unbound-control reload succeeded");
+                }
+                Ok(o) => {
+                    let stderr = String::from_utf8_lossy(&o.stderr);
+                    error!(stderr = %stderr, "unbound-control reload failed, restarting");
+                    self.stop();
+                    self.start()?;
+                }
+                Err(e) => {
+                    error!(error = %e, "unbound-control not found, restarting");
+                    self.stop();
+                    self.start()?;
+                }
+            }
             Ok(())
         } else {
             bail!("unbound is not running, cannot reload");
@@ -422,7 +447,7 @@ impl UnboundManager {
         false
     }
 
-    pub fn set_blocking_enabled(&self, db: &Arc<Mutex<Db>>, enabled: bool) -> Result<()> {
+    pub fn set_blocking_enabled(&mut self, db: &Arc<Mutex<Db>>, enabled: bool) -> Result<()> {
         {
             let db = db.lock().unwrap();
             db.set_config(

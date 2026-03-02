@@ -64,7 +64,7 @@ pub(super) fn handle_set_dns_config(
     }
     drop(db_guard);
 
-    let mgr = unbound.lock().unwrap();
+    let mut mgr = unbound.lock().unwrap();
     if let Err(e) = mgr.write_config(db) {
         return Response::err(&format!("failed to write config: {}", e));
     }
@@ -103,7 +103,7 @@ pub(super) fn handle_add_dns_forward(
     match db_guard.add_dns_forward_zone(domain, forward_addr) {
         Ok(id) => {
             drop(db_guard);
-            let mgr = unbound.lock().unwrap();
+            let mut mgr = unbound.lock().unwrap();
             let _ = mgr.write_config(db);
             let _ = mgr.reload();
             let mut resp = Response::ok();
@@ -127,7 +127,7 @@ pub(super) fn handle_remove_dns_forward(
         return Response::err(&e.to_string());
     }
     drop(db_guard);
-    let mgr = unbound.lock().unwrap();
+    let mut mgr = unbound.lock().unwrap();
     let _ = mgr.write_config(db);
     let _ = mgr.reload();
     Response::ok()
@@ -187,7 +187,7 @@ pub(super) fn handle_add_dns_rule(
     match db_guard.add_dns_custom_rule(domain, record_type, value) {
         Ok(id) => {
             drop(db_guard);
-            let mgr = unbound.lock().unwrap();
+            let mut mgr = unbound.lock().unwrap();
             let _ = mgr.write_config(db);
             let _ = mgr.reload();
             let mut resp = Response::ok();
@@ -211,7 +211,7 @@ pub(super) fn handle_remove_dns_rule(
         return Response::err(&e.to_string());
     }
     drop(db_guard);
-    let mgr = unbound.lock().unwrap();
+    let mut mgr = unbound.lock().unwrap();
     let _ = mgr.write_config(db);
     let _ = mgr.reload();
     Response::ok()
@@ -257,7 +257,7 @@ pub(super) fn handle_add_dns_blocklist(
     match db_guard.add_dns_blocklist(name, url, tag) {
         Ok(id) => {
             drop(db_guard);
-            let mgr = unbound.lock().unwrap();
+            let mut mgr = unbound.lock().unwrap();
             // Download the new blocklist and rebuild config
             let _ = mgr.download_blocklists(db);
             let _ = mgr.write_config(db);
@@ -291,7 +291,7 @@ pub(super) fn handle_remove_dns_blocklist(
     );
     let _ = std::fs::remove_file(&path);
 
-    let mgr = unbound.lock().unwrap();
+    let mut mgr = unbound.lock().unwrap();
     let _ = mgr.write_config(db);
     let _ = mgr.reload();
     Response::ok()

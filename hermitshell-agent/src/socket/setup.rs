@@ -242,7 +242,7 @@ pub(super) fn handle_setup_set_dns(req: &Request, db: &Arc<Mutex<Db>>, unbound: 
     drop(db_guard);
 
     // Regenerate Unbound config and reload
-    let mgr = unbound.lock().unwrap();
+    let mut mgr = unbound.lock().unwrap();
     let _ = mgr.write_config(db);
     let _ = mgr.reload();
 
@@ -373,7 +373,7 @@ pub(super) fn handle_update_upstream_dns(req: &Request, db: &Arc<Mutex<Db>>, unb
     let _ = db_guard.log_audit("update_upstream_dns", dns);
     drop(db_guard);
 
-    let mgr = unbound.lock().unwrap();
+    let mut mgr = unbound.lock().unwrap();
     let _ = mgr.write_config(db);
     let _ = mgr.reload();
 

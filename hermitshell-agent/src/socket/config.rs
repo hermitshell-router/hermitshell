@@ -52,7 +52,7 @@ pub(super) fn handle_set_ad_blocking(req: &Request, db: &Arc<Mutex<Db>>, unbound
     let Some(enabled) = req.enabled else {
         return Response::err("enabled required");
     };
-    let mgr = unbound.lock().unwrap();
+    let mut mgr = unbound.lock().unwrap();
     if let Err(e) = mgr.set_blocking_enabled(db, enabled) {
         return Response::err(&format!("failed to update blocking: {}", e));
     }
@@ -1131,7 +1131,7 @@ pub fn apply_hermit_config(
 
     // 3. DNS reconciliation (write_config + reload unbound)
     {
-        let mgr = unbound.lock().unwrap();
+        let mut mgr = unbound.lock().unwrap();
         let _ = mgr.write_config(db);
         let _ = mgr.reload();
     }

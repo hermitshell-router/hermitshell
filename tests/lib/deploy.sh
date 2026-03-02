@@ -24,7 +24,23 @@ _resolve_nix_paths() {
 # Build the env var string for launching the agent on NixOS
 _nix_agent_env() {
     _resolve_nix_paths
-    echo "WAN_IFACE=eth1 LAN_IFACE=eth2 HERMITSHELL_NFT_PATH=$_NIX_NFT HERMITSHELL_IP_PATH=$_NIX_IP HERMITSHELL_WG_PATH=$_NIX_WG HERMITSHELL_TC_PATH=$_NIX_TC HERMITSHELL_MODPROBE_PATH=$_NIX_MODPROBE HERMITSHELL_CONNTRACK_PATH=$_NIX_CONNTRACK"
+    echo "PATH=/run/current-system/sw/bin:/usr/bin:/usr/sbin:/bin:/sbin WAN_IFACE=eth1 LAN_IFACE=eth2 HERMITSHELL_NFT_PATH=$_NIX_NFT HERMITSHELL_IP_PATH=$_NIX_IP HERMITSHELL_WG_PATH=$_NIX_WG HERMITSHELL_TC_PATH=$_NIX_TC HERMITSHELL_MODPROBE_PATH=$_NIX_MODPROBE HERMITSHELL_CONNTRACK_PATH=$_NIX_CONNTRACK"
+}
+
+# Start agent on NixOS. SSH+ControlMaster keeps sessions open when a backgrounded
+# child inherits fds, so we cap the wait at 10s — the agent starts within 1s.
+_nix_start_agent() {
+    local env="$1"
+    local args
+    args=$(_vm_ssh_args router)
+    timeout 10 ssh $SSH_COMMON $args "sudo bash -c '$env setsid /opt/hermitshell/hermitshell-agent </dev/null >/var/log/hermitshell-agent.log 2>&1 &'" 2>/dev/null || true
+    # Wait briefly for the agent to create its socket
+    for i in $(seq 1 10); do
+        if vm_exec router "test -S /run/hermitshell/agent.sock" 2>/dev/null; then
+            return 0
+        fi
+        sleep 1
+    done
 }
 
 # Build artifacts on the host
@@ -59,14 +75,23 @@ _deploy_rsync_nix() {
     shift 2
     local args
     args=$(_vm_ssh_args router)
-    # Parse ssh args: "-i /key -p PORT user@host"
-    local key port userhost
-    key=$(echo "$args" | grep -oP '(?<=-i )\S+')
-    port=$(echo "$args" | grep -oP '(?<=-p )\S+')
-    userhost=$(echo "$args" | grep -oP '\S+@\S+$')
+    # Parse ssh args: "-i /key [-i /key2] -p PORT [-o ...] user@host"
+    # Extract all -i and -o flags for SSH, plus port and user@host
+    local ssh_flags="" port="" userhost=""
+    local -a tokens=($args)
+    local i=0
+    while [ $i -lt ${#tokens[@]} ]; do
+        case "${tokens[$i]}" in
+            -i) ssh_flags="$ssh_flags -i ${tokens[$((i+1))]}"; i=$((i+2)) ;;
+            -p) port="${tokens[$((i+1))]}"; i=$((i+2)) ;;
+            -o) ssh_flags="$ssh_flags -o ${tokens[$((i+1))]}"; i=$((i+2)) ;;
+            *@*) userhost="${tokens[$i]}"; i=$((i+1)) ;;
+            *) i=$((i+1)) ;;
+        esac
+    done
     vm_sudo router "mkdir -p $dest && chown vagrant:vagrant $dest"
     rsync -az --delete \
-        -e "ssh $SSH_COMMON -i $key -p $port" \
+        -e "ssh $SSH_COMMON $ssh_flags -p $port" \
         "$@" \
         "$src" "${userhost}:${dest}"
 }
@@ -118,7 +143,11 @@ deploy_start() {
         nix)
             local env
             env=$(_nix_agent_env)
-            vm_sudo router "rm -f /run/hermitshell/*.sock && $env setsid /opt/hermitshell/hermitshell-agent > /var/log/hermitshell-agent.log 2>&1 &"
+            vm_sudo router "rm -f /run/hermitshell/*.sock"
+            # Start agent. SSH+ControlMaster may keep the session open because
+            # the backgrounded process inherits fds — cap the wait with timeout.
+            # The agent starts within 1s; the 5s timeout only fires on the hang.
+            _nix_start_agent "$env"
             vm_sudo router "if [ -f /opt/hermitshell/hermitshell-container.tar ]; then docker load -i /opt/hermitshell/hermitshell-container.tar; docker rm -f hermitshell 2>/dev/null; docker run -d --name hermitshell --restart unless-stopped --network host --read-only --cap-drop ALL --security-opt no-new-privileges -v /run/hermitshell:/run/hermitshell hermitshell:latest; fi"
             ;;
     esac
@@ -159,7 +188,8 @@ deploy_start_agent() {
         nix)
             local env
             env=$(_nix_agent_env)
-            vm_sudo router "rm -f /run/hermitshell/*.sock && $env setsid /opt/hermitshell/hermitshell-agent > /var/log/hermitshell-agent.log 2>&1 &"
+            vm_sudo router "rm -f /run/hermitshell/*.sock"
+            _nix_start_agent "$env"
             ;;
     esac
 }

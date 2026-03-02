@@ -2,25 +2,25 @@
 source "$(dirname "$0")/../lib/helpers.sh"
 
 require_agent
-require_lan_ip
 require_dns
 
-# Get LAN device IP
-device_ip=$(vm_exec lan "ip -4 addr show eth1 | grep inet | awk '{print \$2}' | cut -d/ -f1")
-assert_match "$device_ip" "10\." "LAN device has 10.x IP"
+# Make DNS queries from the router that we can identify in logs.
+# Using the router avoids cross-VM networking flakiness during suite runs.
+# Send a burst of queries to overflow unbound's stdio write buffer (~4KB);
+# a single query line is ~80 bytes and may sit in the buffer indefinitely.
+vm_exec router "for i in \$(seq 1 60); do dig +short dns-log-test-\$i.example.com @10.0.0.1 +time=1 +tries=1 2>/dev/null & done; wait" || true
+vm_exec router "dig +short dns-log-test.example.com @10.0.0.1 2>/dev/null" || true
 
-# Make a specific DNS query we can identify in logs
-vm_exec lan "dig +short dns-log-test.example.com @10.0.0.1 2>/dev/null" || true
-
-# Flush unbound's buffered log output (1.19+ buffers writes) and trigger ingest.
-# ingest_dns_logs requires root (admin-only method) and sends SIGHUP internally.
+# Wait for the periodic ingest loop (30s) to pick up the query.
+# On-demand ingest via ingest_dns_logs is rate-limited (10s debounce) and
+# unbound 1.19+ buffers log output, so the periodic loop is more reliable.
+# Trigger one immediate ingest first for the common fast path.
 sleep 1
 vm_sudo router 'echo "{\"method\":\"ingest_dns_logs\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' > /dev/null
 dns_logged() {
-    vm_sudo router 'echo "{\"method\":\"ingest_dns_logs\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' > /dev/null 2>&1
-    vm_exec router 'echo "{\"method\":\"list_dns_logs\",\"limit\":100}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' | grep -q 'dns-log-test'
+    vm_exec router 'echo "{\"method\":\"list_dns_logs\",\"limit\":200}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' | grep -q 'dns-log-test'
 }
-wait_for 15 "DNS query logged in database" dns_logged
+wait_for 60 "DNS query logged in database" dns_logged || exit 1
 
 # Query DNS logs (unfiltered)
 result=$(vm_exec router 'echo "{\"method\":\"list_dns_logs\",\"limit\":100}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')

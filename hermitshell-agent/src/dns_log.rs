@@ -43,40 +43,12 @@ fn parse_unbound_log_line(line: &str) -> Option<DnsLogEntry<'_>> {
     })
 }
 
-/// Flush unbound's buffered log output by sending SIGHUP (triggers reload
-/// which flushes and reopens the logfile).  Unbound 1.19+ buffers log output
-/// and may not write queries to disk for many seconds otherwise.
-fn flush_unbound_log() {
-    if let Ok(output) = std::process::Command::new("pgrep")
-        .args(["-o", "unbound"])
-        .output()
-    {
-        if let Ok(pid_str) = std::str::from_utf8(&output.stdout) {
-            if let Ok(pid) = pid_str.trim().parse::<i32>() {
-                let _ = nix::sys::signal::kill(
-                    nix::unistd::Pid::from_raw(pid),
-                    nix::sys::signal::Signal::SIGHUP,
-                );
-                // Brief pause for unbound to flush and reopen the log
-                std::thread::sleep(std::time::Duration::from_millis(200));
-            }
-        }
-    }
-}
-
 /// Run one ingest cycle: read Unbound query log, parse and store DNS queries.
 ///
 /// Older Unbound versions (e.g. 1.13 on Ubuntu 22.04) don't reopen the
 /// logfile after a rename — they keep writing to the old fd.  We read the
 /// file and track how far we've consumed using a persistent offset.
-///
-/// When `flush` is true, send SIGHUP to unbound first to flush any buffered
-/// log output (useful for on-demand ingest; the periodic loop skips this to
-/// avoid restart noise every 30s).
-pub fn ingest_once(db: &Arc<Mutex<Db>>, tx: &UnboundedSender<LogEvent>, flush: bool) {
-    if flush {
-        flush_unbound_log();
-    }
+pub fn ingest_once(db: &Arc<Mutex<Db>>, tx: &UnboundedSender<LogEvent>) {
     let log_path = log_file();
     let offset_path = format!("{}.offset", log_path);
 
@@ -169,7 +141,7 @@ pub async fn start(db: Arc<Mutex<Db>>, tx: UnboundedSender<LogEvent>) {
 
     loop {
         interval.tick().await;
-        ingest_once(&db, &tx, false);
+        ingest_once(&db, &tx);
     }
 }
 

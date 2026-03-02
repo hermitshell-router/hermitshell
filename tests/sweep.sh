@@ -8,9 +8,7 @@
 #   sudo -E ./sweep.sh --distro debian12 debian13 # subset of distros
 cd "$(dirname "$0")"
 
-# Ubuntu boxes boot but fail to get a DHCP lease on the vagrant-libvirt
-# management network — omitted from default sweep until resolved.
-ALL_DISTROS="debian12 debian13 nixos"
+ALL_DISTROS="debian12 debian13 ubuntu2204 ubuntu2404 nixos"
 DISTROS=""
 MODE_ARGS=""
 
@@ -87,8 +85,9 @@ for distro in $DISTROS; do
 
     echo "Starting VMs (box: $distro)..."
     if [ "$distro" = "nixos" ]; then
-        # NixOS: boot without provisioning, then provision via SSH to avoid
-        # vagrant's SSH timeout during nixos-rebuild package downloads.
+        # NixOS: boot all VMs without provisioning first, then provision
+        # WAN/LAN normally and the router via SSH to avoid vagrant's SSH
+        # timeout during nixos-rebuild package downloads.
         if ! vagrant up --no-provision; then
             echo "vagrant up failed for $distro"
             RESULTS[$distro]="FAIL"
@@ -96,6 +95,9 @@ for distro in $DISTROS; do
             any_failed=1
             continue
         fi
+        # Provision WAN and LAN VMs (they're always Debian 12, not NixOS)
+        vagrant provision wan
+        vagrant provision lan
         echo "Provisioning NixOS router (nixos-rebuild boot)..."
         vagrant ssh router -- -o ServerAliveInterval=15 "sudo bash -s" < provision/router-nixos.sh
         echo "Rebooting router for interface name changes..."
