@@ -24,7 +24,7 @@ struct MacEntry {
 /// Test connectivity by reading sysDescr.0.
 pub async fn test_connectivity(host: &str, community: &[u8]) -> Result<String> {
     let addr = format!("{}:161", host);
-    let oid = Oid::from(SYS_DESCR).context("invalid OID")?;
+    let oid = Oid::from(SYS_DESCR).map_err(|e| anyhow::anyhow!("invalid OID: {:?}", e))?;
     let mut sess = AsyncSession::new_v2c(&addr, community, 0)
         .await
         .context("SNMP session failed")?;
@@ -141,7 +141,7 @@ async fn poll_mac_table(host: &str, community: &[u8]) -> Result<Vec<MacEntry>> {
 
     // Step 1: Walk dot1dTpFdbPort to get MAC -> bridge port number.
     // The trailing 6 suffix components of each OID are the MAC address bytes.
-    let fdb_oid = Oid::from(DOT1D_TP_FDB_PORT).context("invalid OID")?;
+    let fdb_oid = Oid::from(DOT1D_TP_FDB_PORT).map_err(|e| anyhow::anyhow!("invalid OID: {:?}", e))?;
     let mut mac_to_bridge_port: Vec<(String, u64)> = Vec::new();
 
     walk(&mut sess, &fdb_oid, |suffix, val| {
@@ -163,7 +163,7 @@ async fn poll_mac_table(host: &str, community: &[u8]) -> Result<Vec<MacEntry>> {
     }
 
     // Step 2: Walk dot1dBasePortIfIndex to get bridge port -> ifIndex.
-    let bp_oid = Oid::from(DOT1D_BASE_PORT_IFINDEX).context("invalid OID")?;
+    let bp_oid = Oid::from(DOT1D_BASE_PORT_IFINDEX).map_err(|e| anyhow::anyhow!("invalid OID: {:?}", e))?;
     let mut bridge_port_to_ifindex: HashMap<u64, u64> = HashMap::new();
 
     walk(&mut sess, &bp_oid, |suffix, val| {
@@ -174,7 +174,7 @@ async fn poll_mac_table(host: &str, community: &[u8]) -> Result<Vec<MacEntry>> {
     .await?;
 
     // Step 3: Walk ifName to get ifIndex -> port name.
-    let ifname_oid = Oid::from(IF_NAME).context("invalid OID")?;
+    let ifname_oid = Oid::from(IF_NAME).map_err(|e| anyhow::anyhow!("invalid OID: {:?}", e))?;
     let mut ifindex_to_name: HashMap<u64, String> = HashMap::new();
 
     walk(&mut sess, &ifname_oid, |suffix, val| {
