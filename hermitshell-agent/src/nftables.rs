@@ -281,6 +281,203 @@ pub fn apply_base_rules(wan_iface: &str, lan_iface: &str, lan_ip: &str) -> Resul
     Ok(())
 }
 
+/// Build a comma-separated nftables interface set string for use in anonymous sets.
+/// Returns: "eth2.10", "eth2.20", "eth2.30"
+fn nft_iface_set(ifaces: &[String]) -> String {
+    ifaces.iter().map(|i| format!("\"{}\"", i)).collect::<Vec<_>>().join(", ")
+}
+
+fn build_base_ruleset_vlan(wan_iface: &str, lan_iface: &str, lan_ip: &str, vlan_ifaces: &[String]) -> String {
+    let vlan_set = nft_iface_set(vlan_ifaces);
+    let vlan_wg_set = format!("{}, \"wg0\"", vlan_set);
+
+    // Build per-VLAN rogue DHCP block rules for input chain
+    let mut rogue_dhcp_input = String::new();
+    for iface in vlan_ifaces {
+        rogue_dhcp_input.push_str(&format!(
+            "        iifname \"{}\" udp sport 67 counter drop comment \"block rogue DHCP server\"\n",
+            iface
+        ));
+    }
+
+    // Build per-VLAN rogue DHCP block rules for forward chain
+    let mut rogue_dhcp_forward = String::new();
+    for iface in vlan_ifaces {
+        rogue_dhcp_forward.push_str(&format!(
+            "        iifname \"{}\" udp sport 67 log prefix \"ROGUE_DHCP \" limit rate 1/second\n",
+            iface
+        ));
+        rogue_dhcp_forward.push_str(&format!(
+            "        iifname \"{}\" udp sport 67 counter drop comment \"block rogue DHCP server\"\n",
+            iface
+        ));
+    }
+
+    format!(r#"#!{nft} -f
+flush ruleset
+
+table inet filter {{
+    map device_groups_v4 {{
+        type ipv4_addr : verdict;
+    }}
+
+    map device_groups_v6 {{
+        type ipv6_addr : verdict;
+    }}
+
+    set doh_block_v4 {{
+        type ipv4_addr
+        elements = {{ 1.1.1.1, 1.0.0.1, 8.8.8.8, 8.8.4.4, 9.9.9.9, 149.112.112.112, 208.67.222.222, 208.67.220.220, 94.140.14.14, 94.140.15.15, 185.228.168.168, 185.228.169.168, 45.90.28.0, 45.90.30.0 }}
+    }}
+
+    set doh_block_v6 {{
+        type ipv6_addr
+        elements = {{ 2606:4700:4700::1111, 2606:4700:4700::1001, 2001:4860:4860::8888, 2001:4860:4860::8844, 2620:fe::fe, 2620:fe::9, 2620:119:35::35, 2620:119:53::53, 2a10:50c0::ad1:ff, 2a10:50c0::ad2:ff, 2a0d:2a00:1::1, 2a0d:2a00:2::1 }}
+    }}
+
+    chain input {{
+        type filter hook input priority 0; policy drop;
+        ct state established,related accept
+        iifname "lo" accept
+        iifname != "{wan_iface}" tcp dport 22 accept
+        iifname {{ "{lan_iface}", "tailscale0" }} tcp dport {{ 8080, 8443 }} accept
+{rogue_dhcp_input}        iifname {{ {vlan_set} }} udp dport 67 accept
+        iifname "{wan_iface}" udp dport 68 accept
+        iifname {{ {vlan_wg_set} }} tcp dport {{ 53, 5354 }} accept
+        iifname {{ {vlan_wg_set} }} udp dport {{ 53, 5354 }} accept
+        iifname {{ {vlan_wg_set} }} tcp dport 853 accept
+        iifname {{ {vlan_set} }} udp dport 5353 accept
+        iifname {{ {vlan_set} }} udp dport {{ 546, 547 }} accept
+        iifname {{ "{lan_iface}", "tailscale0", "wg0" }} icmp type echo-request accept
+        icmpv6 type {{ nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert, nd-router-solicit }} accept
+        icmpv6 type {{ destination-unreachable, packet-too-big, time-exceeded, parameter-problem }} accept
+        iifname {{ "{lan_iface}", "tailscale0", "wg0" }} icmpv6 type echo-request accept
+    }}
+    chain forward {{
+        type filter hook forward priority 0; policy drop;
+        ct state established,related accept
+{rogue_dhcp_forward}        ip saddr vmap @device_groups_v4
+        ip6 saddr vmap @device_groups_v6
+        icmpv6 type {{ nd-neighbor-solicit, nd-neighbor-advert }} accept
+        icmpv6 type {{ destination-unreachable, packet-too-big, time-exceeded, parameter-problem }} accept
+        icmpv6 type {{ echo-request, echo-reply }} limit rate 10/second accept
+        ct state new jump port_fwd
+        ip6 saddr fe80::/10 icmpv6 type nd-router-advert drop
+    }}
+    chain output {{
+        type filter hook output priority 0; policy accept;
+    }}
+
+    chain quarantine_fwd {{
+        tcp dport 853 drop
+        ip daddr @doh_block_v4 tcp dport 443 drop
+        ip6 daddr @doh_block_v6 tcp dport 443 drop
+        oifname "{wan_iface}" accept
+        drop
+    }}
+    chain trusted_fwd {{
+        accept
+    }}
+    chain iot_fwd {{
+        tcp dport 853 drop
+        ip daddr @doh_block_v4 tcp dport 443 drop
+        ip6 daddr @doh_block_v6 tcp dport 443 drop
+        oifname "{wan_iface}" accept
+        drop
+    }}
+    chain guest_fwd {{
+        oifname "{wan_iface}" accept
+        drop
+    }}
+    chain servers_fwd {{
+        tcp dport 853 drop
+        ip daddr @doh_block_v4 tcp dport 443 drop
+        ip6 daddr @doh_block_v6 tcp dport 443 drop
+        oifname "{wan_iface}" accept
+        drop
+    }}
+    chain blocked_fwd {{
+        drop
+    }}
+    chain port_fwd {{
+    }}
+    chain mac_ip_validate {{
+        type filter hook forward priority -5; policy accept;
+    }}
+}}
+
+table ip nat {{
+    chain prerouting {{
+        type nat hook prerouting priority -100;
+        iifname "{lan_iface}" tcp dport 443 redirect to :8443
+        iifname "{lan_iface}" tcp dport 80 redirect to :8080
+        iifname {{ {vlan_wg_set} }} udp dport 53 dnat to {lan_ip}:5354
+        iifname {{ {vlan_wg_set} }} tcp dport 53 dnat to {lan_ip}:5354
+    }}
+    chain output {{
+        type nat hook output priority -100;
+        ip daddr {lan_ip} udp dport 53 dnat to {lan_ip}:5354
+        ip daddr {lan_ip} tcp dport 53 dnat to {lan_ip}:5354
+    }}
+    chain postrouting {{
+        type nat hook postrouting priority 100;
+        oifname "{wan_iface}" masquerade
+    }}
+}}
+
+table inet traffic {{
+    set tx_devices {{
+        type ipv4_addr
+        flags dynamic
+        counter
+    }}
+    set rx_devices {{
+        type ipv4_addr
+        flags dynamic
+        counter
+    }}
+    set tx_devices_v6 {{
+        type ipv6_addr
+        flags dynamic
+        counter
+    }}
+    set rx_devices_v6 {{
+        type ipv6_addr
+        flags dynamic
+        counter
+    }}
+
+    chain count_lan {{
+        type filter hook forward priority -10; policy accept;
+        ip saddr @tx_devices
+        ip daddr @rx_devices
+        ip6 saddr @tx_devices_v6
+        ip6 daddr @rx_devices_v6
+    }}
+}}
+"#, nft = paths::nft(),
+    wan_iface = wan_iface,
+    lan_iface = lan_iface,
+    lan_ip = lan_ip,
+    vlan_set = vlan_set,
+    vlan_wg_set = vlan_wg_set,
+    rogue_dhcp_input = rogue_dhcp_input,
+    rogue_dhcp_forward = rogue_dhcp_forward,
+    )
+}
+
+pub fn apply_base_rules_vlan(wan_iface: &str, lan_iface: &str, lan_ip: &str, vlan_ifaces: &[String]) -> Result<()> {
+    validate_iface(wan_iface)?;
+    validate_iface(lan_iface)?;
+    for iface in vlan_ifaces {
+        validate_iface(iface)?;
+    }
+    let rules = build_base_ruleset_vlan(wan_iface, lan_iface, lan_ip, vlan_ifaces);
+    execute_nft_script(&rules)?;
+    info!("applied VLAN-mode nftables rules");
+    Ok(())
+}
+
 pub fn add_device_counter(ip: &str) -> Result<()> {
     validate_ip(ip)?;
     let element = format!("{{ {} }}", ip);
@@ -792,5 +989,24 @@ mod tests {
         let rules = build_base_ruleset("eth1", "eth2", "10.0.0.1");
         assert!(rules.contains("iifname \"eth2\" udp sport 67"), "missing rogue DHCP block rule");
         assert!(rules.contains("ROGUE_DHCP"), "missing rogue DHCP log prefix");
+    }
+
+    #[test]
+    fn test_base_ruleset_vlan_mode() {
+        crate::paths::init();
+        let vlan_ifaces: Vec<String> = vec!["eth2.10", "eth2.20", "eth2.30", "eth2.40", "eth2.50"]
+            .into_iter().map(String::from).collect();
+        let rules = build_base_ruleset_vlan("eth1", "eth2", "10.0.0.1", &vlan_ifaces);
+        // DHCP input accepted on each VLAN subinterface
+        assert!(rules.contains("eth2.10"), "missing eth2.10 reference");
+        assert!(rules.contains("udp dport 67 accept"), "missing DHCP accept");
+        // Rogue DHCP blocked on each VLAN subinterface
+        for iface in &vlan_ifaces {
+            assert!(rules.contains(&format!("iifname \"{}\" udp sport 67", iface)),
+                "missing rogue DHCP block for {}", iface);
+        }
+        // DNS redirect on VLAN subinterfaces
+        assert!(rules.contains("eth2.10") && rules.contains("udp dport 53 dnat"),
+            "missing DNS redirect for VLAN subinterfaces");
     }
 }
