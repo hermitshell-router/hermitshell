@@ -1134,3 +1134,57 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** Test infrastructure only — this runs in Vagrant VMs, not on production routers. If the NIC naming assumption is wrong (e.g., a cloud-image box with different PCI slot assignments), provisioning would create incorrect mappings. The provisioner detects this by checking for `ens*` interfaces before writing rules.
 
 **Proper fix:** For production, make interface names configurable in the agent config (WAN/LAN/isolated interface names stored in DB). The udev approach is appropriate for test infrastructure where interface topology is known and fixed.
+
+---
+
+## L2 Anti-Spoofing
+
+## 150. Rogue DHCP server blocking via nftables
+
+**What:** The nftables base ruleset now drops all UDP traffic with source port 67 (DHCP server) from the LAN interface in both the `forward` and `input` chains. Matching packets are logged with the `ROGUE_DHCP` prefix (rate-limited to 1/second) before being dropped.
+
+**Why:** A rogue DHCP server on the LAN could hand out malicious gateway/DNS settings to other devices, enabling traffic interception. Only the router's own DHCP server should respond on port 67.
+
+**Risk:** If a legitimate DHCP relay or secondary DHCP server exists on the LAN, its traffic will be blocked. This is intentional for a home router where the HermitShell agent is the sole DHCP server. The rule applies in both VLAN and non-VLAN modes.
+
+**Proper fix:** This is the correct approach for a single-subnet or VLAN-segmented home network. No further fix needed.
+
+## 151. VLAN mode is opt-in and off by default
+
+**What:** Per-trust-group VLAN segmentation (VLAN 10=trusted, 20=iot, 30=guest, 40=servers, 50=quarantine) is behind a `vlan_mode` config flag. When disabled, the existing flat L2 + L3 isolation model applies. When enabled, the agent creates VLAN subinterfaces on the LAN interface and applies VLAN-aware nftables rules.
+
+**Why:** VLAN mode requires a managed switch that supports 802.1Q trunking. Most home users don't have one. The flat L2 model with nftables MAC-IP validation (issue #84) and static ARP/NDP binding (issue #83) provides adequate protection for most home networks.
+
+**Risk:** In non-VLAN mode, all devices share the same L2 broadcast domain. ARP spoofing (with MAC spoofing) can still bypass the MAC-IP validation. VLAN mode provides true L2 isolation but requires managed switch configuration.
+
+**Proper fix:** Acceptable as-is. VLAN mode is the proper fix for L2 isolation; the flat model is a reasonable default for uncomplicated setups.
+
+## 152. Managed switch SSH credentials stored encrypted in DB
+
+**What:** Switch management credentials (host, username, password, vendor profile) are stored in SQLite. Passwords are encrypted with AES-256-GCM using an HKDF-SHA256 key derived from the agent's `session_secret`. If no session secret exists, passwords are stored in plaintext.
+
+**Why:** The agent needs switch credentials to poll MAC address tables and provision VLANs via SSH. Encryption at rest prevents casual credential exposure from DB file access.
+
+**Risk:** The session secret is also in the same DB. An attacker with read access to the DB file can decrypt all stored passwords. This is defense against casual exposure, not a determined attacker with filesystem access.
+
+**Proper fix:** Store the session secret in a separate location (e.g., kernel keyring, TPM, or a separate file with stricter permissions). For a home router appliance, the current approach is acceptable.
+
+## 153. SSH TOFU host key pinning for managed switches
+
+**What:** On first connection to a managed switch, the SSH host key is stored in the database (Trust On First Use). Subsequent connections verify the host key matches. If the key changes, the connection is rejected.
+
+**Why:** Home switches don't have CA-signed SSH host keys. TOFU provides protection against key substitution after initial setup, similar to SSH `known_hosts`.
+
+**Risk:** The first connection is vulnerable to MITM. If an attacker is present on the network during initial switch setup, they could intercept the connection and the wrong host key would be pinned. The "Test Connection" button in the UI is the recommended way to establish the initial trust.
+
+**Proper fix:** Manual host key verification (display the key fingerprint in the UI and let the admin compare with the switch's console output). TOFU is the pragmatic choice for home networks.
+
+## 154. VLAN subinterfaces share the physical LAN interface
+
+**What:** VLAN mode creates 802.1Q subinterfaces (e.g., `eth2.10`, `eth2.20`) on the physical LAN interface. Inter-VLAN traffic is routed through the router and subject to nftables rules. The router acts as the gateway for all VLANs.
+
+**Why:** A dedicated router-on-a-stick topology is the standard approach for VLAN segmentation without multiple physical interfaces.
+
+**Risk:** All VLAN traffic passes through the router's CPU, creating a potential bottleneck. The nftables rules control inter-VLAN communication; by default VLANs are isolated from each other. A bug in the nftables rules could allow unintended inter-VLAN traffic.
+
+**Proper fix:** Acceptable for home networks where total throughput is typically under 1 Gbps. The nftables VLAN rules are tested in the integration test suite (test 54).
