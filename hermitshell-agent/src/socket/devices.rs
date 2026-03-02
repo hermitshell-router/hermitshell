@@ -93,6 +93,21 @@ pub(super) fn handle_set_device_group(req: &Request, db: &Arc<Mutex<Db>>) -> Res
         // best-effort: QoS failure should not block group change
         let _ = crate::qos::apply_dscp_rules(&devices);
     }
+    // VLAN reassignment: when VLAN mode is enabled, log the intent.
+    // The actual switch port VLAN change happens via:
+    // 1. Next switch polling cycle (60s) detects mismatch
+    // 2. Manual switch_provision_vlans command
+    // 3. Device gets new IP on next DHCP renewal in new VLAN subnet
+    let vlan_enabled = db.get_config("vlan_mode").ok().flatten().as_deref() == Some("enabled");
+    if vlan_enabled {
+        if let Ok(Some(vlan_cfg)) = db.get_vlan_for_group(group) {
+            info!(
+                mac = %mac, group = %group, vlan_id = vlan_cfg.vlan_id,
+                switch_id = ?device.switch_id, switch_port = ?device.switch_port,
+                "device group changed, VLAN reassignment pending"
+            );
+        }
+    }
     match db.get_device(mac) {
         Ok(Some(device)) => {
             let mut resp = Response::ok();
