@@ -44,7 +44,6 @@ pub trait WifiProvider: Send + Sync {
 /// Per-physical-AP operations (radio config, status, clients).
 #[async_trait]
 pub trait WifiDevice: Send + Sync {
-    #[allow(dead_code)]
     async fn get_status(&self) -> Result<ApStatus>;
     async fn get_clients(&self) -> Result<Vec<WifiClient>>;
     async fn get_radios(&self) -> Result<Vec<WifiRadioConfig>>;

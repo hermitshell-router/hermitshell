@@ -238,6 +238,7 @@ pub(super) async fn handle_wifi_async(req: &Request, db: &Arc<Mutex<Db>>) -> Res
         "wifi_kick_client" => handle_wifi_kick_client(req, db).await,
         "wifi_block_client" => handle_wifi_block_client(req, db).await,
         "wifi_unblock_client" => handle_wifi_unblock_client(req, db).await,
+        "wifi_get_ap_status" => handle_wifi_get_ap_status(req, db).await,
         _ => Response::err("unknown wifi method"),
     }
 }
@@ -554,6 +555,35 @@ async fn handle_wifi_set_ssid_vlan(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
             Response::ok()
         }
         Err(e) => Response::err(&format!("set_ssid_vlan failed: {}", e)),
+    }
+}
+
+async fn handle_wifi_get_ap_status(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref provider_id) = req.provider_id else {
+        return Response::err("provider_id required");
+    };
+    let Some(ref ap_mac) = req.mac else {
+        return Response::err("mac required (AP MAC)");
+    };
+    let provider = match connect_to_provider(provider_id, db).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let device = match provider.device(ap_mac).await {
+        Ok(d) => d,
+        Err(e) => return Response::err(&format!("device connect failed: {}", e)),
+    };
+    match device.get_status().await {
+        Ok(status) => {
+            let mut resp = Response::ok();
+            resp.config_value = Some(serde_json::json!({
+                "model": status.model,
+                "firmware": status.firmware,
+                "uptime": status.uptime,
+            }).to_string());
+            resp
+        }
+        Err(e) => Response::err(&format!("get_status failed: {}", e)),
     }
 }
 
