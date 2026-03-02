@@ -867,13 +867,9 @@ pub async fn set_alert_rule(rule: String, enabled: String) -> Result<(), ServerF
 pub async fn add_switch(
     name: String,
     host: String,
-    port: String,
-    username: String,
-    password: String,
-    vendor_profile: String,
+    community: String,
 ) -> Result<(), ServerFnError> {
-    let port: u16 = port.parse().unwrap_or(22);
-    crate::client::add_switch(&name, &host, port, &username, &password, &vendor_profile)
+    crate::client::add_switch(&name, &host, &community)
         .map_err(ServerFnError::new)?;
     let _ = crate::client::log_audit("switch_add", &name);
     leptos_axum::redirect("/switches");

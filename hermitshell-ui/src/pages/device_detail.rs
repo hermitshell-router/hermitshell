@@ -116,12 +116,6 @@ pub fn DeviceDetail() -> impl IntoView {
                                 if vlan_enabled {
                                     let vlans = vlan_info.map(|(_, v)| v).unwrap_or_default();
                                     let device_vlan = vlans.iter().find(|v| v.group == d.device_group);
-                                    let switch_name = d.switch_id.as_ref().and_then(|sid| {
-                                        client::list_switches().ok().and_then(|switches| {
-                                            switches.into_iter().find(|s| s.id == *sid).map(|s| s.name)
-                                        })
-                                    });
-
                                     view! {
                                         <h2 class="section-header">"VLAN & Switch"</h2>
                                         <div class="detail-grid">
@@ -132,10 +126,6 @@ pub fn DeviceDetail() -> impl IntoView {
                                             <div class="detail-item">
                                                 <div class="detail-label">"VLAN Subnet"</div>
                                                 <div class="detail-value">{device_vlan.map(|v| v.subnet.clone()).unwrap_or_else(|| "\u{2014}".to_string())}</div>
-                                            </div>
-                                            <div class="detail-item">
-                                                <div class="detail-label">"Switch"</div>
-                                                <div class="detail-value">{switch_name.unwrap_or_else(|| "\u{2014}".to_string())}</div>
                                             </div>
                                             <div class="detail-item">
                                                 <div class="detail-label">"Switch Port"</div>

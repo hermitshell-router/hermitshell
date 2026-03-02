@@ -4,7 +4,7 @@ use rusqlite::Connection;
 pub use hermitshell_common::{
     Alert, AuditEntry, BandwidthPoint, BandwidthRealtime, ConnectionLog, Device,
     DhcpReservation, DnsBlocklist, DnsCustomRule, DnsForwardZone, DnsLogEntry,
-    PortForward, SwitchProviderInfo, TopDestination, VlanGroupConfig, WgPeer, WifiAp,
+    PortForward, SnmpSwitchInfo, TopDestination, VlanGroupConfig, WgPeer, WifiAp,
     WifiClient,
 };
 
@@ -178,8 +178,7 @@ fn device_from_row(row: &rusqlite::Row) -> rusqlite::Result<Device> {
         wifi_ap_mac: row.get(20)?,
         wifi_last_seen: row.get(21)?,
         dhcp_fingerprint: row.get(22)?,
-        switch_id: row.get(23)?,
-        switch_port: row.get(24)?,
+        switch_port: row.get(23)?,
     })
 }
 
@@ -560,6 +559,27 @@ impl Db {
             )?;
         }
 
+        if version < 12 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS snmp_switches (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    host TEXT NOT NULL,
+                    community_enc TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    status TEXT NOT NULL DEFAULT 'unknown',
+                    last_seen INTEGER NOT NULL DEFAULT 0
+                );
+                DROP TABLE IF EXISTS switch_providers;
+                DROP TABLE IF EXISTS switch_vendor_profiles;"
+            )?;
+            conn.execute(
+                "INSERT INTO config (key, value) VALUES ('schema_version', '12')
+                 ON CONFLICT(key) DO UPDATE SET value = '12'",
+                [],
+            )?;
+        }
+
         Ok(())
     }
 
@@ -573,7 +593,7 @@ impl Db {
 
     pub fn list_devices(&self) -> Result<Vec<Device>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname, wifi_ssid, wifi_band, wifi_rssi, wifi_ap_mac, wifi_last_seen, dhcp_fingerprint, switch_id, switch_port FROM devices"
+            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname, wifi_ssid, wifi_band, wifi_rssi, wifi_ap_mac, wifi_last_seen, dhcp_fingerprint, switch_port FROM devices"
         )?;
         let devices = stmt.query_map([], device_from_row)?;
         Ok(devices.filter_map(|d| d.ok()).collect())
@@ -581,7 +601,7 @@ impl Db {
 
     pub fn get_device(&self, mac: &str) -> Result<Option<Device>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname, wifi_ssid, wifi_band, wifi_rssi, wifi_ap_mac, wifi_last_seen, dhcp_fingerprint, switch_id, switch_port FROM devices WHERE mac = ?1"
+            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname, wifi_ssid, wifi_band, wifi_rssi, wifi_ap_mac, wifi_last_seen, dhcp_fingerprint, switch_port FROM devices WHERE mac = ?1"
         )?;
         let mut rows = stmt.query([mac])?;
         if let Some(row) = rows.next()? {
@@ -679,7 +699,7 @@ impl Db {
     /// List all devices that have subnet_id set (for state restoration on startup)
     pub fn list_assigned_devices(&self) -> Result<Vec<Device>> {
         let mut stmt = self.conn.prepare(
-            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname, wifi_ssid, wifi_band, wifi_rssi, wifi_ap_mac, wifi_last_seen, dhcp_fingerprint, switch_id, switch_port FROM devices WHERE subnet_id IS NOT NULL"
+            "SELECT mac, ipv4, ipv6_ula, ipv6_global, hostname, first_seen, last_seen, rx_bytes, tx_bytes, device_group, subnet_id, runzero_os, runzero_hw, runzero_device_type, runzero_manufacturer, runzero_last_sync, nickname, wifi_ssid, wifi_band, wifi_rssi, wifi_ap_mac, wifi_last_seen, dhcp_fingerprint, switch_port FROM devices WHERE subnet_id IS NOT NULL"
         )?;
         let devices = stmt.query_map([], device_from_row)?;
         Ok(devices.filter_map(|d| d.ok()).collect())
@@ -2093,121 +2113,65 @@ impl Db {
             .unwrap_or(false)
     }
 
-    // --- Switch provider CRUD ---
+    // --- SNMP switch CRUD ---
 
-    pub fn list_switch_providers(&self) -> Result<Vec<SwitchProviderInfo>> {
+    pub fn list_snmp_switches(&self) -> Result<Vec<SnmpSwitchInfo>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, host, port, vendor_profile, uplink_port, enabled, status, last_seen FROM switch_providers"
+            "SELECT id, name, host, enabled, status, last_seen FROM snmp_switches"
         )?;
         let rows = stmt.query_map([], |row| {
-            Ok(SwitchProviderInfo {
+            Ok(SnmpSwitchInfo {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 host: row.get(2)?,
-                port: row.get::<_, u16>(3)?,
-                vendor_profile: row.get(4)?,
-                uplink_port: row.get(5)?,
-                enabled: row.get::<_, bool>(6)?,
-                status: row.get(7)?,
-                last_seen: row.get(8)?,
+                enabled: row.get::<_, i32>(3)? != 0,
+                status: row.get(4)?,
+                last_seen: row.get(5)?,
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
-    pub fn insert_switch_provider(
+    pub fn insert_snmp_switch(
         &self,
         id: &str,
         name: &str,
         host: &str,
-        port: u16,
-        username: &str,
-        password_enc: &str,
-        vendor_profile: &str,
+        community_enc: &str,
     ) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO switch_providers (id, name, host, port, username, password_enc, vendor_profile)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            rusqlite::params![id, name, host, port, username, password_enc, vendor_profile],
+            "INSERT INTO snmp_switches (id, name, host, community_enc)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![id, name, host, community_enc],
         )?;
         Ok(())
     }
 
-    pub fn remove_switch_provider(&self, id: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM switch_providers WHERE id = ?1", [id])?;
+    pub fn remove_snmp_switch(&self, id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM snmp_switches WHERE id = ?1", [id])?;
         Ok(())
     }
 
-    /// Returns (host, port, username, password_enc, vendor_profile, host_key) for SSH connection.
-    pub fn get_switch_provider_credentials(
-        &self,
-        id: &str,
-    ) -> Result<(String, u16, String, String, String, Option<String>)> {
-        let row = self.conn.query_row(
-            "SELECT host, port, username, password_enc, vendor_profile, host_key FROM switch_providers WHERE id = ?1",
+    pub fn get_snmp_switch_community(&self, id: &str) -> Result<String> {
+        Ok(self.conn.query_row(
+            "SELECT community_enc FROM snmp_switches WHERE id = ?1",
             [id],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, u16>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, Option<String>>(5)?,
-                ))
-            },
-        )?;
-        Ok(row)
+            |row| row.get(0),
+        )?)
     }
 
-    pub fn set_switch_provider_host_key(&self, id: &str, key: &str) -> Result<()> {
+    pub fn update_snmp_switch_status(&self, id: &str, status: &str, last_seen: i64) -> Result<()> {
         self.conn.execute(
-            "UPDATE switch_providers SET host_key = ?1 WHERE id = ?2",
-            rusqlite::params![key, id],
-        )?;
-        Ok(())
-    }
-
-    pub fn update_switch_provider_status(&self, id: &str, status: &str, last_seen: i64) -> Result<()> {
-        self.conn.execute(
-            "UPDATE switch_providers SET status = ?1, last_seen = ?2 WHERE id = ?3",
+            "UPDATE snmp_switches SET status = ?1, last_seen = ?2 WHERE id = ?3",
             rusqlite::params![status, last_seen, id],
         )?;
         Ok(())
     }
 
-    pub fn set_switch_uplink_port(&self, id: &str, port: &str) -> Result<()> {
+    pub fn update_device_switch_port(&self, mac: &str, port_display: &str) -> Result<()> {
         self.conn.execute(
-            "UPDATE switch_providers SET uplink_port = ?1 WHERE id = ?2",
-            rusqlite::params![port, id],
-        )?;
-        Ok(())
-    }
-
-    pub fn update_device_switch_info(&self, mac: &str, switch_id: &str, switch_port: &str) -> Result<()> {
-        self.conn.execute(
-            "UPDATE devices SET switch_id = ?1, switch_port = ?2 WHERE mac = ?3",
-            rusqlite::params![switch_id, switch_port, mac],
-        )?;
-        Ok(())
-    }
-
-    pub fn get_custom_vendor_profile(&self, name: &str) -> Result<Option<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT profile_json FROM switch_vendor_profiles WHERE name = ?1"
-        )?;
-        let mut rows = stmt.query([name])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(row.get(0)?))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn set_custom_vendor_profile(&self, name: &str, json: &str) -> Result<()> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO switch_vendor_profiles (name, profile_json) VALUES (?1, ?2)",
-            rusqlite::params![name, json],
+            "UPDATE devices SET switch_port = ?1 WHERE mac = ?2",
+            rusqlite::params![port_display, mac],
         )?;
         Ok(())
     }
@@ -2262,56 +2226,20 @@ mod tests {
     }
 
     #[test]
-    fn test_switch_provider_crud() {
+    fn test_snmp_switch_crud() {
         let db = test_db();
-        // Insert
-        db.insert_switch_provider("sw1", "Main Switch", "192.168.1.100", 22, "admin", "enc:v1:xxx", "cisco_ios").unwrap();
-        // List
-        let providers = db.list_switch_providers().unwrap();
-        assert_eq!(providers.len(), 1);
-        assert_eq!(providers[0].name, "Main Switch");
-        assert_eq!(providers[0].host, "192.168.1.100");
-        // Get credentials
-        let (host, port, user, pass, profile, hk) = db.get_switch_provider_credentials("sw1").unwrap();
-        assert_eq!(host, "192.168.1.100");
-        assert_eq!(port, 22);
-        assert_eq!(user, "admin");
-        assert_eq!(pass, "enc:v1:xxx");
-        assert_eq!(profile, "cisco_ios");
-        assert!(hk.is_none());
-        // Set host key
-        db.set_switch_provider_host_key("sw1", "ssh-ed25519 AAAA...").unwrap();
-        let (_, _, _, _, _, hk) = db.get_switch_provider_credentials("sw1").unwrap();
-        assert_eq!(hk.unwrap(), "ssh-ed25519 AAAA...");
-        // Update status
-        db.update_switch_provider_status("sw1", "connected", 1000).unwrap();
-        let providers = db.list_switch_providers().unwrap();
-        assert_eq!(providers[0].status, "connected");
-        assert_eq!(providers[0].last_seen, 1000);
-        // Remove
-        db.remove_switch_provider("sw1").unwrap();
-        let providers = db.list_switch_providers().unwrap();
-        assert_eq!(providers.len(), 0);
-    }
-
-    #[test]
-    fn test_device_switch_info() {
-        let db = test_db();
-        // Insert a device first
-        db.insert_new_device("AA:BB:CC:DD:EE:FF", 100, "10.0.0.100", "fd00::100").unwrap();
-        // Update switch info
-        db.update_device_switch_info("AA:BB:CC:DD:EE:FF", "sw1", "Gi0/1").unwrap();
-        let dev = db.get_device("AA:BB:CC:DD:EE:FF").unwrap().unwrap();
-        assert_eq!(dev.switch_id.as_deref(), Some("sw1"));
-        assert_eq!(dev.switch_port.as_deref(), Some("Gi0/1"));
-    }
-
-    #[test]
-    fn test_custom_vendor_profile() {
-        let db = test_db();
-        assert!(db.get_custom_vendor_profile("my_switch").unwrap().is_none());
-        db.set_custom_vendor_profile("my_switch", r#"{"name":"my_switch"}"#).unwrap();
-        let json = db.get_custom_vendor_profile("my_switch").unwrap().unwrap();
-        assert!(json.contains("my_switch"));
+        db.insert_snmp_switch("sw1", "Main Switch", "192.168.1.100", "public").unwrap();
+        let switches = db.list_snmp_switches().unwrap();
+        assert_eq!(switches.len(), 1);
+        assert_eq!(switches[0].name, "Main Switch");
+        assert_eq!(switches[0].host, "192.168.1.100");
+        let community = db.get_snmp_switch_community("sw1").unwrap();
+        assert_eq!(community, "public");
+        db.update_snmp_switch_status("sw1", "connected", 1000).unwrap();
+        let switches = db.list_snmp_switches().unwrap();
+        assert_eq!(switches[0].status, "connected");
+        db.remove_snmp_switch("sw1").unwrap();
+        let switches = db.list_snmp_switches().unwrap();
+        assert_eq!(switches.len(), 0);
     }
 }

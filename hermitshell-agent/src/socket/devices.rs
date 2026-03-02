@@ -121,7 +121,7 @@ pub(super) fn handle_set_device_group(req: &Request, db: &Arc<Mutex<Db>>) -> Res
         if let Ok(Some(vlan_cfg)) = db.get_vlan_for_group(group) {
             info!(
                 mac = %mac, group = %group, vlan_id = vlan_cfg.vlan_id,
-                switch_id = ?device.switch_id, switch_port = ?device.switch_port,
+                switch_port = ?device.switch_port,
                 "device group changed, VLAN reassignment pending"
             );
         }

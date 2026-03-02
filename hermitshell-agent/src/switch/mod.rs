@@ -1,50 +1,202 @@
-pub mod ssh;
-pub mod vendor;
-
-use anyhow::Result;
-use async_trait::async_trait;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+
+use anyhow::{Context, Result};
+use snmp2::{AsyncSession, Oid, Value};
 use tokio::time::{Duration, interval};
 use tracing::{info, warn};
 
 use crate::db::Db;
 
-#[derive(Debug, Clone)]
-pub struct SwitchPort {
-    pub name: String,
-    pub status: PortStatus,
-    pub vlan_id: Option<u16>,
-    pub is_trunk: bool,
-    pub macs: Vec<String>,
+/// Standard OIDs for MAC table discovery (BRIDGE-MIB + IF-MIB).
+const DOT1D_TP_FDB_PORT: &[u64] = &[1, 3, 6, 1, 2, 1, 17, 4, 3, 1, 2];
+const DOT1D_BASE_PORT_IFINDEX: &[u64] = &[1, 3, 6, 1, 2, 1, 17, 1, 4, 1, 2];
+const IF_NAME: &[u64] = &[1, 3, 6, 1, 2, 1, 31, 1, 1, 1, 1];
+const SYS_DESCR: &[u64] = &[1, 3, 6, 1, 2, 1, 1, 1, 0];
+
+/// A discovered MAC-to-port mapping.
+#[derive(Debug)]
+struct MacEntry {
+    mac: String,
+    port_name: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum PortStatus {
-    Up,
-    Down,
-    Disabled,
+/// Test connectivity by reading sysDescr.0.
+pub async fn test_connectivity(host: &str, community: &[u8]) -> Result<String> {
+    let addr = format!("{}:161", host);
+    let oid = Oid::from(SYS_DESCR).map_err(|e| anyhow::anyhow!("invalid OID: {:?}", e))?;
+    let mut sess = AsyncSession::new_v2c(&addr, community, 0)
+        .await
+        .context("SNMP session failed")?;
+    let response = sess.get(&oid).await.context("SNMP GET sysDescr failed")?;
+    for (_, val) in response.varbinds {
+        if let Value::OctetString(bytes) = val {
+            return Ok(String::from_utf8_lossy(bytes).to_string());
+        }
+    }
+    Ok("(no sysDescr)".to_string())
 }
 
-#[derive(Debug, Clone)]
-pub struct MacTableEntry {
-    pub mac: String,
-    pub vlan_id: u16,
-    pub port: String,
+/// Collect OID components into a Vec<u64>, or return None if iter() fails.
+fn oid_components(oid: &Oid<'_>) -> Option<Vec<u64>> {
+    Some(oid.iter()?.collect())
 }
 
-#[async_trait]
-pub trait SwitchProvider: Send + Sync {
-    async fn ping(&self) -> Result<()>;
-    async fn list_ports(&self) -> Result<Vec<SwitchPort>>;
-    async fn set_port_vlan(&self, port: &str, vlan_id: u16) -> Result<()>;
-    async fn get_mac_table(&self) -> Result<Vec<MacTableEntry>>;
-    async fn set_trunk_port(&self, port: &str, allowed_vlans: &[u16]) -> Result<()>;
-    async fn create_vlan(&self, vlan_id: u16, name: &str) -> Result<()>;
-    async fn save_config(&self) -> Result<()>;
+/// Check whether `oid` is under the given `prefix` subtree and return the
+/// suffix components (the part after the prefix).
+fn oid_suffix(oid: &Oid<'_>, prefix: &Oid<'_>) -> Option<Vec<u64>> {
+    if !oid.starts_with(prefix) {
+        return None;
+    }
+    let full = oid_components(oid)?;
+    let prefix_len = oid_components(prefix)?.len();
+    if full.len() <= prefix_len {
+        return None;
+    }
+    Some(full[prefix_len..].to_vec())
 }
 
-/// Background polling loop — queries switches for MAC table data and
-/// correlates entries with known devices.
+/// Result of processing a single GETNEXT response within a walk.
+enum WalkStep {
+    /// Got a valid entry: (suffix components, next cursor OID).
+    Entry(Vec<u64>, WalkValue, Oid<'static>),
+    /// Reached end of subtree or MIB view.
+    Done,
+    /// No varbinds in response.
+    Empty,
+}
+
+/// Owned copy of the Value variants we care about during walks.
+enum WalkValue {
+    Integer(i64),
+    OctetString(Vec<u8>),
+    Other,
+}
+
+/// Walk an SNMP subtree using GETNEXT, calling `callback` for each varbind
+/// that falls under `root`. Stops when the response leaves the subtree or
+/// returns EndOfMibView.
+async fn walk<F>(
+    sess: &mut AsyncSession,
+    root: &Oid<'static>,
+    mut callback: F,
+) -> Result<()>
+where
+    F: FnMut(Vec<u64>, &WalkValue),
+{
+    let mut cursor = root.clone();
+
+    loop {
+        // Process the response in a limited scope so the borrow on sess is
+        // released before the next getnext call.
+        let step = {
+            let mut response = match sess.getnext(&cursor).await {
+                Ok(r) => r,
+                Err(_) => break,
+            };
+
+            // GETNEXT returns one varbind per call
+            if let Some((oid, val)) = response.varbinds.next() {
+                if matches!(val, Value::EndOfMibView) {
+                    WalkStep::Done
+                } else if let Some(suffix) = oid_suffix(&oid, root) {
+                    let owned_val = match val {
+                        Value::Integer(n) => WalkValue::Integer(n),
+                        Value::OctetString(bytes) => WalkValue::OctetString(bytes.to_vec()),
+                        _ => WalkValue::Other,
+                    };
+                    WalkStep::Entry(suffix, owned_val, oid.to_owned())
+                } else {
+                    WalkStep::Done
+                }
+            } else {
+                WalkStep::Empty
+            }
+        };
+
+        match step {
+            WalkStep::Entry(suffix, val, next_oid) => {
+                callback(suffix, &val);
+                cursor = next_oid;
+            }
+            WalkStep::Done | WalkStep::Empty => break,
+        }
+    }
+    Ok(())
+}
+
+/// Walk the BRIDGE-MIB forwarding table and IF-MIB to map MACs to port names.
+async fn poll_mac_table(host: &str, community: &[u8]) -> Result<Vec<MacEntry>> {
+    let addr = format!("{}:161", host);
+
+    let mut sess = AsyncSession::new_v2c(&addr, community, 0)
+        .await
+        .context("SNMP session failed")?;
+
+    // Step 1: Walk dot1dTpFdbPort to get MAC -> bridge port number.
+    // The trailing 6 suffix components of each OID are the MAC address bytes.
+    let fdb_oid = Oid::from(DOT1D_TP_FDB_PORT).map_err(|e| anyhow::anyhow!("invalid OID: {:?}", e))?;
+    let mut mac_to_bridge_port: Vec<(String, u64)> = Vec::new();
+
+    walk(&mut sess, &fdb_oid, |suffix, val| {
+        if suffix.len() >= 6 {
+            let mac = format!(
+                "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+                suffix[0], suffix[1], suffix[2],
+                suffix[3], suffix[4], suffix[5]
+            );
+            if let WalkValue::Integer(port_num) = val {
+                mac_to_bridge_port.push((mac, *port_num as u64));
+            }
+        }
+    })
+    .await?;
+
+    if mac_to_bridge_port.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Step 2: Walk dot1dBasePortIfIndex to get bridge port -> ifIndex.
+    let bp_oid = Oid::from(DOT1D_BASE_PORT_IFINDEX).map_err(|e| anyhow::anyhow!("invalid OID: {:?}", e))?;
+    let mut bridge_port_to_ifindex: HashMap<u64, u64> = HashMap::new();
+
+    walk(&mut sess, &bp_oid, |suffix, val| {
+        if let (Some(&bridge_port), WalkValue::Integer(ifindex)) = (suffix.first(), val) {
+            bridge_port_to_ifindex.insert(bridge_port, *ifindex as u64);
+        }
+    })
+    .await?;
+
+    // Step 3: Walk ifName to get ifIndex -> port name.
+    let ifname_oid = Oid::from(IF_NAME).map_err(|e| anyhow::anyhow!("invalid OID: {:?}", e))?;
+    let mut ifindex_to_name: HashMap<u64, String> = HashMap::new();
+
+    walk(&mut sess, &ifname_oid, |suffix, val| {
+        if let (Some(&ifindex), WalkValue::OctetString(bytes)) = (suffix.first(), val) {
+            let name = String::from_utf8_lossy(bytes).to_string();
+            ifindex_to_name.insert(ifindex, name);
+        }
+    })
+    .await?;
+
+    // Combine: MAC -> bridge port -> ifIndex -> port name.
+    let entries = mac_to_bridge_port
+        .into_iter()
+        .filter_map(|(mac, bp)| {
+            let ifindex = bridge_port_to_ifindex.get(&bp)?;
+            let port_name = ifindex_to_name.get(ifindex)?;
+            Some(MacEntry {
+                mac,
+                port_name: port_name.clone(),
+            })
+        })
+        .collect();
+
+    Ok(entries)
+}
+
+/// Background polling loop — queries switches via SNMP for MAC table data
+/// and correlates entries with known devices.
 pub async fn run(db: Arc<Mutex<Db>>) {
     let mut poll_interval = interval(Duration::from_secs(60));
 
@@ -60,129 +212,70 @@ pub async fn run(db: Arc<Mutex<Db>>) {
             continue;
         }
 
-        let providers = {
+        let switches = {
             let db = db.lock().unwrap();
-            db.list_switch_providers().unwrap_or_default()
+            db.list_snmp_switches().unwrap_or_default()
         };
 
-        for provider_info in &providers {
-            if !provider_info.enabled {
+        for sw in &switches {
+            if !sw.enabled {
                 continue;
             }
 
-            // Get credentials from DB
-            let creds = {
+            // Decrypt community string
+            let community = {
                 let db = db.lock().unwrap();
-                db.get_switch_provider_credentials(&provider_info.id).ok()
-            };
-            let Some((host, port, username, password_enc, vendor_profile_name, host_key)) = creds
-            else {
-                continue;
-            };
-
-            // Decrypt password
-            let password = {
-                let session_secret = {
-                    let db = db.lock().unwrap();
-                    db.get_config("session_secret")
-                        .ok()
-                        .flatten()
-                        .unwrap_or_default()
-                };
-                if session_secret.is_empty() || !crate::crypto::is_encrypted(&password_enc) {
-                    password_enc
-                } else {
-                    match crate::crypto::decrypt_password(&password_enc, &session_secret) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            warn!(switch = %provider_info.name, error = %e, "failed to decrypt password");
-                            continue;
+                match db.get_snmp_switch_community(&sw.id) {
+                    Ok(enc) => {
+                        let secret = db
+                            .get_config("session_secret")
+                            .ok()
+                            .flatten()
+                            .unwrap_or_default();
+                        if secret.is_empty() || !crate::crypto::is_encrypted(&enc) {
+                            enc
+                        } else {
+                            match crate::crypto::decrypt_password(&enc, &secret) {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    warn!(switch = %sw.name, error = %e, "failed to decrypt community");
+                                    continue;
+                                }
+                            }
                         }
+                    }
+                    Err(e) => {
+                        warn!(switch = %sw.name, error = %e, "failed to get community");
+                        continue;
                     }
                 }
             };
 
-            // Get vendor profile (custom or built-in)
-            let profile = {
-                let custom = {
-                    let db = db.lock().unwrap();
-                    db.get_custom_vendor_profile(&vendor_profile_name)
-                        .ok()
-                        .flatten()
-                };
-                if let Some(json) = custom {
-                    match serde_json::from_str(&json) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            warn!(switch = %provider_info.name, error = %e, "failed to parse custom profile");
-                            continue;
-                        }
-                    }
-                } else {
-                    match vendor::built_in_profile(&vendor_profile_name) {
-                        Some(p) => p,
-                        None => {
-                            warn!(switch = %provider_info.name, profile = %vendor_profile_name, "unknown vendor profile");
-                            continue;
-                        }
-                    }
-                }
-            };
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
 
-            // Create SSH provider
-            let provider = ssh::SshSwitchProvider::new(
-                host,
-                port,
-                username,
-                password,
-                profile,
-                host_key.clone(),
-            );
-
-            // Poll MAC table
-            match provider.get_mac_table().await {
+            match poll_mac_table(&sw.host, community.as_bytes()).await {
                 Ok(entries) => {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs() as i64;
-
                     let db = db.lock().unwrap();
-                    db.update_switch_provider_status(&provider_info.id, "connected", now)
-                        .ok();
+                    db.update_snmp_switch_status(&sw.id, "connected", now).ok();
 
-                    // Correlate MACs with known devices
                     for entry in &entries {
-                        let mac_upper = entry.mac.to_uppercase();
-                        if let Ok(Some(_dev)) = db.get_device(&mac_upper) {
-                            let _ = db.update_device_switch_info(
-                                &mac_upper,
-                                &provider_info.id,
-                                &entry.port,
-                            );
+                        if let Ok(Some(_)) = db.get_device(&entry.mac) {
+                            let port_display =
+                                format!("{} on {}", entry.port_name, sw.name);
+                            let _ =
+                                db.update_device_switch_port(&entry.mac, &port_display);
                         }
                     }
 
-                    info!(switch = %provider_info.name, mac_count = entries.len(), "switch poll complete");
+                    info!(switch = %sw.name, mac_count = entries.len(), "SNMP poll complete");
                 }
                 Err(e) => {
-                    warn!(switch = %provider_info.name, error = %e, "switch poll failed");
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs() as i64;
+                    warn!(switch = %sw.name, error = %e, "SNMP poll failed");
                     let db = db.lock().unwrap();
-                    db.update_switch_provider_status(&provider_info.id, "error", now)
-                        .ok();
-                }
-            }
-
-            // Save discovered host key if TOFU
-            if host_key.is_none() {
-                if let Some(discovered) = provider.host_key() {
-                    let db = db.lock().unwrap();
-                    let _ = db.set_switch_provider_host_key(&provider_info.id, discovered);
-                    info!(switch = %provider_info.name, "saved TOFU host key");
+                    db.update_snmp_switch_status(&sw.id, "error", now).ok();
                 }
             }
         }

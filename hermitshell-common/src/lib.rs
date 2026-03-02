@@ -59,8 +59,6 @@ pub struct Device {
     #[serde(default)]
     pub dhcp_fingerprint: Option<String>,
     #[serde(default)]
-    pub switch_id: Option<String>,
-    #[serde(default)]
     pub switch_port: Option<String>,
 }
 
@@ -214,15 +212,12 @@ pub struct WifiAp {
     pub provider_id: Option<String>,
 }
 
-/// A registered switch provider for VLAN management.
+/// A registered SNMP switch for MAC table polling.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SwitchProviderInfo {
+pub struct SnmpSwitchInfo {
     pub id: String,
     pub name: String,
     pub host: String,
-    pub port: u16,
-    pub vendor_profile: String,
-    pub uplink_port: Option<String>,
     pub enabled: bool,
     pub status: String,
     pub last_seen: i64,

@@ -104,8 +104,7 @@ const WEB_ALLOWED_METHODS: &[&str] = &[
     "list_dns_rules", "add_dns_rule", "remove_dns_rule", "set_dns_rule_enabled",
     "list_dns_blocklists", "add_dns_blocklist", "remove_dns_blocklist", "set_dns_blocklist_enabled",
     "vlan_enable", "vlan_disable", "vlan_status",
-    "switch_add", "switch_remove", "switch_list", "switch_set_uplink",
-    "switch_test", "switch_ports", "switch_provision_vlans",
+    "switch_add", "switch_remove", "switch_list", "switch_test",
 ];
 
 const SESSION_IDLE_TIMEOUT_SECS: u64 = 1800;     // 30 minutes
@@ -433,8 +432,8 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                             | "wifi_get_ap_status" => {
                                 wifi::handle_wifi_async(&req, &db).await
                             }
-                            "switch_test" | "switch_ports" | "switch_provision_vlans" => {
-                                switch::handle_switch_async(&req, &db).await
+                            "switch_test" => {
+                                switch::handle_switch_test(&req, &db).await
                             }
                             "apply_update" => {
                                 config::handle_apply_update(&req, &db).await
@@ -450,8 +449,8 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                         | "wifi_kick_client" | "wifi_block_client" | "wifi_unblock_client" => {
                             wifi::handle_wifi_async(&req, &db).await
                         }
-                        "switch_test" | "switch_ports" | "switch_provision_vlans" => {
-                            switch::handle_switch_async(&req, &db).await
+                        "switch_test" => {
+                            switch::handle_switch_test(&req, &db).await
                         }
                         "apply_update" => {
                             config::handle_apply_update(&req, &db).await
@@ -591,7 +590,6 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "switch_add" => switch::handle_switch_add(&req, db),
         "switch_remove" => switch::handle_switch_remove(&req, db),
         "switch_list" => switch::handle_switch_list(&req, db),
-        "switch_set_uplink" => switch::handle_switch_set_uplink(&req, db),
         _ => Response::err("unknown method"),
     }
 }
