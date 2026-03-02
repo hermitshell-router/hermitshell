@@ -145,49 +145,6 @@ impl ServiceRegistry {
         });
     }
 
-    /// Query visible services based on the querier's device group.
-    /// - "trusted" sees: trusted, iot, servers
-    /// - "iot"/"servers" sees: trusted only
-    /// - guest/quarantine/blocked sees: nothing
-    #[allow(dead_code)]
-    pub fn query(
-        &self,
-        querier_group: &str,
-        service_type_filter: Option<&str>,
-        db: &Db,
-    ) -> Vec<MdnsService> {
-        let allowed_groups: &[&str] = match querier_group {
-            "trusted" => &["trusted", "iot", "servers"],
-            "iot" | "servers" => &["trusted"],
-            _ => return Vec::new(),
-        };
-
-        let mut result = Vec::new();
-        for (mac, entries) in &self.records {
-            // Look up the device's group
-            let group = match db.get_device(mac) {
-                Ok(Some(dev)) => dev.device_group,
-                _ => continue,
-            };
-            if !allowed_groups.contains(&group.as_str()) {
-                continue;
-            }
-            for rec in entries {
-                if let Some(filter) = service_type_filter
-                    && rec.service_type != filter {
-                        continue;
-                    }
-                result.push(MdnsService {
-                    service_type: rec.service_type.clone(),
-                    service_name: rec.service_name.clone(),
-                    port: rec.port,
-                    txt_records: rec.txt_records.clone(),
-                });
-            }
-        }
-        result
-    }
-
     /// Query visible services with full internal data for response building.
     /// L8: Matches service_type (PTR), service_name (SRV/TXT), or target_hostname (A).
     fn query_full(
