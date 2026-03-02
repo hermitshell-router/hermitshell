@@ -21,7 +21,7 @@ pub fn SwitchSettings() -> impl IntoView {
                         view! {
                             <div class="settings-section">
                                 <h3>"SNMP Switches"</h3>
-                                <p class="settings-description">"Add managed switches for MAC-to-port discovery. Uses SNMP v2c read-only polling."</p>
+                                <p class="settings-description">"Add managed switches for MAC-to-port discovery. Uses SNMP v2c or v3 read-only polling."</p>
                                 {if list.is_empty() {
                                     view! { <p class="settings-empty">"No switches configured"</p> }.into_any()
                                 } else {
@@ -31,6 +31,7 @@ pub fn SwitchSettings() -> impl IntoView {
                                                 <tr>
                                                     <th>"Name"</th>
                                                     <th>"Host"</th>
+                                                    <th>"Version"</th>
                                                     <th>"Status"</th>
                                                     <th>"Actions"</th>
                                                 </tr>
@@ -46,6 +47,7 @@ pub fn SwitchSettings() -> impl IntoView {
                                                         <tr>
                                                             <td>{sw.name.clone()}</td>
                                                             <td>{sw.host.clone()}</td>
+                                                            <td>{sw.version.clone()}</td>
                                                             <td><span class={status_class}>{sw.status.clone()}</span></td>
                                                             <td>
                                                                 <ActionForm action=test_action attr:style="display:inline">
@@ -70,13 +72,46 @@ pub fn SwitchSettings() -> impl IntoView {
                                 <h4>"Add Switch"</h4>
                                 <ActionForm action=add_action attr:class="form-inline">
                                     <label>"Name"
-                                        <input type="text" name="name" required />
+                                        <input type="text" name="name" />
                                     </label>
                                     <label>"Host"
-                                        <input type="text" name="host" placeholder="192.168.1.100" required />
+                                        <input type="text" name="host" placeholder="192.168.1.100" />
                                     </label>
-                                    <label>"Community String"
-                                        <input type="password" name="community" value="public" required />
+                                    <label>"SNMP Version"
+                                        <select name="snmp_version">
+                                            <option value="2c" selected>"v2c"</option>
+                                            <option value="3">"v3"</option>
+                                        </select>
+                                    </label>
+                                    <label>"Community String (v2c)"
+                                        <input type="password" name="community" value="public" />
+                                    </label>
+                                    <label>"Username (v3)"
+                                        <input type="text" name="v3_username" />
+                                    </label>
+                                    <label>"Auth Password (v3)"
+                                        <input type="password" name="v3_auth_pass" />
+                                    </label>
+                                    <label>"Privacy Password (v3)"
+                                        <input type="password" name="v3_priv_pass" />
+                                    </label>
+                                    <label>"Auth Protocol (v3)"
+                                        <select name="v3_auth_protocol">
+                                            <option value="md5">"MD5"</option>
+                                            <option value="sha1">"SHA1"</option>
+                                            <option value="sha224">"SHA224"</option>
+                                            <option value="sha256" selected>"SHA256"</option>
+                                            <option value="sha384">"SHA384"</option>
+                                            <option value="sha512">"SHA512"</option>
+                                        </select>
+                                    </label>
+                                    <label>"Cipher (v3)"
+                                        <select name="v3_cipher">
+                                            <option value="des">"DES"</option>
+                                            <option value="aes128" selected>"AES128"</option>
+                                            <option value="aes192">"AES192"</option>
+                                            <option value="aes256">"AES256"</option>
+                                        </select>
                                     </label>
                                     <button type="submit" class="btn btn-primary">"Add"</button>
                                 </ActionForm>
