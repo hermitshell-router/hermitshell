@@ -1188,3 +1188,59 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** All VLAN traffic passes through the router's CPU, creating a potential bottleneck. The nftables rules control inter-VLAN communication; by default VLANs are isolated from each other. A bug in the nftables rules could allow unintended inter-VLAN traffic.
 
 **Proper fix:** Acceptable for home networks where total throughput is typically under 1 Gbps. The nftables VLAN rules are tested in the integration test suite (test 54).
+
+---
+
+## Dead Code Wire-In (WiFi, DNS, UPnP, WAN Status)
+
+## 155. WiFi kick/block/unblock have no per-device authorization
+
+**What:** The `wifi_kick_client`, `wifi_block_client`, and `wifi_unblock_client` socket commands allow any authenticated web UI user to disconnect or permanently block any WiFi client on any managed AP. There is no per-device authorization, confirmation dialog, or undo protection.
+
+**Why:** The existing auth model is all-or-nothing — a logged-in user is the sole admin with full control (see issue #11). Adding per-action authorization would require RBAC, which is out of scope for a single-admin home router.
+
+**Risk:** Medium. A compromised web session can DoS all WiFi clients by kicking or blocking them. `block_client` on the EAP720 uses MAC filtering (see issue #61), which is permanent until explicitly unblocked. If the agent crashes between a `kick_client` block and unblock (2-second window), the client stays permanently blocked. There is no audit log entry for these actions.
+
+**Proper fix:** Add audit logging for WiFi client management actions. Add a confirmation step in the UI for `block_client` (destructive action). Track blocked MACs in the agent DB for cleanup on restart (also addresses issue #61). For multi-admin scenarios, RBAC would allow restricting who can perform client management.
+
+## 156. DNS toggle endpoints have no audit logging
+
+**What:** The `set_dns_forward_enabled`, `set_dns_rule_enabled`, and `set_dns_blocklist_enabled` socket commands toggle DNS features on/off without generating audit log entries. Changes are silent — no notification, no log, no confirmation.
+
+**Why:** The toggle handlers follow the same pattern as existing DNS add/remove handlers, which also lack audit logging. The audit logging infrastructure (added in Phase 14) covers some socket commands but was not extended to all state-changing operations.
+
+**Risk:** Medium-high. An attacker who compromises the web session can silently disable ad blocking, DNS forward zones, or custom DNS rules. This is a stealthy attack — the admin must manually check the DNS settings page to notice changes. DNS protection can be degraded without any observable side effect (no alerts, no logs).
+
+**Proper fix:** Add audit log entries for all DNS toggle operations, including the item ID, previous state, and new state. Consider a notification mechanism (e.g., syslog event) when DNS protection features are disabled. Rate-limit toggle operations to prevent rapid on/off cycling.
+
+## 157. UPnP disable has a race condition with daemon cleanup
+
+**What:** When UPnP is disabled via `set_upnp_config`, the handler calls `remove_upnp_input_rules()` to clean up nftables rules immediately, but the UPnP/NAT-PMP/PCP daemon tasks continue running until the agent is restarted. In the window between disable and restart, the daemons could re-add nftables rules for new port mapping requests.
+
+**Why:** The daemon tasks (SSDP listener, SOAP handler, NAT-PMP/PCP listener) are spawned as async tasks during agent startup. There is no mechanism to cancel individual async tasks at runtime — they run for the lifetime of the agent.
+
+**Risk:** Low. The window is narrow (until the admin restarts the agent). The handler returns `restart_required` when enabling UPnP, but does not enforce a restart when disabling. New port mappings created in the race window would survive in nftables until the restart clears them.
+
+**Proper fix:** Use a shared `AtomicBool` or `watch` channel to signal the daemon tasks to stop processing new requests when UPnP is disabled. Alternatively, enforce an automatic agent restart when UPnP is disabled, similar to interface changes (issue #105).
+
+## 158. WAN lease info exposed in status endpoint
+
+**What:** The `get_status` socket command now includes `wan_ip`, `wan_gateway`, and `wan_dns` fields from the active WAN DHCP lease. This information was previously not available through the socket API.
+
+**Why:** The WAN lease data was constructed by the DHCP client but never read after acquisition. Wiring it into the status endpoint makes it available for the web UI dashboard and monitoring.
+
+**Risk:** Low. The WAN IP, gateway, and upstream DNS servers are useful reconnaissance for an attacker planning further attacks (e.g., targeting the ISP gateway or upstream DNS). However, this information is only available to authenticated web UI users (the method is in `WEB_ALLOWED_METHODS`), and WAN IP is generally not secret on a home network.
+
+**Proper fix:** Acceptable for the threat model. The information is no more sensitive than what `ip addr` or `resolvectl` would reveal to a local admin.
+
+## 159. WiFi AP status exposes firmware version and model
+
+**What:** The `wifi_get_ap_status` socket command returns AP hardware details including firmware version, model name, uptime, and MAC address. This information is fetched from the AP's status API and returned to the web UI.
+
+**Why:** AP status monitoring was implemented but never wired into the socket API. Exposing it allows the admin to check AP health from the web UI.
+
+**Risk:** Low-medium. Firmware version and model information helps an attacker identify known vulnerabilities in the AP's firmware. Combined with the AP's MAC address, this could be used to craft targeted attacks against the AP itself.
+
+**Mitigating factor:** The endpoint is authenticated (web session required). The AP is on the LAN, not directly reachable from the WAN. An attacker who has compromised the web session already has significant control over the router.
+
+**Proper fix:** Acceptable for the threat model. For defense-in-depth, consider omitting firmware version from the default status response and requiring an explicit "detailed status" request.
