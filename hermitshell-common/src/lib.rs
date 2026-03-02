@@ -58,6 +58,10 @@ pub struct Device {
     pub wifi_last_seen: Option<i64>,
     #[serde(default)]
     pub dhcp_fingerprint: Option<String>,
+    #[serde(default)]
+    pub switch_id: Option<String>,
+    #[serde(default)]
+    pub switch_port: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -208,6 +212,20 @@ pub struct WifiAp {
     pub has_ca_cert: bool,
     #[serde(default)]
     pub provider_id: Option<String>,
+}
+
+/// A registered switch provider for VLAN management.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SwitchProviderInfo {
+    pub id: String,
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub vendor_profile: String,
+    pub uplink_port: Option<String>,
+    pub enabled: bool,
+    pub status: String,
+    pub last_seen: i64,
 }
 
 /// A registered WiFi provider (controller or direct AP connection).
