@@ -139,6 +139,7 @@ table inet filter {{
         iifname "lo" accept
         iifname != "{wan_iface}" tcp dport 22 accept
         iifname {{ "{lan_iface}", "tailscale0" }} tcp dport {{ 8080, 8443 }} accept
+        iifname "{lan_iface}" udp sport 67 counter drop comment "block rogue DHCP server"
         iifname "{lan_iface}" udp dport 67 accept
         iifname "{wan_iface}" udp dport 68 accept
         iifname {{ "{lan_iface}", "wg0" }} tcp dport {{ 53, 5354 }} accept
@@ -154,6 +155,8 @@ table inet filter {{
     chain forward {{
         type filter hook forward priority 0; policy drop;
         ct state established,related accept
+        iifname "{lan_iface}" udp sport 67 log prefix "ROGUE_DHCP " limit rate 1/second
+        iifname "{lan_iface}" udp sport 67 counter drop comment "block rogue DHCP server"
         ip saddr vmap @device_groups_v4
         ip6 saddr vmap @device_groups_v6
         icmpv6 type {{ nd-neighbor-solicit, nd-neighbor-advert }} accept
@@ -781,5 +784,13 @@ mod tests {
         assert_eq!(expand_protocols("udp"), vec!["udp"]);
         assert_eq!(expand_protocols("both"), vec!["tcp", "udp"]);
         assert_eq!(expand_protocols(""), vec!["tcp", "udp"]);
+    }
+
+    #[test]
+    fn test_base_ruleset_blocks_rogue_dhcp() {
+        crate::paths::init();
+        let rules = build_base_ruleset("eth1", "eth2", "10.0.0.1");
+        assert!(rules.contains("iifname \"eth2\" udp sport 67"), "missing rogue DHCP block rule");
+        assert!(rules.contains("ROGUE_DHCP"), "missing rogue DHCP log prefix");
     }
 }
