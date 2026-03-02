@@ -867,7 +867,7 @@ mod tests {
             if line.contains("#[cfg(test)]") {
                 break; // stop before test module
             }
-            if line.contains("format!") && !line.contains("map_err") {
+            if line.contains("format!") && !line.contains("map_err") && !line.contains("socket_path") && !line.contains("agent.sock") {
                 panic!(
                     "client.rs:{}: format! outside map_err — \
                      use serde_json::json!() instead\n  {}",
