@@ -225,8 +225,13 @@ pub(super) fn handle_set_upnp_config(
     }
     if value == "false" {
         portmap.clear_automatic();
+        if let Err(e) = crate::nftables::remove_upnp_input_rules() {
+            tracing::warn!(error = %e, "failed to remove UPnP input rules");
+        }
+        Response::ok()
+    } else {
+        let mut resp = Response::ok();
+        resp.config_value = Some("restart_required".to_string());
+        resp
     }
-    let mut resp = Response::ok();
-    resp.config_value = Some("restart_required".to_string());
-    resp
 }

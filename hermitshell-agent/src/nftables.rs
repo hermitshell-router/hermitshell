@@ -866,7 +866,6 @@ pub fn add_upnp_input_rules(lan_iface: &str) -> Result<()> {
 }
 
 /// Remove UPnP/NAT-PMP input rules by searching for their comments.
-#[allow(dead_code)]
 pub fn remove_upnp_input_rules() -> Result<()> {
     for comment in &["upnp-ssdp", "upnp-http", "upnp-natpmp"] {
         let output = Command::new(paths::nft())
