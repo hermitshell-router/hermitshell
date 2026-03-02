@@ -2196,6 +2196,7 @@ impl Db {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_snmp_switch_v3(
         &self,
         id: &str,
