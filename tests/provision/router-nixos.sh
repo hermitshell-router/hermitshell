@@ -43,7 +43,7 @@ cat > /etc/nixos/hermitshell-test.nix <<'NIX'
     "net.ipv6.conf.all.forwarding" = 1;
     "net.netfilter.nf_conntrack_acct" = 1;
   };
-  boot.kernelModules = [ "ifb" ];
+  boot.kernelModules = [ "ifb" "8021q" ];
 
   # Disable NixOS firewall (HermitShell manages nftables)
   networking.firewall.enable = lib.mkForce false;

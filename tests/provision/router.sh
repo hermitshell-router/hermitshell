@@ -58,6 +58,10 @@ EOF
 modprobe ifb 2>/dev/null || true
 echo ifb >> /etc/modules 2>/dev/null || true
 
+# Load 8021q module for VLAN subinterfaces
+modprobe 8021q 2>/dev/null || true
+echo 8021q >> /etc/modules 2>/dev/null || true
+
 # Enable IP forwarding (IPv4 and IPv6)
 cat > /etc/sysctl.d/99-forward.conf <<EOF
 net.ipv4.ip_forward=1
