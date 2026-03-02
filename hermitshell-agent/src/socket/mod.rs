@@ -85,6 +85,7 @@ const WEB_ALLOWED_METHODS: &[&str] = &[
     "wifi_set_provider_ca_cert", "wifi_get_clients",
     "wifi_get_ssids", "wifi_set_ssid", "wifi_delete_ssid",
     "wifi_get_radios", "wifi_set_radio",
+    "wifi_set_ssid_vlan", "wifi_get_ssid_vlans",
     "check_update", "apply_update",
     "get_setup_state",
     "setup_wan_config", "set_hostname", "set_timezone", "setup_set_dns",
@@ -206,6 +207,7 @@ struct Request {
     site: Option<String>,
     api_key: Option<String>,
     secrets: Option<String>,
+    vlan_id: Option<u16>,
 }
 
 /// JSON response envelope. `ok` indicates success; `error` carries failure details.
@@ -417,7 +419,8 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                     } else {
                         match req.method.as_str() {
                             "wifi_get_ssids" | "wifi_set_ssid" | "wifi_delete_ssid"
-                            | "wifi_get_radios" | "wifi_set_radio" => {
+                            | "wifi_get_radios" | "wifi_set_radio"
+                            | "wifi_set_ssid_vlan" | "wifi_get_ssid_vlans" => {
                                 wifi::handle_wifi_async(&req, &db).await
                             }
                             "switch_test" | "switch_ports" | "switch_provision_vlans" => {
@@ -432,7 +435,8 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                 } else {
                     match req.method.as_str() {
                         "wifi_get_ssids" | "wifi_set_ssid" | "wifi_delete_ssid"
-                        | "wifi_get_radios" | "wifi_set_radio" => {
+                        | "wifi_get_radios" | "wifi_set_radio"
+                        | "wifi_set_ssid_vlan" | "wifi_get_ssid_vlans" => {
                             wifi::handle_wifi_async(&req, &db).await
                         }
                         "switch_test" | "switch_ports" | "switch_provision_vlans" => {

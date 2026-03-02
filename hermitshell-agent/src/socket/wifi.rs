@@ -233,6 +233,8 @@ pub(super) async fn handle_wifi_async(req: &Request, db: &Arc<Mutex<Db>>) -> Res
         "wifi_delete_ssid" => handle_wifi_delete_ssid(req, db).await,
         "wifi_get_radios" => handle_wifi_get_radios(req, db).await,
         "wifi_set_radio" => handle_wifi_set_radio(req, db).await,
+        "wifi_set_ssid_vlan" => handle_wifi_set_ssid_vlan(req, db).await,
+        "wifi_get_ssid_vlans" => handle_wifi_get_ssid_vlans(req, db).await,
         _ => Response::err("unknown wifi method"),
     }
 }
@@ -368,7 +370,7 @@ async fn handle_wifi_set_ssid(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
         ssid_name: ssid_name.clone(),
         password: req.value.clone(),
         band: band.clone(),
-        vlan_id: None,
+        vlan_id: req.vlan_id,
         hidden: req.hidden.unwrap_or(false),
         enabled: req.enabled.unwrap_or(true),
         security: security.to_string(),
@@ -462,4 +464,75 @@ async fn handle_wifi_set_radio(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
         }
         Err(e) => Response::err(&format!("set_radio failed: {}", e)),
     }
+}
+
+async fn handle_wifi_set_ssid_vlan(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref provider_id) = req.provider_id else {
+        return Response::err("provider_id required");
+    };
+    let Some(ref ssid_name) = req.ssid_name else {
+        return Response::err("ssid_name required");
+    };
+    // vlan_id can be None (to remove VLAN tagging) or Some(id) to set it
+    let vlan_id = req.vlan_id;
+
+    let provider = match connect_to_provider(provider_id, db).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+
+    // Get current SSIDs to find the one to modify
+    let ssids = match provider.get_ssids().await {
+        Ok(s) => s,
+        Err(e) => return Response::err(&format!("get_ssids failed: {}", e)),
+    };
+
+    let Some(mut config) = ssids.into_iter().find(|s| s.ssid_name == *ssid_name) else {
+        return Response::err(&format!("SSID '{}' not found", ssid_name));
+    };
+
+    config.vlan_id = vlan_id;
+
+    match provider.set_ssid(&config).await {
+        Ok(()) => {
+            let db = db.lock().unwrap();
+            let _ = db.log_audit("wifi_set_ssid_vlan", &format!("{} vlan={:?} on provider {}", ssid_name, vlan_id, provider_id));
+            Response::ok()
+        }
+        Err(e) => Response::err(&format!("set_ssid_vlan failed: {}", e)),
+    }
+}
+
+async fn handle_wifi_get_ssid_vlans(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let providers = {
+        let db = db.lock().unwrap();
+        db.list_wifi_providers().unwrap_or_default()
+    };
+
+    let mut results = Vec::new();
+    for pinfo in &providers {
+        if !pinfo.enabled { continue; }
+        let provider = match connect_to_provider(&pinfo.id, db).await {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        match provider.get_ssids().await {
+            Ok(ssids) => {
+                for ssid in &ssids {
+                    results.push(serde_json::json!({
+                        "provider_id": pinfo.id,
+                        "provider_name": pinfo.name,
+                        "ssid_name": ssid.ssid_name,
+                        "band": ssid.band,
+                        "vlan_id": ssid.vlan_id,
+                    }));
+                }
+            }
+            Err(_) => continue,
+        }
+    }
+
+    let mut resp = Response::ok();
+    resp.config_value = Some(serde_json::to_string(&results).unwrap_or_default());
+    resp
 }
