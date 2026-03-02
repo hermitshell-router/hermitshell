@@ -53,6 +53,14 @@ pub(super) fn handle_switch_add(req: &Request, db: &Arc<Mutex<Db>>) -> Response 
         };
         let auth_protocol = req.v3_auth_protocol.as_deref().unwrap_or("sha256");
         let cipher = req.v3_cipher.as_deref().unwrap_or("aes128");
+        const VALID_AUTH: &[&str] = &["md5", "sha1", "sha224", "sha256", "sha384", "sha512"];
+        const VALID_CIPHER: &[&str] = &["des", "aes128", "aes192", "aes256"];
+        if !VALID_AUTH.contains(&auth_protocol) {
+            return Response::err("invalid v3_auth_protocol");
+        }
+        if !VALID_CIPHER.contains(&cipher) {
+            return Response::err("invalid v3_cipher");
+        }
 
         let auth_pass_enc = match encrypt(auth_pass) {
             Ok(enc) => enc,

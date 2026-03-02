@@ -50,6 +50,20 @@ assert_match "$V3_LIST" "v3-switch" "switch_list shows v3 switch"
 assert_match "$V3_LIST" '"version":"3"' "v3 switch shows version 3"
 assert_match "$V3_LIST" '"v3_username":"snmpuser"' "v3 switch shows username"
 
+# --- Verify passwords not exposed in list ---
+if echo "$V3_LIST" | grep -q "authpass123"; then
+    echo -e "${RED}FAIL${NC}: auth password exposed in switch_list"
+    exit 1
+else
+    echo -e "${GREEN}PASS${NC}: auth password not exposed in switch_list"
+fi
+if echo "$V3_LIST" | grep -q "privpass123"; then
+    echo -e "${RED}FAIL${NC}: priv password exposed in switch_list"
+    exit 1
+else
+    echo -e "${GREEN}PASS${NC}: priv password not exposed in switch_list"
+fi
+
 # --- Remove v3 switch ---
 V3_REMOVE=$(vm_sudo router 'echo "{\"method\":\"switch_remove\",\"name\":\"v3-switch\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock')
 assert_contains "$V3_REMOVE" '"ok":true' "v3 switch_remove succeeds"
