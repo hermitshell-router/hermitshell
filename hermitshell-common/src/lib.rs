@@ -702,6 +702,14 @@ pub struct WifiProviderSecrets {
     pub api_key: Option<String>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VlanGroupConfig {
+    pub group_name: String,
+    pub vlan_id: u16,
+    pub subnet: String,
+    pub gateway: String,
+}
+
 impl HermitConfig {
     /// Parse from TOML string.
     pub fn from_toml(s: &str) -> Result<Self, toml::de::Error> {

@@ -4,7 +4,7 @@ use rusqlite::Connection;
 pub use hermitshell_common::{
     Alert, AuditEntry, BandwidthPoint, BandwidthRealtime, ConnectionLog, Device,
     DhcpReservation, DnsBlocklist, DnsCustomRule, DnsForwardZone, DnsLogEntry,
-    PortForward, TopDestination, WgPeer, WifiAp, WifiClient,
+    PortForward, TopDestination, VlanGroupConfig, WgPeer, WifiAp, WifiClient,
 };
 
 /// Practical bottlenecks before hitting address space limits:
@@ -501,6 +501,27 @@ impl Db {
             conn.execute(
                 "INSERT INTO config (key, value) VALUES ('schema_version', '9')
                  ON CONFLICT(key) DO UPDATE SET value = '9'",
+                [],
+            )?;
+        }
+
+        if version < 10 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS vlan_config (
+                    group_name TEXT PRIMARY KEY,
+                    vlan_id INTEGER NOT NULL,
+                    subnet TEXT NOT NULL,
+                    gateway TEXT NOT NULL
+                );
+                INSERT OR IGNORE INTO vlan_config VALUES ('trusted', 10, '10.0.10.0/24', '10.0.10.1');
+                INSERT OR IGNORE INTO vlan_config VALUES ('iot', 20, '10.0.20.0/24', '10.0.20.1');
+                INSERT OR IGNORE INTO vlan_config VALUES ('guest', 30, '10.0.30.0/24', '10.0.30.1');
+                INSERT OR IGNORE INTO vlan_config VALUES ('servers', 40, '10.0.40.0/24', '10.0.40.1');
+                INSERT OR IGNORE INTO vlan_config VALUES ('quarantine', 50, '10.0.50.0/24', '10.0.50.1');"
+            )?;
+            conn.execute(
+                "INSERT INTO config (key, value) VALUES ('schema_version', '10')
+                 ON CONFLICT(key) DO UPDATE SET value = '10'",
                 [],
             )?;
         }
@@ -1989,5 +2010,104 @@ impl Db {
             (if enabled { 1 } else { 0 }, id),
         )?;
         Ok(())
+    }
+
+    // VLAN configuration methods
+
+    pub fn get_vlan_config(&self) -> Result<Vec<VlanGroupConfig>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT group_name, vlan_id, subnet, gateway FROM vlan_config"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(VlanGroupConfig {
+                group_name: row.get(0)?,
+                vlan_id: row.get::<_, u16>(1)?,
+                subnet: row.get(2)?,
+                gateway: row.get(3)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn get_vlan_for_group(&self, group: &str) -> Result<Option<VlanGroupConfig>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT group_name, vlan_id, subnet, gateway FROM vlan_config WHERE group_name = ?1"
+        )?;
+        let mut rows = stmt.query([group])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(VlanGroupConfig {
+                group_name: row.get(0)?,
+                vlan_id: row.get::<_, u16>(1)?,
+                subnet: row.get(2)?,
+                gateway: row.get(3)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn set_vlan_config(&self, group: &str, vlan_id: u16, subnet: &str, gateway: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO vlan_config (group_name, vlan_id, subnet, gateway) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![group, vlan_id, subnet, gateway],
+        )?;
+        Ok(())
+    }
+
+    pub fn is_vlan_mode_enabled(&self) -> bool {
+        self.get_config("vlan_mode")
+            .ok()
+            .flatten()
+            .map(|v| v == "enabled")
+            .unwrap_or(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_db() -> Db {
+        Db::open(":memory:").unwrap()
+    }
+
+    #[test]
+    fn test_vlan_config_defaults() {
+        let db = test_db();
+        let configs = db.get_vlan_config().unwrap();
+        assert_eq!(configs.len(), 5);
+        let trusted = configs.iter().find(|c| c.group_name == "trusted").unwrap();
+        assert_eq!(trusted.vlan_id, 10);
+        assert_eq!(trusted.gateway, "10.0.10.1");
+    }
+
+    #[test]
+    fn test_vlan_for_group() {
+        let db = test_db();
+        let iot = db.get_vlan_for_group("iot").unwrap().unwrap();
+        assert_eq!(iot.vlan_id, 20);
+        assert!(db.get_vlan_for_group("nonexistent").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_set_vlan_config() {
+        let db = test_db();
+        db.set_vlan_config("trusted", 100, "10.0.100.0/24", "10.0.100.1").unwrap();
+        let trusted = db.get_vlan_for_group("trusted").unwrap().unwrap();
+        assert_eq!(trusted.vlan_id, 100);
+        assert_eq!(trusted.subnet, "10.0.100.0/24");
+    }
+
+    #[test]
+    fn test_vlan_mode_disabled_by_default() {
+        let db = test_db();
+        assert!(!db.is_vlan_mode_enabled());
+    }
+
+    #[test]
+    fn test_vlan_mode_enable() {
+        let db = test_db();
+        db.set_config("vlan_mode", "enabled").unwrap();
+        assert!(db.is_vlan_mode_enabled());
     }
 }
