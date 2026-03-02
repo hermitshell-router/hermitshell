@@ -90,34 +90,28 @@ where
         // Process the response in a limited scope so the borrow on sess is
         // released before the next getnext call.
         let step = {
-            let response = match sess.getnext(&cursor).await {
+            let mut response = match sess.getnext(&cursor).await {
                 Ok(r) => r,
                 Err(_) => break,
             };
 
-            let mut result = WalkStep::Empty;
-            for (oid, val) in response.varbinds {
+            // GETNEXT returns one varbind per call
+            if let Some((oid, val)) = response.varbinds.next() {
                 if matches!(val, Value::EndOfMibView) {
-                    result = WalkStep::Done;
-                    break;
+                    WalkStep::Done
+                } else if let Some(suffix) = oid_suffix(&oid, root) {
+                    let owned_val = match val {
+                        Value::Integer(n) => WalkValue::Integer(n),
+                        Value::OctetString(bytes) => WalkValue::OctetString(bytes.to_vec()),
+                        _ => WalkValue::Other,
+                    };
+                    WalkStep::Entry(suffix, owned_val, oid.to_owned())
+                } else {
+                    WalkStep::Done
                 }
-                let suffix = match oid_suffix(&oid, root) {
-                    Some(s) => s,
-                    None => {
-                        result = WalkStep::Done;
-                        break;
-                    }
-                };
-                // Copy the value into an owned form so we can drop `response`.
-                let owned_val = match val {
-                    Value::Integer(n) => WalkValue::Integer(n),
-                    Value::OctetString(bytes) => WalkValue::OctetString(bytes.to_vec()),
-                    _ => WalkValue::Other,
-                };
-                result = WalkStep::Entry(suffix, owned_val, oid.to_owned());
-                break; // GETNEXT returns one varbind per call
+            } else {
+                WalkStep::Empty
             }
-            result
         };
 
         match step {
