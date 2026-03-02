@@ -788,6 +788,21 @@ pub fn remove_dns_blocklist(id: i64) -> Result<(), String> {
     Ok(())
 }
 
+pub fn set_dns_forward_enabled(id: i64, enabled: bool) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "set_dns_forward_enabled", "id": id, "enabled": enabled}))?)?;
+    Ok(())
+}
+
+pub fn set_dns_rule_enabled(id: i64, enabled: bool) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "set_dns_rule_enabled", "id": id, "enabled": enabled}))?)?;
+    Ok(())
+}
+
+pub fn set_dns_blocklist_enabled(id: i64, enabled: bool) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "set_dns_blocklist_enabled", "id": id, "enabled": enabled}))?)?;
+    Ok(())
+}
+
 pub fn set_dns_config(config: &serde_json::Value) -> Result<(), String> {
     ok_or_err(send(json!({"method": "set_dns_config", "value": config.to_string()}))?)?;
     Ok(())

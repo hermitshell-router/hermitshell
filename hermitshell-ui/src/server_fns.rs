@@ -726,6 +726,33 @@ pub async fn set_dns_settings(
     Ok(())
 }
 
+#[server]
+pub async fn set_dns_forward_enabled(id: i64, enabled: String) -> Result<(), ServerFnError> {
+    let enabled = enabled == "true";
+    crate::client::set_dns_forward_enabled(id, enabled).map_err(ServerFnError::new)?;
+    let _ = crate::client::log_audit("set_dns_forward_enabled", &format!("id={} enabled={}", id, enabled));
+    leptos_axum::redirect("/dns");
+    Ok(())
+}
+
+#[server]
+pub async fn set_dns_rule_enabled(id: i64, enabled: String) -> Result<(), ServerFnError> {
+    let enabled = enabled == "true";
+    crate::client::set_dns_rule_enabled(id, enabled).map_err(ServerFnError::new)?;
+    let _ = crate::client::log_audit("set_dns_rule_enabled", &format!("id={} enabled={}", id, enabled));
+    leptos_axum::redirect("/dns");
+    Ok(())
+}
+
+#[server]
+pub async fn set_dns_blocklist_enabled(id: i64, enabled: String) -> Result<(), ServerFnError> {
+    let enabled = enabled == "true";
+    crate::client::set_dns_blocklist_enabled(id, enabled).map_err(ServerFnError::new)?;
+    let _ = crate::client::log_audit("set_dns_blocklist_enabled", &format!("id={} enabled={}", id, enabled));
+    leptos_axum::redirect("/dns");
+    Ok(())
+}
+
 // --- Port forwarding ---
 
 #[server]

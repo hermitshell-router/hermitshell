@@ -4,9 +4,9 @@ use crate::components::layout::Layout;
 use crate::components::toast::ErrorToast;
 use crate::server_fns::{
     ToggleAdBlocking, SetDnsSettings,
-    AddDnsBlocklist, RemoveDnsBlocklist,
-    AddDnsForwardZone, RemoveDnsForwardZone,
-    AddDnsCustomRule, RemoveDnsCustomRule,
+    AddDnsBlocklist, RemoveDnsBlocklist, SetDnsBlocklistEnabled,
+    AddDnsForwardZone, RemoveDnsForwardZone, SetDnsForwardEnabled,
+    AddDnsCustomRule, RemoveDnsCustomRule, SetDnsRuleEnabled,
 };
 
 #[component]
@@ -153,12 +153,22 @@ pub fn Dns() -> impl IntoView {
                                                 {lists.iter().map(|bl| {
                                                     let id = bl.id;
                                                     let remove_action = ServerAction::<RemoveDnsBlocklist>::new();
+                                                    let toggle_action = ServerAction::<SetDnsBlocklistEnabled>::new();
+                                                    let new_enabled = if bl.enabled { "false" } else { "true" };
+                                                    let btn_class = if bl.enabled { "btn btn-sm btn-success" } else { "btn btn-sm btn-secondary" };
+                                                    let btn_label = if bl.enabled { "Enabled" } else { "Disabled" };
                                                     view! {
                                                         <tr>
                                                             <td>{bl.name.clone()}</td>
                                                             <td>{bl.url.clone()}</td>
                                                             <td>{bl.tag.clone()}</td>
-                                                            <td>{if bl.enabled { "Yes" } else { "No" }}</td>
+                                                            <td>
+                                                                <ActionForm action=toggle_action attr:style="display:inline">
+                                                                    <input type="hidden" name="id" value={id.to_string()} />
+                                                                    <input type="hidden" name="enabled" value={new_enabled} />
+                                                                    <button type="submit" class={btn_class}>{btn_label}</button>
+                                                                </ActionForm>
+                                                            </td>
                                                             <td>
                                                                 <ActionForm action=remove_action attr:style="display:inline">
                                                                     <input type="hidden" name="id" value={id.to_string()} />
@@ -217,6 +227,7 @@ pub fn Dns() -> impl IntoView {
                                                 <tr>
                                                     <th>"Domain"</th>
                                                     <th>"Forward Address"</th>
+                                                    <th>"Enabled"</th>
                                                     <th>"Actions"</th>
                                                 </tr>
                                             </thead>
@@ -224,10 +235,21 @@ pub fn Dns() -> impl IntoView {
                                                 {zones.iter().map(|fz| {
                                                     let id = fz.id;
                                                     let remove_action = ServerAction::<RemoveDnsForwardZone>::new();
+                                                    let toggle_action = ServerAction::<SetDnsForwardEnabled>::new();
+                                                    let new_enabled = if fz.enabled { "false" } else { "true" };
+                                                    let btn_class = if fz.enabled { "btn btn-sm btn-success" } else { "btn btn-sm btn-secondary" };
+                                                    let btn_label = if fz.enabled { "Enabled" } else { "Disabled" };
                                                     view! {
                                                         <tr>
                                                             <td>{fz.domain.clone()}</td>
                                                             <td>{fz.forward_addr.clone()}</td>
+                                                            <td>
+                                                                <ActionForm action=toggle_action attr:style="display:inline">
+                                                                    <input type="hidden" name="id" value={id.to_string()} />
+                                                                    <input type="hidden" name="enabled" value={new_enabled} />
+                                                                    <button type="submit" class={btn_class}>{btn_label}</button>
+                                                                </ActionForm>
+                                                            </td>
                                                             <td>
                                                                 <ActionForm action=remove_action attr:style="display:inline">
                                                                     <input type="hidden" name="id" value={id.to_string()} />
@@ -280,6 +302,7 @@ pub fn Dns() -> impl IntoView {
                                                     <th>"Domain"</th>
                                                     <th>"Type"</th>
                                                     <th>"Value"</th>
+                                                    <th>"Enabled"</th>
                                                     <th>"Actions"</th>
                                                 </tr>
                                             </thead>
@@ -287,11 +310,22 @@ pub fn Dns() -> impl IntoView {
                                                 {rules.iter().map(|rule| {
                                                     let id = rule.id;
                                                     let remove_action = ServerAction::<RemoveDnsCustomRule>::new();
+                                                    let toggle_action = ServerAction::<SetDnsRuleEnabled>::new();
+                                                    let new_enabled = if rule.enabled { "false" } else { "true" };
+                                                    let btn_class = if rule.enabled { "btn btn-sm btn-success" } else { "btn btn-sm btn-secondary" };
+                                                    let btn_label = if rule.enabled { "Enabled" } else { "Disabled" };
                                                     view! {
                                                         <tr>
                                                             <td>{rule.domain.clone()}</td>
                                                             <td>{rule.record_type.clone()}</td>
                                                             <td>{rule.value.clone()}</td>
+                                                            <td>
+                                                                <ActionForm action=toggle_action attr:style="display:inline">
+                                                                    <input type="hidden" name="id" value={id.to_string()} />
+                                                                    <input type="hidden" name="enabled" value={new_enabled} />
+                                                                    <button type="submit" class={btn_class}>{btn_label}</button>
+                                                                </ActionForm>
+                                                            </td>
                                                             <td>
                                                                 <ActionForm action=remove_action attr:style="display:inline">
                                                                     <input type="hidden" name="id" value={id.to_string()} />
