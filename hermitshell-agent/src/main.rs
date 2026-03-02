@@ -14,6 +14,7 @@ mod qos;
 mod ra;
 mod rest_api;
 mod socket;
+mod switch;
 mod tls;
 mod tls_client;
 mod update;
