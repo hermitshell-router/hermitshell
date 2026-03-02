@@ -8,6 +8,7 @@ mod network;
 mod wireguard;
 mod wifi;
 mod setup;
+mod switch;
 mod vlan;
 
 use anyhow::Result;
@@ -101,6 +102,8 @@ const WEB_ALLOWED_METHODS: &[&str] = &[
     "list_dns_rules", "add_dns_rule", "remove_dns_rule",
     "list_dns_blocklists", "add_dns_blocklist", "remove_dns_blocklist",
     "vlan_enable", "vlan_disable", "vlan_status",
+    "switch_add", "switch_remove", "switch_list", "switch_set_uplink",
+    "switch_test", "switch_ports", "switch_provision_vlans",
 ];
 
 const SESSION_IDLE_TIMEOUT_SECS: u64 = 1800;     // 30 minutes
@@ -417,6 +420,9 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                             | "wifi_get_radios" | "wifi_set_radio" => {
                                 wifi::handle_wifi_async(&req, &db).await
                             }
+                            "switch_test" | "switch_ports" | "switch_provision_vlans" => {
+                                switch::handle_switch_async(&req, &db).await
+                            }
                             "apply_update" => {
                                 config::handle_apply_update(&req, &db).await
                             }
@@ -428,6 +434,9 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                         "wifi_get_ssids" | "wifi_set_ssid" | "wifi_delete_ssid"
                         | "wifi_get_radios" | "wifi_set_radio" => {
                             wifi::handle_wifi_async(&req, &db).await
+                        }
+                        "switch_test" | "switch_ports" | "switch_provision_vlans" => {
+                            switch::handle_switch_async(&req, &db).await
                         }
                         "apply_update" => {
                             config::handle_apply_update(&req, &db).await
@@ -561,6 +570,10 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "vlan_enable" => vlan::handle_vlan_enable(&req, db),
         "vlan_disable" => vlan::handle_vlan_disable(&req, db),
         "vlan_status" => vlan::handle_vlan_status(&req, db),
+        "switch_add" => switch::handle_switch_add(&req, db),
+        "switch_remove" => switch::handle_switch_remove(&req, db),
+        "switch_list" => switch::handle_switch_list(&req, db),
+        "switch_set_uplink" => switch::handle_switch_set_uplink(&req, db),
         _ => Response::err("unknown method"),
     }
 }
