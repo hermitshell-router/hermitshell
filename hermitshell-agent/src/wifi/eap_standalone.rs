@@ -616,7 +616,6 @@ impl EapSession {
         Ok(())
     }
 
-    #[allow(dead_code)]
     async fn kick_client_impl(&self, mac: &str) -> Result<()> {
         // The EAP720 doesn't expose a direct "deauth client" API in standalone mode.
         // The closest mechanism is adding the client to the MAC filter deny list temporarily,
@@ -629,7 +628,6 @@ impl EapSession {
         Ok(())
     }
 
-    #[allow(dead_code)]
     async fn block_client_impl(&self, mac: &str) -> Result<()> {
         // Ensure MAC filtering is enabled in deny mode
         let filter_status = self.get_data_get("macFiltering.set.json").await?;
@@ -656,7 +654,6 @@ impl EapSession {
         Ok(())
     }
 
-    #[allow(dead_code)]
     async fn unblock_client_impl(&self, mac: &str) -> Result<()> {
         let tp_mac = mac.replace(':', "-").to_uppercase();
 

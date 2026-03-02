@@ -36,11 +36,8 @@ pub trait WifiProvider: Send + Sync {
     async fn delete_ssid(&self, ssid_name: &str, band: &str) -> Result<()>;
 
     /// Client management routed through the correct AP/controller.
-    #[allow(dead_code)]
     async fn kick_client(&self, mac: &str) -> Result<()>;
-    #[allow(dead_code)]
     async fn block_client(&self, mac: &str) -> Result<()>;
-    #[allow(dead_code)]
     async fn unblock_client(&self, mac: &str) -> Result<()>;
 }
 

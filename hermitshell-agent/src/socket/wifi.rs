@@ -235,7 +235,61 @@ pub(super) async fn handle_wifi_async(req: &Request, db: &Arc<Mutex<Db>>) -> Res
         "wifi_set_radio" => handle_wifi_set_radio(req, db).await,
         "wifi_set_ssid_vlan" => handle_wifi_set_ssid_vlan(req, db).await,
         "wifi_get_ssid_vlans" => handle_wifi_get_ssid_vlans(req, db).await,
+        "wifi_kick_client" => handle_wifi_kick_client(req, db).await,
+        "wifi_block_client" => handle_wifi_block_client(req, db).await,
+        "wifi_unblock_client" => handle_wifi_unblock_client(req, db).await,
         _ => Response::err("unknown wifi method"),
+    }
+}
+
+async fn handle_wifi_kick_client(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref provider_id) = req.provider_id else {
+        return Response::err("provider_id required");
+    };
+    let Some(ref mac) = req.mac else {
+        return Response::err("mac required (client MAC)");
+    };
+    let provider = match connect_to_provider(provider_id, db).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    match provider.kick_client(mac).await {
+        Ok(()) => Response::ok(),
+        Err(e) => Response::err(&format!("kick_client failed: {}", e)),
+    }
+}
+
+async fn handle_wifi_block_client(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref provider_id) = req.provider_id else {
+        return Response::err("provider_id required");
+    };
+    let Some(ref mac) = req.mac else {
+        return Response::err("mac required (client MAC)");
+    };
+    let provider = match connect_to_provider(provider_id, db).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    match provider.block_client(mac).await {
+        Ok(()) => Response::ok(),
+        Err(e) => Response::err(&format!("block_client failed: {}", e)),
+    }
+}
+
+async fn handle_wifi_unblock_client(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let Some(ref provider_id) = req.provider_id else {
+        return Response::err("provider_id required");
+    };
+    let Some(ref mac) = req.mac else {
+        return Response::err("mac required (client MAC)");
+    };
+    let provider = match connect_to_provider(provider_id, db).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    match provider.unblock_client(mac).await {
+        Ok(()) => Response::ok(),
+        Err(e) => Response::err(&format!("unblock_client failed: {}", e)),
     }
 }
 

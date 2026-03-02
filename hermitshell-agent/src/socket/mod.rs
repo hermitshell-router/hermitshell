@@ -83,6 +83,7 @@ const WEB_ALLOWED_METHODS: &[&str] = &[
     "log_audit", "list_audit_logs",
     "wifi_list_aps", "wifi_list_providers", "wifi_add_provider", "wifi_remove_provider",
     "wifi_set_provider_ca_cert", "wifi_get_clients",
+    "wifi_kick_client", "wifi_block_client", "wifi_unblock_client",
     "wifi_get_ssids", "wifi_set_ssid", "wifi_delete_ssid",
     "wifi_get_radios", "wifi_set_radio",
     "wifi_set_ssid_vlan", "wifi_get_ssid_vlans",
@@ -420,7 +421,8 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                         match req.method.as_str() {
                             "wifi_get_ssids" | "wifi_set_ssid" | "wifi_delete_ssid"
                             | "wifi_get_radios" | "wifi_set_radio"
-                            | "wifi_set_ssid_vlan" | "wifi_get_ssid_vlans" => {
+                            | "wifi_set_ssid_vlan" | "wifi_get_ssid_vlans"
+                            | "wifi_kick_client" | "wifi_block_client" | "wifi_unblock_client" => {
                                 wifi::handle_wifi_async(&req, &db).await
                             }
                             "switch_test" | "switch_ports" | "switch_provision_vlans" => {
@@ -436,7 +438,8 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                     match req.method.as_str() {
                         "wifi_get_ssids" | "wifi_set_ssid" | "wifi_delete_ssid"
                         | "wifi_get_radios" | "wifi_set_radio"
-                        | "wifi_set_ssid_vlan" | "wifi_get_ssid_vlans" => {
+                        | "wifi_set_ssid_vlan" | "wifi_get_ssid_vlans"
+                        | "wifi_kick_client" | "wifi_block_client" | "wifi_unblock_client" => {
                             wifi::handle_wifi_async(&req, &db).await
                         }
                         "switch_test" | "switch_ports" | "switch_provision_vlans" => {

@@ -420,7 +420,6 @@ impl UnifiSession {
     }
 
     /// POST to `/cmd/stamgr` with a station management command.
-    #[allow(dead_code)]
     async fn stamgr_cmd(&self, cmd: &str, mac: &str) -> Result<()> {
         let url = self.site_url("cmd/stamgr");
         self.api_post(&url, &json!({ "cmd": cmd, "mac": mac.to_lowercase() }))
