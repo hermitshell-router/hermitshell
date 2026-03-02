@@ -8,6 +8,7 @@ mod network;
 mod wireguard;
 mod wifi;
 mod setup;
+mod vlan;
 
 use anyhow::Result;
 use argon2::password_hash::SaltString;
@@ -99,6 +100,7 @@ const WEB_ALLOWED_METHODS: &[&str] = &[
     "list_dns_forwards", "add_dns_forward", "remove_dns_forward",
     "list_dns_rules", "add_dns_rule", "remove_dns_rule",
     "list_dns_blocklists", "add_dns_blocklist", "remove_dns_blocklist",
+    "vlan_enable", "vlan_disable", "vlan_status",
 ];
 
 const SESSION_IDLE_TIMEOUT_SECS: u64 = 1800;     // 30 minutes
@@ -556,6 +558,9 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "list_dns_blocklists" => dns::handle_list_dns_blocklists(&req, db),
         "add_dns_blocklist" => dns::handle_add_dns_blocklist(&req, db, unbound),
         "remove_dns_blocklist" => dns::handle_remove_dns_blocklist(&req, db, unbound),
+        "vlan_enable" => vlan::handle_vlan_enable(&req, db),
+        "vlan_disable" => vlan::handle_vlan_disable(&req, db),
+        "vlan_status" => vlan::handle_vlan_status(&req, db),
         _ => Response::err("unknown method"),
     }
 }

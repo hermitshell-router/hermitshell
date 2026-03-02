@@ -435,12 +435,31 @@ async fn main() -> Result<()> {
         warn!("IPv6 ULA address not available on {}", lan_iface);
     }
 
-    // Apply base nftables rules
-    nftables::apply_base_rules(&wan_iface, &lan_iface, &lan_ip)?;
-
     // Open database
     let db = Arc::new(Mutex::new(db::Db::open(&paths::db_path())?));
     info!(path = %paths::data_dir(), "database opened");
+
+    // Check VLAN mode and apply appropriate nftables rules
+    let vlan_enabled = {
+        let db_guard = db.lock().unwrap();
+        db_guard.get_config("vlan_mode").ok().flatten().as_deref() == Some("enabled")
+    };
+
+    if vlan_enabled {
+        let vlan_configs = {
+            let db_guard = db.lock().unwrap();
+            db_guard.get_vlan_config().unwrap_or_default()
+        };
+        if let Err(e) = vlan::create_vlan_interfaces(&lan_iface, &vlan_configs) {
+            warn!(error = %e, "failed to create VLAN subinterfaces");
+        }
+        let vlan_ifaces: Vec<String> = vlan_configs.iter()
+            .map(|c| format!("{}.{}", lan_iface, c.vlan_id))
+            .collect();
+        nftables::apply_base_rules_vlan(&wan_iface, &lan_iface, &lan_ip, &vlan_ifaces)?;
+    } else {
+        nftables::apply_base_rules(&wan_iface, &lan_iface, &lan_ip)?;
+    }
 
     // Generate self-signed TLS cert if missing
     {
@@ -839,11 +858,26 @@ async fn main() -> Result<()> {
     let db_for_counters = db.clone();
     let dhcp_bin = std::env::var("HERMITSHELL_DHCP_BIN")
         .unwrap_or_else(|_| format!("{}/hermitshell-dhcp", paths::install_dir()));
-    std::process::Command::new(&dhcp_bin)
-        .args([&lan_iface, &lan_ip, &lan_ip_v6])
+    let mut dhcp_cmd = std::process::Command::new(&dhcp_bin);
+    dhcp_cmd.args([&lan_iface, &lan_ip, &lan_ip_v6])
         .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .spawn()?;
+        .stderr(std::process::Stdio::inherit());
+
+    if vlan_enabled {
+        let vlan_configs = {
+            let db_guard = db.lock().unwrap();
+            db_guard.get_vlan_config().unwrap_or_default()
+        };
+        let vlan_json: Vec<serde_json::Value> = vlan_configs.iter().map(|c| {
+            serde_json::json!({
+                "iface": format!("{}.{}", lan_iface, c.vlan_id),
+                "gateway": c.gateway,
+            })
+        }).collect();
+        dhcp_cmd.env("HERMITSHELL_VLAN_CONFIG", serde_json::to_string(&vlan_json).unwrap());
+    }
+
+    dhcp_cmd.spawn()?;
 
     // Main polling loop: update traffic counters for assigned devices
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(POLL_INTERVAL_SECS));
