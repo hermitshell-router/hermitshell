@@ -28,6 +28,26 @@ fn server_ipv6_ula() -> Ipv6Addr {
     *SERVER_IPV6_ULA.get().expect("SERVER_IPV6_ULA not initialized")
 }
 const LEASE_TIME: u32 = 3600; // 1 hour
+
+/// VLAN subinterface config for multi-VLAN DHCP mode.
+#[derive(Clone, serde::Deserialize)]
+struct VlanIfaceConfig {
+    iface: String,
+    gateway: std::net::Ipv4Addr,
+}
+
+/// Parse optional VLAN config from `HERMITSHELL_VLAN_CONFIG` env var.
+/// Returns `None` when the var is absent (non-VLAN mode).
+fn parse_vlan_config() -> Option<Vec<VlanIfaceConfig>> {
+    let json = std::env::var("HERMITSHELL_VLAN_CONFIG").ok()?;
+    let configs: Vec<VlanIfaceConfig> = serde_json::from_str(&json)
+        .map_err(|e| error!(error = %e, "failed to parse HERMITSHELL_VLAN_CONFIG"))
+        .ok()?;
+    if configs.is_empty() {
+        return None;
+    }
+    Some(configs)
+}
 fn agent_socket() -> String {
     let run_dir = std::env::var("HERMITSHELL_RUN_DIR").unwrap_or_else(|_| "/run/hermitshell".into());
     format!("{}/dhcp.sock", run_dir)
@@ -135,31 +155,79 @@ fn main() -> Result<()> {
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
 
+    if let Some(vlan_configs) = parse_vlan_config() {
+        // VLAN mode: spawn one DHCPv4 thread per VLAN subinterface
+        info!(count = vlan_configs.len(), "VLAN mode: binding DHCP to VLAN subinterfaces");
+
+        let mut handles = Vec::new();
+        for cfg in vlan_configs {
+            let handle = std::thread::Builder::new()
+                .name(format!("dhcpv4-{}", cfg.iface))
+                .spawn(move || {
+                    let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
+                        .expect("failed to create DHCPv4 socket");
+                    sock.set_reuse_address(true).expect("SO_REUSEADDR");
+                    sock.set_broadcast(true).expect("SO_BROADCAST");
+                    sock.bind_device(Some(cfg.iface.as_bytes())).expect("SO_BINDTODEVICE");
+                    sock.bind(&SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 67).into())
+                        .expect("bind :67");
+                    let udp: UdpSocket = sock.into();
+                    info!(iface = %cfg.iface, gateway = %cfg.gateway, "DHCP VLAN listener started");
+                    run_dhcpv4_server(udp, cfg.gateway, &cfg.iface);
+                })
+                .context("failed to spawn DHCPv4 VLAN thread")?;
+            handles.push(handle);
+        }
+
+        // Spawn DHCPv6 on the parent interface
+        let v6_iface = lan_iface.clone();
+        std::thread::Builder::new()
+            .name("dhcpv6".into())
+            .spawn(move || {
+                if let Err(e) = run_dhcpv6_server(&v6_iface) {
+                    error!(error = %e, "DHCPv6 server thread exited with error");
+                }
+            })
+            .context("failed to spawn DHCPv6 thread")?;
+
+        // Wait for all threads (they run forever)
+        for h in handles {
+            h.join().ok();
+        }
+    } else {
+        // Non-VLAN mode: single DHCPv4 socket on the parent interface
+        let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+        sock.set_reuse_address(true)?;
+        sock.set_broadcast(true)?;
+        sock.bind_device(Some(lan_iface.as_bytes()))?;
+        sock.bind(&SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 67).into())?;
+        let udp: UdpSocket = sock.into();
+
+        info!(iface = %lan_iface, "hermitshell-dhcp listening on 0.0.0.0:67");
+
+        // Spawn DHCPv6 server thread
+        let v6_iface = lan_iface.clone();
+        std::thread::Builder::new()
+            .name("dhcpv6".into())
+            .spawn(move || {
+                if let Err(e) = run_dhcpv6_server(&v6_iface) {
+                    error!(error = %e, "DHCPv6 server thread exited with error");
+                }
+            })
+            .context("failed to spawn DHCPv6 thread")?;
+
+        run_dhcpv4_server(udp, server_ip(), &lan_iface);
+    }
+
+    Ok(())
+}
+
+/// Run the DHCPv4 receive loop on a single UDP socket.
+///
+/// `gateway` is the server IP to advertise in DHCP responses (router, DNS, server-id).
+/// In non-VLAN mode this is `server_ip()`; in VLAN mode each subinterface has its own.
+fn run_dhcpv4_server(udp: UdpSocket, gateway: Ipv4Addr, iface_name: &str) {
     let mut agent = AgentConn::new();
-
-    let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
-    sock.set_reuse_address(true)?;
-    sock.set_broadcast(true)?;
-
-    sock.bind_device(Some(lan_iface.as_bytes()))?;
-
-    sock.bind(&SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 67).into())?;
-
-    let udp: UdpSocket = sock.into();
-
-    info!(iface = %lan_iface, "hermitshell-dhcp listening on 0.0.0.0:67");
-
-    // Spawn DHCPv6 server thread
-    let v6_iface = lan_iface.clone();
-    std::thread::Builder::new()
-        .name("dhcpv6".into())
-        .spawn(move || {
-            if let Err(e) = run_dhcpv6_server(&v6_iface) {
-                error!(error = %e, "DHCPv6 server thread exited with error");
-            }
-        })
-        .context("failed to spawn DHCPv6 thread")?;
-
     let mut buf = [0u8; 1500];
     let mut discover_times: LruCache<String, Instant> = LruCache::new(NonZeroUsize::new(10_000).expect("nonzero constant"));
 
@@ -167,7 +235,7 @@ fn main() -> Result<()> {
         let (len, _addr) = match udp.recv_from(&mut buf) {
             Ok((len, addr)) => (len, addr),
             Err(e) => {
-                error!(error = %e, "DHCP recv error");
+                error!(iface = %iface_name, error = %e, "DHCP recv error");
                 continue;
             }
         };
@@ -179,11 +247,11 @@ fn main() -> Result<()> {
         }) {
             Ok(Ok(m)) => m,
             Ok(Err(e)) => {
-                warn!(error = %e, "DHCP decode error");
+                warn!(iface = %iface_name, error = %e, "DHCP decode error");
                 continue;
             }
             Err(_) => {
-                warn!(len = len, "DHCP decode panic from malformed packet");
+                warn!(iface = %iface_name, len = len, "DHCP decode panic from malformed packet");
                 continue;
             }
         };
@@ -195,14 +263,14 @@ fn main() -> Result<()> {
         let mac = format_mac(msg.chaddr());
 
         if !is_valid_mac(msg.chaddr()) {
-            warn!(mac = %mac, "DHCP packet from invalid MAC, dropping");
+            warn!(iface = %iface_name, mac = %mac, "DHCP packet from invalid MAC, dropping");
             continue;
         }
 
         let msg_type = match msg.opts().get(dhcproto::v4::OptionCode::MessageType) {
             Some(DhcpOption::MessageType(mt)) => *mt,
             _ => {
-                warn!(mac = %mac, "DHCP packet missing message type");
+                warn!(iface = %iface_name, mac = %mac, "DHCP packet missing message type");
                 continue;
             }
         };
@@ -212,47 +280,42 @@ fn main() -> Result<()> {
                 if let Some(last) = discover_times.get(&mac)
                     && last.elapsed().as_secs() < 3
                 {
-                    warn!(mac = %mac, "DHCPDISCOVER rate-limited");
+                    warn!(iface = %iface_name, mac = %mac, "DHCPDISCOVER rate-limited");
                     continue;
                 }
-                info!(mac = %mac, "DHCPDISCOVER");
-                match handle_discover(&mut agent, &msg, &mac) {
+                info!(iface = %iface_name, mac = %mac, "DHCPDISCOVER");
+                match handle_discover(&mut agent, &msg, &mac, gateway) {
                     Ok(resp) => {
                         discover_times.put(mac.clone(), Instant::now());
                         resp
                     }
                     Err(e) => {
-                        error!(mac = %mac, error = %e, "error handling DISCOVER");
+                        error!(iface = %iface_name, mac = %mac, error = %e, "error handling DISCOVER");
                         continue;
                     }
                 }
             }
             MessageType::Request => {
-                info!(mac = %mac, "DHCPREQUEST");
-                match handle_request(&mut agent, &msg, &mac) {
+                info!(iface = %iface_name, mac = %mac, "DHCPREQUEST");
+                match handle_request(&mut agent, &msg, &mac, gateway) {
                     Ok(Some(resp)) => resp,
                     Ok(None) => continue,
                     Err(e) => {
-                        error!(mac = %mac, error = %e, "error handling REQUEST");
+                        error!(iface = %iface_name, mac = %mac, error = %e, "error handling REQUEST");
                         continue;
                     }
                 }
             }
             MessageType::Decline => {
-                warn!(mac = %mac, "DHCPDECLINE — client detected address conflict");
-                // Note: In our /32 point-to-point model, address conflicts indicate
-                // a serious issue (duplicate MAC or rogue DHCP). Log for investigation.
+                warn!(iface = %iface_name, mac = %mac, "DHCPDECLINE — client detected address conflict");
                 continue;
             }
             MessageType::Release => {
-                info!(mac = %mac, "DHCPRELEASE");
-                // In our model, addresses are MAC-bound and persistent.
-                // We don't need to free them — just log.
+                info!(iface = %iface_name, mac = %mac, "DHCPRELEASE");
                 continue;
             }
             MessageType::Inform => {
-                info!(mac = %mac, "DHCPINFORM");
-                // Respond with config options (DNS, routes) but no lease
+                info!(iface = %iface_name, mac = %mac, "DHCPINFORM");
                 let mut resp = Message::default();
                 resp.set_opcode(Opcode::BootReply);
                 resp.set_xid(msg.xid());
@@ -263,13 +326,13 @@ fn main() -> Result<()> {
                 resp.opts_mut()
                     .insert(DhcpOption::MessageType(MessageType::Ack));
                 resp.opts_mut()
-                    .insert(DhcpOption::ServerIdentifier(server_ip()));
+                    .insert(DhcpOption::ServerIdentifier(gateway));
                 resp.opts_mut()
-                    .insert(DhcpOption::DomainNameServer(vec![server_ip()]));
+                    .insert(DhcpOption::DomainNameServer(vec![gateway]));
                 resp
             }
             other => {
-                debug!(mac = %mac, msg_type = ?other, "DHCP message ignored");
+                debug!(iface = %iface_name, mac = %mac, msg_type = ?other, "DHCP message ignored");
                 continue;
             }
         };
@@ -278,13 +341,13 @@ fn main() -> Result<()> {
         let mut enc_buf = Vec::new();
         let mut encoder = dhcproto::encoder::Encoder::new(&mut enc_buf);
         if let Err(e) = response.encode(&mut encoder) {
-            error!(error = %e, "DHCP encode error");
+            error!(iface = %iface_name, error = %e, "DHCP encode error");
             continue;
         }
 
         let dest = SocketAddrV4::new(Ipv4Addr::BROADCAST, 68);
         if let Err(e) = udp.send_to(&enc_buf, dest) {
-            error!(error = %e, "DHCP send error");
+            error!(iface = %iface_name, error = %e, "DHCP send error");
         }
     }
 }
@@ -316,30 +379,30 @@ fn is_valid_mac(chaddr: &[u8]) -> bool {
     true
 }
 
-fn build_response(request: &Message, msg_type: MessageType, yiaddr: Ipv4Addr) -> Message {
+fn build_response(request: &Message, msg_type: MessageType, yiaddr: Ipv4Addr, gateway: Ipv4Addr) -> Message {
     let mut resp = Message::default();
     resp.set_opcode(Opcode::BootReply);
     resp.set_xid(request.xid());
     resp.set_flags(request.flags());
     resp.set_yiaddr(yiaddr);
-    resp.set_siaddr(server_ip());
+    resp.set_siaddr(gateway);
     resp.set_giaddr(request.giaddr());
     resp.set_chaddr(request.chaddr());
     resp.opts_mut()
         .insert(DhcpOption::MessageType(msg_type));
     resp.opts_mut()
-        .insert(DhcpOption::ServerIdentifier(server_ip()));
+        .insert(DhcpOption::ServerIdentifier(gateway));
     resp.opts_mut()
         .insert(DhcpOption::AddressLeaseTime(LEASE_TIME));
     resp.opts_mut()
         .insert(DhcpOption::SubnetMask(Ipv4Addr::new(255, 255, 255, 255)));
     resp.opts_mut()
-        .insert(DhcpOption::Router(vec![server_ip()]));
+        .insert(DhcpOption::Router(vec![gateway]));
     resp
 }
 
 /// Handle DHCPDISCOVER: IPC to agent for subnet allocation, respond with DHCPOFFER.
-fn handle_discover(agent: &mut AgentConn, request: &Message, mac: &str) -> Result<Message> {
+fn handle_discover(agent: &mut AgentConn, request: &Message, mac: &str, gateway: Ipv4Addr) -> Result<Message> {
     let hostname = match request.opts().get(dhcproto::v4::OptionCode::Hostname) {
         Some(DhcpOption::Hostname(h)) => {
             let clean = sanitize_hostname(h);
@@ -390,27 +453,27 @@ fn handle_discover(agent: &mut AgentConn, request: &Message, mac: &str) -> Resul
         info!(mac = %mac, ip = %device_ip_str, "known device, offering existing");
     }
 
-    let mut msg = build_response(request, MessageType::Offer, device_ip);
+    let mut msg = build_response(request, MessageType::Offer, device_ip, gateway);
 
     msg.opts_mut()
-        .insert(DhcpOption::DomainNameServer(vec![server_ip()]));
+        .insert(DhcpOption::DomainNameServer(vec![gateway]));
 
     // Option 121: classless static routes for /32 point-to-point addressing
     msg.opts_mut().insert(DhcpOption::ClasslessStaticRoute(vec![
         // On-link route to gateway via 0.0.0.0 (directly connected)
-        (Ipv4Net::new(server_ip(), 32).unwrap(), Ipv4Addr::UNSPECIFIED),
+        (Ipv4Net::new(gateway, 32).unwrap(), Ipv4Addr::UNSPECIFIED),
         // Default route via gateway
-        (Ipv4Net::new(Ipv4Addr::UNSPECIFIED, 0).unwrap(), server_ip()),
+        (Ipv4Net::new(Ipv4Addr::UNSPECIFIED, 0).unwrap(), gateway),
     ]));
 
     Ok(msg)
 }
 
 /// Handle DHCPREQUEST (v4): verify requested IP, respond with DHCPACK, fire-and-forget provision.
-fn handle_request(agent: &mut AgentConn, request: &Message, mac: &str) -> Result<Option<Message>> {
+fn handle_request(agent: &mut AgentConn, request: &Message, mac: &str, gateway: Ipv4Addr) -> Result<Option<Message>> {
     // H11: Check Option 54 (Server Identifier) — silently ignore if for another server
     if let Some(DhcpOption::ServerIdentifier(sid)) = request.opts().get(dhcproto::v4::OptionCode::ServerIdentifier)
-        && *sid != server_ip()
+        && *sid != gateway
     {
         debug!(mac = %mac, server_id = %sid, "DHCPREQUEST for another server, ignoring");
         return Ok(None);
@@ -484,21 +547,21 @@ fn handle_request(agent: &mut AgentConn, request: &Message, mac: &str) -> Result
         nak.opts_mut()
             .insert(DhcpOption::MessageType(MessageType::Nak));
         nak.opts_mut()
-            .insert(DhcpOption::ServerIdentifier(server_ip()));
+            .insert(DhcpOption::ServerIdentifier(gateway));
         return Ok(Some(nak));
     }
 
-    let mut msg = build_response(request, MessageType::Ack, assigned_ip);
+    let mut msg = build_response(request, MessageType::Ack, assigned_ip, gateway);
 
     msg.opts_mut()
-        .insert(DhcpOption::DomainNameServer(vec![server_ip()]));
+        .insert(DhcpOption::DomainNameServer(vec![gateway]));
 
     // Option 121: classless static routes for /32 point-to-point addressing
     msg.opts_mut().insert(DhcpOption::ClasslessStaticRoute(vec![
         // On-link route to gateway via 0.0.0.0 (directly connected)
-        (Ipv4Net::new(server_ip(), 32).unwrap(), Ipv4Addr::UNSPECIFIED),
+        (Ipv4Net::new(gateway, 32).unwrap(), Ipv4Addr::UNSPECIFIED),
         // Default route via gateway
-        (Ipv4Net::new(Ipv4Addr::UNSPECIFIED, 0).unwrap(), server_ip()),
+        (Ipv4Net::new(Ipv4Addr::UNSPECIFIED, 0).unwrap(), gateway),
     ]));
 
     info!(
