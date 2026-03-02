@@ -9,42 +9,6 @@ use tracing::{debug, error, info};
 use crate::db::Db;
 use crate::paths;
 
-/// Well-known DoH resolver IPs to block in nftables (for bypass prevention).
-#[allow(dead_code)]
-pub const DOH_RESOLVER_IPS_V4: &[&str] = &[
-    "1.1.1.1",
-    "1.0.0.1", // Cloudflare
-    "8.8.8.8",
-    "8.8.4.4", // Google
-    "9.9.9.9",
-    "149.112.112.112", // Quad9
-    "208.67.222.222",
-    "208.67.220.220", // OpenDNS
-    "94.140.14.14",
-    "94.140.15.15", // AdGuard
-    "185.228.168.168",
-    "185.228.169.168", // CleanBrowsing
-    "45.90.28.0",
-    "45.90.30.0", // NextDNS
-];
-
-/// Well-known DoH resolver IPv6 addresses to block in nftables (for bypass prevention).
-#[allow(dead_code)]
-pub const DOH_RESOLVER_IPS_V6: &[&str] = &[
-    "2606:4700:4700::1111",
-    "2606:4700:4700::1001", // Cloudflare
-    "2001:4860:4860::8888",
-    "2001:4860:4860::8844", // Google
-    "2620:fe::fe",
-    "2620:fe::9", // Quad9
-    "2620:119:35::35",
-    "2620:119:53::53", // OpenDNS
-    "2a10:50c0::ad1:ff",
-    "2a10:50c0::ad2:ff", // AdGuard
-    "2a0d:2a00:1::1",
-    "2a0d:2a00:2::1", // CleanBrowsing
-];
-
 /// Well-known DoH resolver domains to block in Unbound.
 pub const DOH_RESOLVER_DOMAINS: &[&str] = &[
     "dns.google",
