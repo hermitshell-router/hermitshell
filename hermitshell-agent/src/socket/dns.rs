@@ -296,3 +296,70 @@ pub(super) fn handle_remove_dns_blocklist(
     let _ = mgr.reload();
     Response::ok()
 }
+
+pub(super) fn handle_set_dns_forward_enabled(
+    req: &Request,
+    db: &Arc<Mutex<Db>>,
+    unbound: &Arc<Mutex<UnboundManager>>,
+) -> Response {
+    let Some(id) = req.id else {
+        return Response::err("id required");
+    };
+    let Some(enabled) = req.enabled else {
+        return Response::err("enabled required (true or false)");
+    };
+    let db_guard = db.lock().unwrap();
+    if let Err(e) = db_guard.set_dns_forward_zone_enabled(id, enabled) {
+        return Response::err(&e.to_string());
+    }
+    drop(db_guard);
+    let mut mgr = unbound.lock().unwrap();
+    let _ = mgr.write_config(db);
+    let _ = mgr.reload();
+    Response::ok()
+}
+
+pub(super) fn handle_set_dns_rule_enabled(
+    req: &Request,
+    db: &Arc<Mutex<Db>>,
+    unbound: &Arc<Mutex<UnboundManager>>,
+) -> Response {
+    let Some(id) = req.id else {
+        return Response::err("id required");
+    };
+    let Some(enabled) = req.enabled else {
+        return Response::err("enabled required (true or false)");
+    };
+    let db_guard = db.lock().unwrap();
+    if let Err(e) = db_guard.set_dns_custom_rule_enabled(id, enabled) {
+        return Response::err(&e.to_string());
+    }
+    drop(db_guard);
+    let mut mgr = unbound.lock().unwrap();
+    let _ = mgr.write_config(db);
+    let _ = mgr.reload();
+    Response::ok()
+}
+
+pub(super) fn handle_set_dns_blocklist_enabled(
+    req: &Request,
+    db: &Arc<Mutex<Db>>,
+    unbound: &Arc<Mutex<UnboundManager>>,
+) -> Response {
+    let Some(id) = req.id else {
+        return Response::err("id required");
+    };
+    let Some(enabled) = req.enabled else {
+        return Response::err("enabled required (true or false)");
+    };
+    let db_guard = db.lock().unwrap();
+    if let Err(e) = db_guard.set_dns_blocklist_enabled(id, enabled) {
+        return Response::err(&e.to_string());
+    }
+    drop(db_guard);
+    let mut mgr = unbound.lock().unwrap();
+    let _ = mgr.download_blocklists(db);
+    let _ = mgr.write_config(db);
+    let _ = mgr.reload();
+    Response::ok()
+}

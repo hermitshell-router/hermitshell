@@ -86,7 +86,7 @@ const WEB_ALLOWED_METHODS: &[&str] = &[
     "wifi_kick_client", "wifi_block_client", "wifi_unblock_client",
     "wifi_get_ssids", "wifi_set_ssid", "wifi_delete_ssid",
     "wifi_get_radios", "wifi_set_radio",
-    "wifi_set_ssid_vlan", "wifi_get_ssid_vlans",
+    "wifi_set_ssid_vlan", "wifi_get_ssid_vlans", "wifi_get_ap_status",
     "check_update", "apply_update",
     "get_setup_state",
     "setup_wan_config", "set_hostname", "set_timezone", "setup_set_dns",
@@ -100,9 +100,9 @@ const WEB_ALLOWED_METHODS: &[&str] = &[
     "list_mdns_services",
     "apply_config", "get_full_config", "set_api_key",
     "get_dns_config", "set_dns_config",
-    "list_dns_forwards", "add_dns_forward", "remove_dns_forward",
-    "list_dns_rules", "add_dns_rule", "remove_dns_rule",
-    "list_dns_blocklists", "add_dns_blocklist", "remove_dns_blocklist",
+    "list_dns_forwards", "add_dns_forward", "remove_dns_forward", "set_dns_forward_enabled",
+    "list_dns_rules", "add_dns_rule", "remove_dns_rule", "set_dns_rule_enabled",
+    "list_dns_blocklists", "add_dns_blocklist", "remove_dns_blocklist", "set_dns_blocklist_enabled",
     "vlan_enable", "vlan_disable", "vlan_status",
     "switch_add", "switch_remove", "switch_list", "switch_set_uplink",
     "switch_test", "switch_ports", "switch_provision_vlans",
@@ -422,7 +422,8 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                             "wifi_get_ssids" | "wifi_set_ssid" | "wifi_delete_ssid"
                             | "wifi_get_radios" | "wifi_set_radio"
                             | "wifi_set_ssid_vlan" | "wifi_get_ssid_vlans"
-                            | "wifi_kick_client" | "wifi_block_client" | "wifi_unblock_client" => {
+                            | "wifi_kick_client" | "wifi_block_client" | "wifi_unblock_client"
+                            | "wifi_get_ap_status" => {
                                 wifi::handle_wifi_async(&req, &db).await
                             }
                             "switch_test" | "switch_ports" | "switch_provision_vlans" => {
@@ -574,6 +575,9 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "list_dns_blocklists" => dns::handle_list_dns_blocklists(&req, db),
         "add_dns_blocklist" => dns::handle_add_dns_blocklist(&req, db, unbound),
         "remove_dns_blocklist" => dns::handle_remove_dns_blocklist(&req, db, unbound),
+        "set_dns_forward_enabled" => dns::handle_set_dns_forward_enabled(&req, db, unbound),
+        "set_dns_rule_enabled" => dns::handle_set_dns_rule_enabled(&req, db, unbound),
+        "set_dns_blocklist_enabled" => dns::handle_set_dns_blocklist_enabled(&req, db, unbound),
         "vlan_enable" => vlan::handle_vlan_enable(&req, db),
         "vlan_disable" => vlan::handle_vlan_disable(&req, db),
         "vlan_status" => vlan::handle_vlan_status(&req, db),

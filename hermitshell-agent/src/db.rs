@@ -1957,7 +1957,6 @@ impl Db {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn set_dns_forward_zone_enabled(&self, id: i64, enabled: bool) -> Result<()> {
         self.conn.execute(
             "UPDATE dns_forward_zones SET enabled = ?1 WHERE id = ?2",
@@ -1997,7 +1996,6 @@ impl Db {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn set_dns_custom_rule_enabled(&self, id: i64, enabled: bool) -> Result<()> {
         self.conn.execute(
             "UPDATE dns_custom_rules SET enabled = ?1 WHERE id = ?2",
@@ -2037,7 +2035,6 @@ impl Db {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn set_dns_blocklist_enabled(&self, id: i64, enabled: bool) -> Result<()> {
         self.conn.execute(
             "UPDATE dns_blocklists SET enabled = ?1 WHERE id = ?2",
