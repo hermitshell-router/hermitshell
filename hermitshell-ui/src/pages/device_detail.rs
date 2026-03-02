@@ -109,6 +109,45 @@ pub fn DeviceDetail() -> impl IntoView {
                                 </div>
                             </div>
 
+                            // VLAN & Switch info (shown when VLAN mode is enabled)
+                            {
+                                let vlan_info = client::get_vlan_status().ok();
+                                let vlan_enabled = vlan_info.as_ref().map(|(e, _)| *e).unwrap_or(false);
+                                if vlan_enabled {
+                                    let vlans = vlan_info.map(|(_, v)| v).unwrap_or_default();
+                                    let device_vlan = vlans.iter().find(|v| v.group == d.device_group);
+                                    let switch_name = d.switch_id.as_ref().and_then(|sid| {
+                                        client::list_switches().ok().and_then(|switches| {
+                                            switches.into_iter().find(|s| s.id == *sid).map(|s| s.name)
+                                        })
+                                    });
+
+                                    view! {
+                                        <h2 class="section-header">"VLAN & Switch"</h2>
+                                        <div class="detail-grid">
+                                            <div class="detail-item">
+                                                <div class="detail-label">"VLAN ID"</div>
+                                                <div class="detail-value">{device_vlan.map(|v| v.vlan_id.to_string()).unwrap_or_else(|| "\u{2014}".to_string())}</div>
+                                            </div>
+                                            <div class="detail-item">
+                                                <div class="detail-label">"VLAN Subnet"</div>
+                                                <div class="detail-value">{device_vlan.map(|v| v.subnet.clone()).unwrap_or_else(|| "\u{2014}".to_string())}</div>
+                                            </div>
+                                            <div class="detail-item">
+                                                <div class="detail-label">"Switch"</div>
+                                                <div class="detail-value">{switch_name.unwrap_or_else(|| "\u{2014}".to_string())}</div>
+                                            </div>
+                                            <div class="detail-item">
+                                                <div class="detail-label">"Switch Port"</div>
+                                                <div class="detail-value">{d.switch_port.clone().unwrap_or_else(|| "\u{2014}".to_string())}</div>
+                                            </div>
+                                        </div>
+                                    }.into_any()
+                                } else {
+                                    view! { <span></span> }.into_any()
+                                }
+                            }
+
                             // Bandwidth history chart and top destinations
                             {
                                 let bw_mac = d.mac.clone();
