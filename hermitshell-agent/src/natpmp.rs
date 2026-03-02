@@ -22,8 +22,6 @@ const PCP_UNSUPP_VERSION: u8 = 1;
 const PCP_NOT_AUTHORIZED: u8 = 2;
 const PCP_MALFORMED_REQUEST: u8 = 3;
 const PCP_UNSUPP_OPCODE: u8 = 4;
-#[allow(dead_code)]
-const PCP_UNSUPP_OPTION: u8 = 5;
 const PCP_NETWORK_FAILURE: u8 = 7;
 const PCP_NO_RESOURCES: u8 = 8;
 const PCP_UNSUPP_PROTOCOL: u8 = 9;
