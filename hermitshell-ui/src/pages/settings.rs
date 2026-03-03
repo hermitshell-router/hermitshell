@@ -136,7 +136,7 @@ pub fn Settings() -> impl IntoView {
                                         <div class="settings-row">
                                             <span class="settings-label">"Mode"</span>
                                             <span class="settings-value">
-                                                <label style="margin-right:1rem">
+                                                <label class="mr-md">
                                                     <input type="radio" name="wan_mode" value="dhcp" checked={!is_static} />
                                                     " DHCP"
                                                 </label>
@@ -296,20 +296,20 @@ pub fn Settings() -> impl IntoView {
 
                             <div class="settings-section">
                                 <h3>"Backup & Restore"</h3>
-                                <div class="actions-bar" style="flex-direction:column;gap:1rem;align-items:flex-start">
+                                <div class="flex-col">
                                     <div>
-                                        <h4 style="margin:0 0 0.5rem 0">"Download Backup"</h4>
-                                        <form method="post" action="/api/backup/config" style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center">
-                                            <label style="display:flex;align-items:center;gap:0.25rem">
+                                        <h4 class="mb-sm">"Download Backup"</h4>
+                                        <form method="post" action="/api/backup/config" class="flex-row-wrap">
+                                            <label class="backup-label">
                                                 <input type="checkbox" name="secrets" value="1" id="backup-secrets-cb" />
                                                 " Include secrets"
                                             </label>
                                             <div id="backup-passphrase-row" style="display:none;align-items:center;gap:0.25rem">
-                                                <label style="display:flex;align-items:center;gap:0.25rem">
+                                                <label class="backup-label">
                                                     <input type="checkbox" id="backup-encrypt-cb" />
                                                     " Encrypt"
                                                 </label>
-                                                <input type="password" name="passphrase" placeholder="Passphrase" style="width:12rem" disabled />
+                                                <input type="password" name="passphrase" placeholder="Passphrase" class="input-md" disabled />
                                             </div>
                                             <button type="submit" class="btn btn-primary btn-sm">"Download"</button>
                                         </form>
@@ -323,10 +323,10 @@ pub fn Settings() -> impl IntoView {
                                         "</script>
                                     </div>
                                     <div>
-                                        <h4 style="margin:0 0 0.5rem 0">"Restore from Backup"</h4>
-                                        <form method="post" action="/api/restore/config" enctype="multipart/form-data" style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center">
+                                        <h4 class="mb-sm">"Restore from Backup"</h4>
+                                        <form method="post" action="/api/restore/config" enctype="multipart/form-data" class="flex-row-wrap">
                                             <input type="file" name="file" accept=".json" required />
-                                            <input type="password" name="passphrase" placeholder="Passphrase (if encrypted)" style="width:12rem" />
+                                            <input type="password" name="passphrase" placeholder="Passphrase (if encrypted)" class="input-md" />
                                             <button type="submit" class="btn btn-primary btn-sm">"Restore"</button>
                                         </form>
                                     </div>
@@ -398,10 +398,10 @@ pub fn Settings() -> impl IntoView {
                                 }}
                                 {if check_enabled {
                                     view! {
-                                        <div class="settings-row" style="margin-top:0.5rem">
+                                        <div class="settings-row mt-sm">
                                             <span class="settings-label">"Auto-update"</span>
                                             <span class="settings-value">
-                                                <ActionForm action=auto_update_action attr:style="display:inline">
+                                                <ActionForm action=auto_update_action attr:class="inline-form">
                                                     <input type="hidden" name="enabled" value={if auto_update { "false" } else { "true" }} />
                                                     <button type="submit" class="btn btn-sm">
                                                         {if auto_update { "Disable" } else { "Enable" }}
@@ -444,7 +444,7 @@ pub fn Settings() -> impl IntoView {
                                                     <td>{r.mac.clone()}</td>
                                                     <td>{r.subnet_id}</td>
                                                     <td>
-                                                        <ActionForm action=remove_action attr:style="display:inline">
+                                                        <ActionForm action=remove_action attr:class="inline-form">
                                                             <input type="hidden" name="mac" value={mac} />
                                                             <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
                                                         </ActionForm>
@@ -568,7 +568,7 @@ pub fn Settings() -> impl IntoView {
                                         <button type="submit" class="btn btn-primary btn-sm">"Save runZero Settings"</button>
                                     </div>
                                 </ActionForm>
-                                <ActionForm action=sync_action attr:style="margin-top: 0.5rem;">
+                                <ActionForm action=sync_action attr:class="mt-sm">
                                     <button type="submit" class="btn btn-sm">"Sync Now"</button>
                                 </ActionForm>
                                 <ErrorToast value=runzero_action.value() />
@@ -623,7 +623,7 @@ pub fn Settings() -> impl IntoView {
                                 <div class="settings-row">
                                     <span class="settings-label">"Analyzer"</span>
                                     <span class="settings-value">
-                                        <ActionForm action=analyzer_action attr:style="display:inline">
+                                        <ActionForm action=analyzer_action attr:class="inline-form">
                                             <input type="hidden" name="enabled" value={if enabled == "true" { "false" } else { "true" }} />
                                             <button type="submit" class="btn btn-sm">
                                                 {if enabled == "true" { "Disable" } else { "Enable" }}
@@ -652,7 +652,7 @@ pub fn Settings() -> impl IntoView {
                                         <div class="settings-row">
                                             <span class="settings-label">{label}</span>
                                             <span class="settings-value">
-                                                <ActionForm action=rule_action attr:style="display:inline">
+                                                <ActionForm action=rule_action attr:class="inline-form">
                                                     <input type="hidden" name="rule" value={key} />
                                                     <input type="hidden" name="enabled" value={toggle_val} />
                                                     <button type="submit" class="btn btn-sm">
@@ -712,7 +712,7 @@ pub fn Settings() -> impl IntoView {
                                         <button type="submit" class="btn btn-primary btn-sm">"Save"</button>
                                     </div>
                                 </ActionForm>
-                                <ActionForm action=test_url_action attr:style="margin-top: 0.5rem;">
+                                <ActionForm action=test_url_action attr:class="mt-sm">
                                     <div class="settings-row">
                                         <span class="settings-label">"Speed Test URL"</span>
                                         <span class="settings-value">
@@ -723,7 +723,7 @@ pub fn Settings() -> impl IntoView {
                                         <button type="submit" class="btn btn-primary btn-sm">"Save Test URL"</button>
                                     </div>
                                 </ActionForm>
-                                <ActionForm action=speed_test_action attr:style="margin-top: 0.5rem;">
+                                <ActionForm action=speed_test_action attr:class="mt-sm">
                                     <button type="submit" class="btn btn-sm">"Run Speed Test"</button>
                                 </ActionForm>
                                 <ErrorToast value=qos_action.value() />
