@@ -63,14 +63,14 @@ pub fn DeviceDetail() -> impl IntoView {
 
                         view! {
                             <div class="detail-grid">
-                                <div class="detail-item" style="grid-column: 1 / -1">
+                                <div class="detail-item full-span">
                                     <div class="detail-label">"Nickname"</div>
                                     <div class="detail-value">
-                                        <ActionForm action=set_nickname_action attr:style="display:flex;gap:0.5rem;align-items:center">
+                                        <ActionForm action=set_nickname_action attr:class="flex-row">
                                             <input type="hidden" name="mac" value={mac_for_nickname} />
                                             <input type="text" name="nickname" value={d.nickname.clone().unwrap_or_default()}
                                                    placeholder="Enter nickname" maxlength="64"
-                                                   style="background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:0.375rem;padding:0.375rem 0.5rem;font-size:0.875rem" />
+                                                   />
                                             <button type="submit" class="btn btn-primary btn-sm">"Save"</button>
                                         </ActionForm>
                                     </div>
@@ -253,7 +253,7 @@ pub fn DeviceDetail() -> impl IntoView {
                                         let mac_suggest = d.mac.clone();
                                         let suggest_action = ServerAction::<SetGroup>::new();
                                         view! {
-                                            <div class="settings-section" style="background:var(--bg-highlight);padding:1rem;border-radius:0.5rem;margin:1rem 0">
+                                            <div class="settings-section-highlight">
                                                 <p>"This device looks like a " <strong>{rz_type.clone()}</strong> ". Move to " <strong>{group}</strong> "?"</p>
                                                 <ActionForm action=suggest_action>
                                                     <input type="hidden" name="mac" value={mac_suggest} />
@@ -277,7 +277,7 @@ pub fn DeviceDetail() -> impl IntoView {
                             <div class="actions-bar">
                                 {if !is_blocked {
                                     view! {
-                                        <ActionForm action=set_group_action attr:style="display:inline">
+                                        <ActionForm action=set_group_action attr:class="inline-form">
                                             <input type="hidden" name="mac" value={mac_for_group} />
                                             <input type="hidden" name="redirect" value={format!("/devices/{}", mac_redirect)} />
                                             <select name="group">
@@ -297,7 +297,7 @@ pub fn DeviceDetail() -> impl IntoView {
 
                                 {if is_blocked {
                                     view! {
-                                        <ActionForm action=unblock_action attr:style="display:inline">
+                                        <ActionForm action=unblock_action attr:class="inline-form">
                                             <input type="hidden" name="mac" value={mac_for_block_unblock} />
                                             <button type="submit" class="btn btn-primary btn-sm">"Unblock"</button>
                                         </ActionForm>
@@ -322,7 +322,7 @@ pub fn DeviceDetail() -> impl IntoView {
                                     }.into_any()
                                 }}
 
-                                <ActionForm action=reserve_action attr:style="display:inline">
+                                <ActionForm action=reserve_action attr:class="inline-form">
                                     <input type="hidden" name="mac" value={mac_for_reserve} />
                                     <button type="submit" class="btn btn-sm">"Reserve IP"</button>
                                 </ActionForm>

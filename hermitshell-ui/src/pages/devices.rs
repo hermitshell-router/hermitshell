@@ -87,18 +87,18 @@ pub fn DeviceList() -> impl IntoView {
                                                                 .unwrap_or_else(|| "(unknown)".to_string())}
                                                         </a>
                                                         {d.nickname.as_ref().and(d.hostname.as_ref()).map(|h| {
-                                                            view! { <br /><span style="color: var(--text-muted); font-size: 0.75rem">{h.clone()}</span> }
+                                                            view! { <br /><span class="text-muted text-sm">{h.clone()}</span> }
                                                         })}
                                                     </td>
                                                     <td>{d.ipv4.clone().unwrap_or_default()}</td>
-                                                    <td style="color: var(--text-muted); font-size: 0.8125rem;">{mac.clone()}</td>
+                                                    <td class="text-muted">{mac.clone()}</td>
                                                     <td><span class={badge_class}>{group.clone()}</span></td>
                                                     <td>{format_bytes(d.rx_bytes)}</td>
                                                     <td>{format_bytes(d.tx_bytes)}</td>
                                                     <td>
                                                         {if group == "quarantine" {
                                                             view! {
-                                                                <ActionForm action=approve_action attr:style="display:inline">
+                                                                <ActionForm action=approve_action attr:class="inline-form">
                                                                     <input type="hidden" name="mac" value={mac.clone()} />
                                                                     <select name="group">
                                                                         <option value="trusted">"Trusted"</option>
@@ -112,7 +112,7 @@ pub fn DeviceList() -> impl IntoView {
                                                             }.into_any()
                                                         } else if group == "blocked" {
                                                             view! {
-                                                                <ActionForm action=unblock_action attr:style="display:inline">
+                                                                <ActionForm action=unblock_action attr:class="inline-form">
                                                                     <input type="hidden" name="mac" value={mac.clone()} />
                                                                     <button type="submit" class="btn btn-primary btn-sm">"Unblock"</button>
                                                                 </ActionForm>
