@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use crate::components::layout::CspMeta;
 use crate::components::toast::ErrorToast;
 use crate::server_fns::Login;
 
@@ -10,6 +11,7 @@ pub fn Login() -> impl IntoView {
         <html lang="en">
             <head>
                 <meta charset="utf-8" />
+                <CspMeta />
                 <meta name="viewport" content="width=device-width, initial-scale=1" />
                 <title>"Login - HermitShell"</title>
                 <link rel="stylesheet" href="/style.css" />

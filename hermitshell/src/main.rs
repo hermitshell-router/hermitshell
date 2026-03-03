@@ -78,10 +78,8 @@ async fn security_headers_middleware(
         axum::http::header::STRICT_TRANSPORT_SECURITY,
         axum::http::HeaderValue::from_static("max-age=31536000; includeSubDomains"),
     );
-    h.insert(
-        axum::http::header::CONTENT_SECURITY_POLICY,
-        axum::http::HeaderValue::from_static("default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'"),
-    );
+    // CSP is set per-page via <meta http-equiv="Content-Security-Policy"> with
+    // a per-request nonce (see CspMeta component), so no static CSP header here.
     h.insert(
         axum::http::header::X_FRAME_OPTIONS,
         axum::http::HeaderValue::from_static("DENY"),

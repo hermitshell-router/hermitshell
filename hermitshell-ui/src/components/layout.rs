@@ -1,6 +1,20 @@
 use leptos::prelude::*;
+use leptos::nonce::use_nonce;
 use crate::components::toast::SuccessToast;
 use crate::server_fns::Logout;
+
+/// Renders a CSP `<meta>` tag with the per-request nonce for inline scripts.
+#[component]
+pub fn CspMeta() -> impl IntoView {
+    let csp = use_nonce().map(|nonce| {
+        format!(
+            "default-src 'self'; script-src 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'"
+        )
+    });
+    view! {
+        {csp.map(|c| view! { <meta http-equiv="Content-Security-Policy" content=c /> })}
+    }
+}
 
 #[component]
 pub fn Layout(
@@ -31,6 +45,7 @@ pub fn Layout(
         <html lang="en">
             <head>
                 <meta charset="utf-8" />
+                <CspMeta />
                 <meta name="viewport" content="width=device-width, initial-scale=1" />
                 <title>{format!("{} - HermitShell", &title)}</title>
                 <link rel="stylesheet" href="/style.css" />

@@ -901,15 +901,17 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Refactor all inline `style=` attributes to CSS classes in `style.css`. For the dynamic progress bar width in `setup.rs`, use a CSS custom property set via a `style` attribute on a parent element, with `'unsafe-inline'` removed once all other inlines are eliminated. This is a large but straightforward refactor.
 
-## 129. CSP blocks existing inline scripts and event handlers
+## 129. ~~CSP blocks existing inline scripts and event handlers~~ (partially fixed)
 
-**What:** The CSP sets `default-src 'self'` without a separate `script-src` directive, meaning script-src inherits `'self'` which blocks inline scripts. However, the UI contains: (1) an inline `<script>` block in `settings.rs` for backup passphrase toggle logic, and (2) inline `onclick` handlers in `devices.rs` and `device_detail.rs` for dialog show/close. These are silently blocked by CSP in standards-compliant browsers.
+**What:** The CSP previously set `default-src 'self'` as a static HTTP header without a separate `script-src` directive, which blocked all inline scripts including Leptos SSR streaming scripts. This broke `<Suspense>` resolution — pages showed "Loading..." permanently because the browser blocked the inline `<script>` tags that Leptos generates to swap streamed content into the DOM.
 
-**Why:** The CSP was set correctly to block inline scripts. The inline JS was added later for UX convenience without updating the CSP, which is actually the safer failure mode (functionality breaks rather than security weakens).
+**Previous state:** Static CSP header in Axum middleware. No nonce support. Leptos generated nonces on inline scripts but the CSP didn't allow them.
 
-**Risk:** The affected functionality (backup encryption passphrase toggle, block-device confirmation dialogs) does not work in browsers that enforce CSP. Users can still download backups (without the passphrase toggle) and block devices (the ActionForm submit still works, just without the confirmation dialog). This is a fail-safe degradation.
+**Fix applied:** Replaced the static CSP header with a per-request `<meta http-equiv="Content-Security-Policy">` tag that includes the Leptos-generated nonce via `use_nonce()`. The `CspMeta` component renders `script-src 'nonce-{nonce}'` with a fresh 128-bit nonce per request. The static CSP header was removed from the middleware.
 
-**Proper fix:** Move the inline JavaScript to an external file (e.g., `/static/app.js`) served from `'self'`. Replace inline `onclick` handlers with `data-*` attributes and event delegation in the external script. Do NOT add `script-src 'unsafe-inline'` -- that would be a significant security regression.
+**Remaining issue:** The UI still contains inline `onclick` handlers in `devices.rs` and `device_detail.rs` for dialog show/close, and an inline `<script>` in `settings.rs` for backup passphrase toggle. These do not have nonces and are still blocked by CSP. The affected functionality degrades safely (ActionForm submissions still work).
+
+**Proper fix for remaining inline JS:** Move the inline JavaScript to an external file (e.g., `/static/app.js`) served from `'self'`. Replace inline `onclick` handlers with `data-*` attributes and event delegation in the external script.
 
 ---
 
