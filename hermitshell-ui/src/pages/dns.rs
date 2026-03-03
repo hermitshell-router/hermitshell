@@ -59,7 +59,7 @@ pub fn Dns() -> impl IntoView {
                                 </div>
                                 <div class="settings-row">
                                     <span class="settings-label">"Toggle"</span>
-                                    <ActionForm action=ad_action attr:style="display:inline">
+                                    <ActionForm action=ad_action attr:class="inline-form">
                                         <input type="hidden" name="enabled" value={toggle_value} />
                                         <button type="submit" class="btn btn-sm">{toggle_label}</button>
                                     </ActionForm>
@@ -163,14 +163,14 @@ pub fn Dns() -> impl IntoView {
                                                             <td>{bl.url.clone()}</td>
                                                             <td>{bl.tag.clone()}</td>
                                                             <td>
-                                                                <ActionForm action=toggle_action attr:style="display:inline">
+                                                                <ActionForm action=toggle_action attr:class="inline-form">
                                                                     <input type="hidden" name="id" value={id.to_string()} />
                                                                     <input type="hidden" name="enabled" value={new_enabled} />
                                                                     <button type="submit" class={btn_class}>{btn_label}</button>
                                                                 </ActionForm>
                                                             </td>
                                                             <td>
-                                                                <ActionForm action=remove_action attr:style="display:inline">
+                                                                <ActionForm action=remove_action attr:class="inline-form">
                                                                     <input type="hidden" name="id" value={id.to_string()} />
                                                                     <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
                                                                 </ActionForm>
@@ -244,14 +244,14 @@ pub fn Dns() -> impl IntoView {
                                                             <td>{fz.domain.clone()}</td>
                                                             <td>{fz.forward_addr.clone()}</td>
                                                             <td>
-                                                                <ActionForm action=toggle_action attr:style="display:inline">
+                                                                <ActionForm action=toggle_action attr:class="inline-form">
                                                                     <input type="hidden" name="id" value={id.to_string()} />
                                                                     <input type="hidden" name="enabled" value={new_enabled} />
                                                                     <button type="submit" class={btn_class}>{btn_label}</button>
                                                                 </ActionForm>
                                                             </td>
                                                             <td>
-                                                                <ActionForm action=remove_action attr:style="display:inline">
+                                                                <ActionForm action=remove_action attr:class="inline-form">
                                                                     <input type="hidden" name="id" value={id.to_string()} />
                                                                     <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
                                                                 </ActionForm>
@@ -320,14 +320,14 @@ pub fn Dns() -> impl IntoView {
                                                             <td>{rule.record_type.clone()}</td>
                                                             <td>{rule.value.clone()}</td>
                                                             <td>
-                                                                <ActionForm action=toggle_action attr:style="display:inline">
+                                                                <ActionForm action=toggle_action attr:class="inline-form">
                                                                     <input type="hidden" name="id" value={id.to_string()} />
                                                                     <input type="hidden" name="enabled" value={new_enabled} />
                                                                     <button type="submit" class={btn_class}>{btn_label}</button>
                                                                 </ActionForm>
                                                             </td>
                                                             <td>
-                                                                <ActionForm action=remove_action attr:style="display:inline">
+                                                                <ActionForm action=remove_action attr:class="inline-form">
                                                                     <input type="hidden" name="id" value={id.to_string()} />
                                                                     <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
                                                                 </ActionForm>

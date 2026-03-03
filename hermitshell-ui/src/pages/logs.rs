@@ -49,7 +49,7 @@ pub fn Logs() -> impl IntoView {
 
     view! {
         <Layout title="Logs" active_page="logs">
-            <div class="tab-nav" style="margin-bottom: 1rem;">
+            <div class="tab-nav">
                 <a
                     href="/logs"
                     class=move || if !is_dns() { "tab-link active" } else { "tab-link" }
@@ -61,7 +61,7 @@ pub fn Logs() -> impl IntoView {
                 >"DNS Logs"</a>
             </div>
 
-            <form method="get" action="/logs" style="margin-bottom: 1rem;">
+            <form method="get" action="/logs" class="mb-md">
                 {move || {
                     if is_dns() {
                         view! { <input type="hidden" name="tab" value="dns" /> }.into_any()

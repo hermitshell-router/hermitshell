@@ -53,7 +53,7 @@ pub fn Alerts() -> impl IntoView {
     view! {
         <Layout title="Alerts" active_page="alerts">
             <div class="actions-bar">
-                <ActionForm action=ack_all_action attr:style="display:inline">
+                <ActionForm action=ack_all_action attr:class="inline-form">
                     <button type="submit" class="btn btn-sm">"Acknowledge All"</button>
                 </ActionForm>
             </div>
@@ -93,7 +93,7 @@ pub fn Alerts() -> impl IntoView {
                                                     <td>
                                                         {if !acknowledged {
                                                             view! {
-                                                                <ActionForm action=ack_action attr:style="display:inline">
+                                                                <ActionForm action=ack_action attr:class="inline-form">
                                                                     <input type="hidden" name="id" value={id_str} />
                                                                     <button type="submit" class="btn btn-sm">"Ack"</button>
                                                                 </ActionForm>

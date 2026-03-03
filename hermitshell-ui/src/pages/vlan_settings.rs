@@ -37,13 +37,13 @@ pub fn VlanSettings() -> impl IntoView {
                                     <span class="settings-label">"Toggle"</span>
                                     {if enabled {
                                         view! {
-                                            <ActionForm action=disable_action attr:style="display:inline">
+                                            <ActionForm action=disable_action attr:class="inline-form">
                                                 <button type="submit" class="btn btn-sm btn-danger">"Disable"</button>
                                             </ActionForm>
                                         }.into_any()
                                     } else {
                                         view! {
-                                            <ActionForm action=enable_action attr:style="display:inline">
+                                            <ActionForm action=enable_action attr:class="inline-form">
                                                 <button type="submit" class="btn btn-sm btn-primary">"Enable"</button>
                                             </ActionForm>
                                         }.into_any()

@@ -55,7 +55,7 @@ pub fn SetupStep1() -> impl IntoView {
                     <div class="setup-card setup-welcome">
                         <h1>"HermitShell"</h1>
                         <p>"Your network, your rules. No cloud, no controller."</p>
-                        <a href="/setup/2" class="btn btn-primary" style="padding: 0.75rem 2rem; font-size: 1rem;">"Get Started"</a>
+                        <a href="/setup/2" class="btn btn-primary btn-lg">"Get Started"</a>
                     </div>
                 </div>
             </body>
@@ -253,7 +253,7 @@ pub fn SetupStep5() -> impl IntoView {
                             " Quad9 (9.9.9.9)"
                         </label>
                     </div>
-                    <div class="checkbox-group" style="margin-top: 1rem;">
+                    <div class="checkbox-group mt-md">
                         <label>
                             <input type="checkbox" name="ad_blocking" value="on" checked />
                             " Enable ad blocking"
@@ -420,7 +420,7 @@ pub fn SetupStep8() -> impl IntoView {
                                     <ActionForm action=action>
                                         <div class="setup-actions">
                                             <a href="/setup/7" class="setup-back">"Back"</a>
-                                            <button type="submit" class="btn btn-primary" style="padding: 0.75rem 2rem;">"Finish Setup"</button>
+                                            <button type="submit" class="btn btn-primary btn-lg">"Finish Setup"</button>
                                         </div>
                                     </ActionForm>
                                     <ErrorToast value=action.value() />

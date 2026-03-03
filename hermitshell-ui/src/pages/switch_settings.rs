@@ -50,11 +50,11 @@ pub fn SwitchSettings() -> impl IntoView {
                                                             <td>{sw.version.clone()}</td>
                                                             <td><span class={status_class}>{sw.status.clone()}</span></td>
                                                             <td>
-                                                                <ActionForm action=test_action attr:style="display:inline">
+                                                                <ActionForm action=test_action attr:class="inline-form">
                                                                     <input type="hidden" name="name" value={name_for_test} />
                                                                     <button type="submit" class="btn btn-sm">"Test"</button>
                                                                 </ActionForm>
-                                                                <ActionForm action=remove_action attr:style="display:inline">
+                                                                <ActionForm action=remove_action attr:class="inline-form">
                                                                     <input type="hidden" name="name" value={name_for_remove} />
                                                                     <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
                                                                 </ActionForm>

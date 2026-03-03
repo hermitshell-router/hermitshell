@@ -68,7 +68,7 @@ pub fn PortForwarding() -> impl IntoView {
                                                     let toggle_label = if fwd.enabled { "Disable" } else { "Enable" };
                                                     let btn_class = if fwd.enabled { "btn btn-sm" } else { "btn btn-primary btn-sm" };
                                                     view! {
-                                                        <ActionForm action=toggle_action attr:style="display:inline">
+                                                        <ActionForm action=toggle_action attr:class="inline-form">
                                                             <input type="hidden" name="id" value={id.to_string()} />
                                                             <input type="hidden" name="enabled" value={toggle_val} />
                                                             <button type="submit" class={btn_class}>{toggle_label}</button>
@@ -77,7 +77,7 @@ pub fn PortForwarding() -> impl IntoView {
                                                     }}
                                                 </td>
                                                 <td>
-                                                    <ActionForm action=remove_action attr:style="display:inline">
+                                                    <ActionForm action=remove_action attr:class="inline-form">
                                                         <input type="hidden" name="id" value={id.to_string()} />
                                                         <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
                                                     </ActionForm>
@@ -136,7 +136,7 @@ pub fn PortForwarding() -> impl IntoView {
                         view! {
                             <p>"Status: " <strong>{if enabled { "Enabled" } else { "Disabled" }}</strong></p>
                             <p class="text-muted">"Allow trusted devices to create port forwards automatically via UPnP, NAT-PMP, and PCP. Requires agent restart after toggling."</p>
-                            <ActionForm action=upnp_action attr:style="display:inline">
+                            <ActionForm action=upnp_action attr:class="inline-form">
                                 <input type="hidden" name="enabled" value={toggle_value} />
                                 <button type="submit" class={btn_class}>{toggle_label}</button>
                             </ActionForm>
@@ -184,7 +184,7 @@ pub fn PortForwarding() -> impl IntoView {
                                                         <td>{port_end}</td>
                                                         <td>{description}</td>
                                                         <td>
-                                                            <ActionForm action=remove_action attr:style="display:inline">
+                                                            <ActionForm action=remove_action attr:class="inline-form">
                                                                 <input type="hidden" name="id" value={id.to_string()} />
                                                                 <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
                                                             </ActionForm>
