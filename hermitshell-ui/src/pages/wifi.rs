@@ -65,13 +65,13 @@ pub fn Wifi() -> impl IntoView {
                                                     <tr>
                                                         <td>{p.name.clone()}</td>
                                                         <td>{type_label.to_string()}</td>
-                                                        <td style="font-size:0.85em">{p.url.clone()}</td>
+                                                        <td>{p.url.clone()}</td>
                                                         <td>{p.status.clone()}</td>
                                                         <td>{p.ap_count.to_string()}</td>
                                                         <td>
                                                             <a href={format!("/wifi?provider={}", id)} class="btn btn-sm">"Manage SSIDs"</a>
                                                             " "
-                                                            <ActionForm action=remove_provider_action attr:style="display:inline">
+                                                            <ActionForm action=remove_provider_action attr:class="inline-form">
                                                                 <input type="hidden" name="id" value={id2} />
                                                                 <button type="submit" class="btn btn-sm btn-danger">"Remove"</button>
                                                             </ActionForm>
@@ -131,7 +131,7 @@ pub fn Wifi() -> impl IntoView {
                             <input type="password" id="provider-password" name="password" required />
                         </div>
                     </div>
-                    <p class="text-muted" style="margin-top:0.5em;margin-bottom:0.5em;">"For TP-Link EAP (standalone):"</p>
+                    <p class="text-muted my-sm">"For TP-Link EAP (standalone):"</p>
                     <div class="form-grid">
                         <div class="form-group">
                             <label for="provider-mac">"AP MAC Address"</label>
@@ -142,7 +142,7 @@ pub fn Wifi() -> impl IntoView {
                             <input type="text" id="provider-url-eap" name="url" placeholder="192.168.1.100" />
                         </div>
                     </div>
-                    <p class="text-muted" style="margin-top:0.5em;margin-bottom:0.5em;">"For UniFi Controller:"</p>
+                    <p class="text-muted my-sm">"For UniFi Controller:"</p>
                     <div class="form-grid">
                         <div class="form-group">
                             <label for="provider-site">"Site"</label>
@@ -188,7 +188,7 @@ pub fn Wifi() -> impl IntoView {
                                                 view! {
                                                     <tr>
                                                         <td>{ap.name.clone()}</td>
-                                                        <td style="font-family:monospace;font-size:0.85em">{ap.mac.clone()}</td>
+                                                        <td>{ap.mac.clone()}</td>
                                                         <td>{ap.ip.clone()}</td>
                                                         <td>{ap.provider.clone()}</td>
                                                         <td>{ap.status.clone()}</td>
@@ -267,13 +267,13 @@ pub fn Wifi() -> impl IntoView {
                                                 let client_mac = c.mac.clone();
                                                 view! {
                                                     <tr>
-                                                        <td style="font-family:monospace;font-size:0.85em">{c.mac.clone()}</td>
-                                                        <td style="font-family:monospace;font-size:0.85em">{c.ap_mac.clone()}</td>
+                                                        <td>{c.mac.clone()}</td>
+                                                        <td>{c.ap_mac.clone()}</td>
                                                         <td>{c.ssid.clone()}</td>
                                                         <td>{c.band.clone()}</td>
                                                         <td>{rssi_str}</td>
                                                         <td>
-                                                            <ActionForm action=kick_action attr:style="display:inline">
+                                                            <ActionForm action=kick_action attr:class="inline-form">
                                                                 <input type="hidden" name="provider_id" value={pid} />
                                                                 <input type="hidden" name="mac" value={client_mac} />
                                                                 <button type="submit" class="btn btn-warning btn-sm">"Kick"</button>
@@ -315,7 +315,7 @@ fn ProviderDetail(
     );
 
     view! {
-        <div class="ap-detail" style="padding: 1em; background: var(--bg-secondary, #f5f5f5); border-radius: 4px;">
+        <div class="ap-detail">
             <h4>"SSIDs"</h4>
             <Suspense fallback=move || view! { <p>"Loading SSIDs..."</p> }>
                 {move || {
@@ -349,7 +349,7 @@ fn ProviderDetail(
                                                     <td>{if s.hidden { "Yes" } else { "No" }}</td>
                                                     <td>{if s.enabled { "Yes" } else { "No" }}</td>
                                                     <td>
-                                                        <ActionForm action=delete_ssid_action attr:style="display:inline">
+                                                        <ActionForm action=delete_ssid_action attr:class="inline-form">
                                                             <input type="hidden" name="provider_id" value={pid_del} />
                                                             <input type="hidden" name="ssid_name" value={s.ssid_name} />
                                                             <input type="hidden" name="band" value={s.band} />
@@ -428,7 +428,7 @@ fn ApDetail(
     );
 
     view! {
-        <div class="ap-detail" style="padding: 1em; background: var(--bg-secondary, #f5f5f5); border-radius: 4px;">
+        <div class="ap-detail">
             // --- Radios ---
             <h4>"Radios"</h4>
             <Suspense fallback=move || view! { <p>"Loading radios..."</p> }>
@@ -450,7 +450,7 @@ fn ApDetail(
                                     let sel_160 = r.channel_width == "160MHz";
                                     let sel_auto = r.channel_width == "Auto";
                                     view! {
-                                        <div class="radio-card" style="border: 1px solid var(--border-color, #ddd); padding: 0.75em; margin-bottom: 0.75em; border-radius: 4px;">
+                                        <div class="radio-card">
                                             <strong>{r.band.clone()}</strong>
                                             <ActionForm action=set_radio_action>
                                                 <input type="hidden" name="mac" value={mac_rf} />
@@ -494,7 +494,7 @@ fn ApDetail(
             </Suspense>
 
             // --- Connected Clients ---
-            <h4 style="margin-top: 1.5em;">"Connected Clients"</h4>
+            <h4 class="mt-lg">"Connected Clients"</h4>
             {if ap_clients.is_empty() {
                 view! { <p class="text-muted">"No clients connected to this AP."</p> }.into_any()
             } else {
@@ -517,7 +517,7 @@ fn ApDetail(
                                 let tx_str = c.tx_rate.map(|r| format!("{} Mbps", r)).unwrap_or_else(|| "\u{2014}".to_string());
                                 view! {
                                     <tr>
-                                        <td style="font-family:monospace;font-size:0.85em">{c.mac}</td>
+                                        <td>{c.mac}</td>
                                         <td>{c.ssid}</td>
                                         <td>{c.band}</td>
                                         <td>{rssi_str}</td>

@@ -32,7 +32,7 @@ pub fn Wireguard() -> impl IntoView {
                                 </div>
                                 <div class="settings-row">
                                     <span class="settings-label">"Public Key"</span>
-                                    <span class="settings-value" style="font-family:monospace;font-size:0.85em">{pubkey_display}</span>
+                                    <span class="settings-value">{pubkey_display}</span>
                                 </div>
                                 <div class="settings-row">
                                     <span class="settings-label">"Listen Port"</span>
@@ -40,7 +40,7 @@ pub fn Wireguard() -> impl IntoView {
                                 </div>
                                 <div class="settings-row">
                                     <span class="settings-label">"Toggle"</span>
-                                    <ActionForm action=wg_action attr:style="display:inline">
+                                    <ActionForm action=wg_action attr:class="inline-form">
                                         <input type="hidden" name="enabled" value={toggle_value} />
                                         <button type="submit" class="btn btn-sm">{toggle_label}</button>
                                     </ActionForm>
@@ -76,9 +76,9 @@ pub fn Wireguard() -> impl IntoView {
                                                             <td>{peer.name.clone()}</td>
                                                             <td>{peer.ip.clone()}</td>
                                                             <td><span class="group-badge">{peer.device_group.clone()}</span></td>
-                                                            <td style="font-family:monospace;font-size:0.85em">{short_key}</td>
+                                                            <td>{short_key}</td>
                                                             <td>
-                                                                <ActionForm action=group_action attr:style="display:inline">
+                                                                <ActionForm action=group_action attr:class="inline-form">
                                                                     <input type="hidden" name="public_key" value={pk.clone()} />
                                                                     <select name="group">
                                                                         <option value="trusted">"trusted"</option>
@@ -89,7 +89,7 @@ pub fn Wireguard() -> impl IntoView {
                                                                     <button type="submit" class="btn btn-sm">"Move"</button>
                                                                 </ActionForm>
                                                                 <ErrorToast value=group_action.value() />
-                                                                <ActionForm action=remove_action attr:style="display:inline">
+                                                                <ActionForm action=remove_action attr:class="inline-form">
                                                                     <input type="hidden" name="public_key" value={pk2} />
                                                                     <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
                                                                 </ActionForm>
@@ -103,7 +103,7 @@ pub fn Wireguard() -> impl IntoView {
                                     }.into_any()
                                 }}
 
-                                <h4 style="margin-top:1.5em">"Add Peer"</h4>
+                                <h4 class="mt-lg">"Add Peer"</h4>
                                 {
                                     let add_action = ServerAction::<AddWgPeer>::new();
                                     view! {
@@ -114,7 +114,7 @@ pub fn Wireguard() -> impl IntoView {
                                             </div>
                                             <div class="settings-row">
                                                 <label class="settings-label" for="peer-pubkey">"Public Key"</label>
-                                                <input type="text" id="peer-pubkey" name="public_key" required class="settings-input" style="font-family:monospace" />
+                                                <input type="text" id="peer-pubkey" name="public_key" required class="settings-input mono" />
                                             </div>
                                             <div class="settings-row">
                                                 <label class="settings-label" for="peer-group">"Device Group"</label>
