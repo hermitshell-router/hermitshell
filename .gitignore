@@ -2,4 +2,5 @@
 docker-ctx/
 tests/.vagrant/
 .worktrees/
+docs/plans/
 result
