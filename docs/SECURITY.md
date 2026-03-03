@@ -891,15 +891,15 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Now fixed: Added all three headers. Permissions-Policy disables camera, microphone, geolocation, payment, USB, magnetometer, gyroscope, and accelerometer. COOP and CORP are both set to `same-origin`.
 
-## 128. CSP allows style-src unsafe-inline (cannot remove)
+## 128. CSP allows style-src unsafe-inline (mostly mitigated)
 
-**What:** The Content-Security-Policy includes `style-src 'self' 'unsafe-inline'` to allow inline `style=` attributes. There are 60+ inline style attributes across the UI pages.
+**What:** The Content-Security-Policy includes `style-src 'self' 'unsafe-inline'` to allow inline `style=` attributes.
 
-**Why:** The Leptos SSR UI was built with inline styles for layout convenience (e.g., `display:inline` on ActionForms, `font-family:monospace` on code fields, dynamic progress bar widths). Moving all inline styles to CSS classes would be a large refactor touching every page.
+**Why:** Three inline `style` attributes remain that require `'unsafe-inline'`: the dynamic progress bar width in `setup.rs` (set via `format!`), the backup passphrase row toggle in `settings.rs` (`display:none`), and the SVG chart background in `charts.rs`. All other inline styles (53 of 56) were migrated to CSS classes during the UI redesign.
 
 **Risk:** `style-src 'unsafe-inline'` allows CSS injection if an attacker achieves HTML injection. CSS-based attacks are limited compared to script injection: they can exfiltrate data via `background-image` URLs or restyle the page for phishing, but cannot execute arbitrary code. The risk is acceptable for a LAN-only admin UI.
 
-**Proper fix:** Refactor all inline `style=` attributes to CSS classes in `style.css`. For the dynamic progress bar width in `setup.rs`, use a CSS custom property set via a `style` attribute on a parent element, with `'unsafe-inline'` removed once all other inlines are eliminated. This is a large but straightforward refactor.
+**Proper fix:** The three remaining inlines are all dynamic or conditionally toggled values that cannot be pure CSS classes. To fully remove `'unsafe-inline'`, replace them with CSS custom properties set via `style` attributes and use CSP `style-src 'self'` with nonce-based inline styles, or move the dynamic values to `data-*` attributes with CSS selectors.
 
 ## 129. ~~CSP blocks existing inline scripts and event handlers~~ (partially fixed)
 
