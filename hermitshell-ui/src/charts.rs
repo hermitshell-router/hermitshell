@@ -6,7 +6,7 @@ pub fn bandwidth_chart(data: &[BandwidthPoint], width: u32, height: u32) -> Stri
     if data.is_empty() {
         return format!(
             r##"<svg width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg">
-                <text x="{}" y="{}" fill="#888" font-size="14" text-anchor="middle">No data</text>
+                <text x="{}" y="{}" fill="#5a7d5a" font-size="14" text-anchor="middle">No data</text>
             </svg>"##,
             width / 2, height / 2
         );
@@ -72,12 +72,12 @@ pub fn bandwidth_chart(data: &[BandwidthPoint], width: u32, height: u32) -> Stri
         let y = (margin_top + chart_h) as f64 - (i as f64 / 4.0) * chart_h as f64;
         let label = format_bytes_short(val as i64);
         y_labels.push_str(&format!(
-            r##"<text x="{}" y="{:.1}" fill="#888" font-size="11" text-anchor="end" dominant-baseline="middle">{label}</text>"##,
+            r##"<text x="{}" y="{:.1}" fill="#5a7d5a" font-size="11" text-anchor="end" dominant-baseline="middle">{label}</text>"##,
             margin_left - 8, y
         ));
         // Grid line
         y_labels.push_str(&format!(
-            r##"<line x1="{}" y1="{y:.1}" x2="{}" y2="{y:.1}" stroke="#333" stroke-width="0.5" />"##,
+            r##"<line x1="{}" y1="{y:.1}" x2="{}" y2="{y:.1}" stroke="#2d4a2d" stroke-width="0.5" />"##,
             margin_left, margin_left + chart_w
         ));
     }
@@ -93,24 +93,24 @@ pub fn bandwidth_chart(data: &[BandwidthPoint], width: u32, height: u32) -> Stri
             let bucket = data[idx].bucket;
             let label = format_time_label(bucket);
             x_labels.push_str(&format!(
-                r##"<text x="{x:.1}" y="{}" fill="#888" font-size="11" text-anchor="middle">{label}</text>"##,
+                r##"<text x="{x:.1}" y="{}" fill="#5a7d5a" font-size="11" text-anchor="middle">{label}</text>"##,
                 margin_top + chart_h + 20
             ));
         }
     }
 
     format!(
-        r##"<svg width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg" style="background:var(--bg-card,#1a1a2e)">
+        r##"<svg width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg" style="background:var(--bg-raised,#1e3a1e)">
             {y_labels}
             {x_labels}
-            <path d="{rx_fill}" fill="rgba(59,130,246,0.5)" />
-            <path d="{tx_fill}" fill="rgba(16,185,129,0.5)" />
-            <path d="{rx_points}" fill="none" stroke="#3b82f6" stroke-width="1.5" />
-            <path d="{total_points}" fill="none" stroke="#10b981" stroke-width="1.5" />
-            <rect x="{}" y="5" width="12" height="12" fill="rgba(59,130,246,0.5)" />
-            <text x="{}" y="15" fill="#888" font-size="11">RX</text>
-            <rect x="{}" y="5" width="12" height="12" fill="rgba(16,185,129,0.5)" />
-            <text x="{}" y="15" fill="#888" font-size="11">TX</text>
+            <path d="{rx_fill}" fill="rgba(34,197,94,0.35)" />
+            <path d="{tx_fill}" fill="rgba(234,179,8,0.35)" />
+            <path d="{rx_points}" fill="none" stroke="#4ade80" stroke-width="1.5" />
+            <path d="{total_points}" fill="none" stroke="#facc15" stroke-width="1.5" />
+            <rect x="{}" y="5" width="12" height="12" fill="rgba(34,197,94,0.35)" />
+            <text x="{}" y="15" fill="#5a7d5a" font-size="11">RX</text>
+            <rect x="{}" y="5" width="12" height="12" fill="rgba(234,179,8,0.35)" />
+            <text x="{}" y="15" fill="#5a7d5a" font-size="11">TX</text>
         </svg>"##,
         width - 90, width - 75,
         width - 50, width - 35,
