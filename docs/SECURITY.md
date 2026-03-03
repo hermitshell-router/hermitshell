@@ -1159,25 +1159,19 @@ This document tracks security compromises made during implementation, why they w
 
 **Proper fix:** Acceptable as-is. VLAN mode is the proper fix for L2 isolation; the flat model is a reasonable default for uncomplicated setups.
 
-## 152. Managed switch SSH credentials stored encrypted in DB
+## 152. Managed switch SNMP credentials stored encrypted in DB
 
-**What:** Switch management credentials (host, username, password, vendor profile) are stored in SQLite. Passwords are encrypted with AES-256-GCM using an HKDF-SHA256 key derived from the agent's `session_secret`. If no session secret exists, passwords are stored in plaintext.
+**What:** Switch management credentials (community strings for v2c, auth/privacy passwords for v3) are stored in SQLite. Secrets are encrypted with AES-256-GCM using an HKDF-SHA256 key derived from the agent's `session_secret`. If no session secret exists, secrets are stored in plaintext. Previously this entry covered SSH credentials; switch management was migrated from SSH to SNMP.
 
-**Why:** The agent needs switch credentials to poll MAC address tables and provision VLANs via SSH. Encryption at rest prevents casual credential exposure from DB file access.
+**Why:** The agent needs switch credentials to poll MAC address tables via SNMP. Encryption at rest prevents casual credential exposure from DB file access.
 
-**Risk:** The session secret is also in the same DB. An attacker with read access to the DB file can decrypt all stored passwords. This is defense against casual exposure, not a determined attacker with filesystem access.
+**Risk:** The session secret is also in the same DB. An attacker with read access to the DB file can decrypt all stored credentials. This is defense against casual exposure, not a determined attacker with filesystem access.
 
 **Proper fix:** Store the session secret in a separate location (e.g., kernel keyring, TPM, or a separate file with stricter permissions). For a home router appliance, the current approach is acceptable.
 
-## 153. SSH TOFU host key pinning for managed switches
+## 153. ~~SSH TOFU host key pinning for managed switches~~ (obsolete)
 
-**What:** On first connection to a managed switch, the SSH host key is stored in the database (Trust On First Use). Subsequent connections verify the host key matches. If the key changes, the connection is rejected.
-
-**Why:** Home switches don't have CA-signed SSH host keys. TOFU provides protection against key substitution after initial setup, similar to SSH `known_hosts`.
-
-**Risk:** The first connection is vulnerable to MITM. If an attacker is present on the network during initial switch setup, they could intercept the connection and the wrong host key would be pinned. The "Test Connection" button in the UI is the recommended way to establish the initial trust.
-
-**Proper fix:** Manual host key verification (display the key fingerprint in the UI and let the admin compare with the switch's console output). TOFU is the pragmatic choice for home networks.
+**What:** This entry previously documented SSH host key TOFU pinning. Switch management has been migrated from SSH to SNMP, which has no equivalent host identity mechanism. The `ssh_host_key` column remains in the DB schema but is unused. See entry 163 for the SNMP replacement discussion.
 
 ## 154. VLAN subinterfaces share the physical LAN interface
 
@@ -1188,6 +1182,56 @@ This document tracks security compromises made during implementation, why they w
 **Risk:** All VLAN traffic passes through the router's CPU, creating a potential bottleneck. The nftables rules control inter-VLAN communication; by default VLANs are isolated from each other. A bug in the nftables rules could allow unintended inter-VLAN traffic.
 
 **Proper fix:** Acceptable for home networks where total throughput is typically under 1 Gbps. The nftables VLAN rules are tested in the integration test suite (test 54).
+
+## 160. SNMPv3 credentials stored encrypted in DB (same key as SSH credentials)
+
+**What:** SNMPv3 auth and privacy passwords are encrypted with AES-256-GCM using an HKDF-SHA256 key derived from the agent's `session_secret`, the same scheme used for v2c community strings and former SSH credentials (entry 152). The `switch_list` API intentionally excludes passwords from responses.
+
+**Why:** SNMPv3 authPriv requires storing two long-lived passwords (authentication and privacy). Encryption at rest prevents casual exposure from DB file access or backup extraction.
+
+**Risk:** Same as entry 152 — the session secret is in the same DB. An attacker with filesystem read access can decrypt all SNMP credentials. The v3 auth and privacy passwords share the same encryption key as all other switch credentials.
+
+**Proper fix:** Same as entry 152 — external secret storage (kernel keyring, TPM, separate file). Acceptable for a home router.
+
+## 161. SNMPv2c community string sent in cleartext on the wire
+
+**What:** SNMPv2c polls send the community string (default: `public`) in cleartext UDP packets on the LAN. Any device on the same L2 segment can sniff the community string.
+
+**Why:** SNMPv2c has no encryption — this is inherent to the protocol. The v2c option exists for switches that don't support v3.
+
+**Risk:** Low for isolated management VLANs, higher on flat networks. A compromised LAN device could capture the community string and issue SNMP writes to the switch (if the switch allows SET operations with that community).
+
+**Proper fix:** Use SNMPv3 with authPriv. The v2c option is provided for legacy switch compatibility; the UI defaults to v2c but exposes v3 as the recommended upgrade path.
+
+## 162. SNMPv3 engine discovery uses unauthenticated exchange
+
+**What:** SNMPv3 sessions begin with an unauthenticated engine discovery (RFC 3414 §4). The `snmp2` crate handles this automatically. The engine ID, boot count, and time are learned from the first response.
+
+**Why:** Required by the SNMPv3 User-based Security Model (USM). Cannot be avoided.
+
+**Risk:** An active MITM during engine discovery could feed a false engine ID, causing subsequent authenticated requests to fail (denial of service) or redirecting them to an attacker-controlled device. On a LAN where the switch is directly connected, this requires ARP spoofing or physical access.
+
+**Proper fix:** Pin the engine ID after first successful authenticated exchange (similar to TOFU for SSH host keys in entry 153). Not currently implemented — the snmp2 crate re-discovers on each session. Acceptable for home networks where the switch is on a trusted LAN segment.
+
+## 163. No TOFU equivalent for SNMP switch identity
+
+**What:** Unlike the former SSH-based switch management (entry 153), SNMP has no host key or certificate to pin. Switch identity is based solely on IP address. The SSH TOFU host key pinning entries in the DB (`ssh_host_key` column) are unused for SNMP switches.
+
+**Why:** SNMP does not have a host identity mechanism. SNMPv3's USM authenticates messages but does not authenticate the remote engine's identity to the manager.
+
+**Risk:** If an attacker spoofs the switch's IP address (ARP spoofing + IP takeover), the agent would poll the attacker's device and trust the MAC address table data. This could poison the device-to-port mapping used for VLAN assignment.
+
+**Proper fix:** Combine with nftables MAC-IP binding (entry 84) and static ARP for the switch's IP. Or use SNMP over DTLS (RFC 6353) if the switch supports it — unlikely on home-grade hardware.
+
+## 164. Auth protocol and cipher selection includes weak options
+
+**What:** The API accepts MD5 and DES as valid auth protocol and cipher choices. The UI defaults to SHA256 and AES128 but allows selecting weaker algorithms via dropdown.
+
+**Why:** Some older switches only support MD5/DES for SNMPv3. Rejecting these would prevent managing legacy hardware.
+
+**Risk:** MD5 has known collision weaknesses; DES has a 56-bit key. Both are considered deprecated for new deployments. An attacker who can capture SNMP traffic on the LAN could potentially break DES encryption or forge MD5 authentication.
+
+**Proper fix:** Display a warning in the UI when MD5 or DES is selected. Consider deprecating these in a future release. For now, the admin makes an informed choice.
 
 ---
 
