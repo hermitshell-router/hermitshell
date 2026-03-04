@@ -77,7 +77,7 @@ HermitShell runs Unbound as its DNS resolver on port 5354, with nftables redirec
 
 ## WiFi AP not connecting (UniFi or TP-Link EAP)
 
-1. Check the WiFi provider status in the web UI under Settings > WiFi. The provider will show "online" or "error" with details.
+1. Check the WiFi provider status on the **WiFi** page. The provider will show "online" or "error" with details.
 2. Common causes:
    - **Wrong credentials** — re-enter the controller/AP password
    - **Controller unreachable** — verify the controller URL is accessible from the router: `curl -k https://<controller-ip>:8443`

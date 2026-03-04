@@ -126,7 +126,7 @@ automatically.
 Controls how long logs are kept and where they are forwarded.
 
 - **Retention Period** -- how many days of connection logs, DNS logs, and audit
-  entries to keep. Older entries are automatically purged. Default is 30 days.
+  entries to keep. Older entries are automatically purged. Default is 7 days.
 - **Syslog Target** -- optional. Enter a `host:port` to forward logs to an
   external syslog server (e.g., `192.168.1.50:514`). Leave blank to disable.
 - **Webhook URL** -- optional. An HTTPS URL that receives JSON payloads for log

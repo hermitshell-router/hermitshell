@@ -18,7 +18,7 @@ How HermitShell compares to the platforms most home and prosumer users actually 
 |---|---|---|---|---|---|---|---|
 | **Per-device isolation** | /32 subnets, each device gets its own network | VLANs (manual config) | VLANs (manual config) | Microsegmentation (Gold+) | VLANs via controller | Not built-in | VLANs + zones (CLI) |
 | **Device groups** | 6 built-in (trusted, IoT, servers, guest, quarantine, blocked) | Manual VLAN/firewall rules | Manual aliases/groups | Flexible groups | Profiles via controller | Not built-in | Firewall groups (CLI) |
-| **DNS ad blocking** | Built-in (Blocky) | Packages (adblock, AGH) | Plugin (Unbound + blocklists) | Built-in | Not built-in | Built-in (Ad blocking toggle) | Not built-in |
+| **DNS ad blocking** | Built-in (Unbound + blocklists) | Packages (adblock, AGH) | Plugin (Unbound + blocklists) | Built-in | Not built-in | Built-in (Ad blocking toggle) | Not built-in |
 | **WireGuard VPN** | Built-in, dual-stack | Package | Built-in | Built-in | Built-in | Built-in | Built-in |
 | **Behavioral analysis** | Built-in (anomaly detection, alerts) | Not built-in | Suricata IDS/IPS plugin | IDS/IPS (Suricata-based) | IDS/IPS | Not built-in | Not built-in |
 | **QoS** | CAKE + fq_codel, per-device DSCP | SQM (package) | Traffic shaper (ALTQ/pf) | Smart Queue | Not built-in | Not built-in | Traffic policy (CLI) |

@@ -29,7 +29,7 @@ through a web UI. Runs on any x86_64 or aarch64 Linux box with two NICs.
 ## Architecture
 
 ```
-hermitshell/          Web UI (Leptos 0.8 + Axum 0.8, ports 8080/8443)
+hermitshell/          Web UI (Leptos 0.8 + Axum 0.8, ports 80/443)
 hermitshell-agent/    Router daemon: nftables, DHCP, Unbound DNS, WireGuard, WiFi, logging, IPv6
 hermitshell-common/   Shared wire types (Device, Alert, PortForward, etc.)
 hermitshell-dhcp/     DHCP server (DHCPv4 + DHCPv6)

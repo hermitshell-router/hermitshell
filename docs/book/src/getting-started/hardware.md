@@ -8,7 +8,7 @@ HermitShell runs on commodity x86_64 or aarch64 hardware with two network interf
 |---|---|---|
 | **CPU** | x86_64 or aarch64, 2 cores | Intel N97/N100, ARM Cortex-A72 or better |
 | **RAM** | 1 GB | Enough for routing + DNS + web UI |
-| **Storage** | 2 GB | SQLite DB, logs, Blocky lists |
+| **Storage** | 2 GB | SQLite DB, logs, blocklists |
 | **NICs** | 2 Ethernet ports | One WAN, one LAN |
 | **OS** | Any Linux (Debian/Ubuntu for APT; any distro via Docker or static binaries) | Install script checks for Debian/Ubuntu/Raspbian; Docker and binaries are distro-agnostic |
 
