@@ -1,0 +1,15 @@
+[book]
+title = "HermitShell Documentation"
+description = "Open-source router platform — setup, usage, and reference"
+authors = ["HermitShell"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/hermitshell-router/hermitshell"
+edit-url-template = "https://github.com/hermitshell-router/hermitshell/edit/main/docs/book/{path}"
