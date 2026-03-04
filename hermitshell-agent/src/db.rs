@@ -2151,6 +2151,16 @@ impl Db {
         Ok(())
     }
 
+    pub fn update_vlan_id(&self, group_name: &str, new_vlan_id: u16) -> Result<()> {
+        let subnet = format!("10.0.{}.0/24", new_vlan_id);
+        let gateway = format!("10.0.{}.1", new_vlan_id);
+        self.conn.execute(
+            "UPDATE vlan_config SET vlan_id = ?1, subnet = ?2, gateway = ?3 WHERE group_name = ?4",
+            rusqlite::params![new_vlan_id as i64, subnet, gateway, group_name],
+        )?;
+        Ok(())
+    }
+
     pub fn is_vlan_mode_enabled(&self) -> bool {
         self.get_config("vlan_mode")
             .ok()

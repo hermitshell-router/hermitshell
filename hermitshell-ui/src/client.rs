@@ -864,6 +864,15 @@ pub fn vlan_disable() -> Result<(), String> {
     Ok(())
 }
 
+pub fn vlan_update_config(group: &str, vlan_id: u16) -> Result<(), String> {
+    ok_or_err(send(json!({
+        "method": "vlan_update_config",
+        "group": group,
+        "vlan_id": vlan_id,
+    }))?)?;
+    Ok(())
+}
+
 pub fn list_switches() -> Result<Vec<SwitchInfo>, String> {
     let resp = ok_or_err(send(json!({"method": "switch_list"}))?)?;
     let s = resp.config_value.unwrap_or_else(|| "[]".to_string());

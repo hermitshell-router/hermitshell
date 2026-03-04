@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
 use crate::components::toast::ErrorToast;
-use crate::server_fns::{EnableVlan, DisableVlan};
+use crate::server_fns::{EnableVlan, DisableVlan, UpdateVlanId};
 
 #[component]
 pub fn VlanSettings() -> impl IntoView {
@@ -66,16 +66,40 @@ pub fn VlanSettings() -> impl IntoView {
                                                     <th>"VLAN ID"</th>
                                                     <th>"Subnet"</th>
                                                     <th>"Gateway"</th>
+                                                    {if enabled {
+                                                        view! { <th>"Interface"</th> }.into_any()
+                                                    } else {
+                                                        view! { }.into_any()
+                                                    }}
+                                                    <th></th>
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {vlans.iter().map(|v| {
+                                                {vlans.into_iter().map(|v| {
+                                                    let update_action = ServerAction::<UpdateVlanId>::new();
+                                                    let group = v.group.clone();
+                                                    let vlan_id_str = v.vlan_id.to_string();
+                                                    let iface_name = format!("eth2.{}", v.vlan_id);
                                                     view! {
                                                         <tr>
                                                             <td>{v.group.clone()}</td>
-                                                            <td>{v.vlan_id.to_string()}</td>
-                                                            <td>{v.subnet.clone()}</td>
-                                                            <td>{v.gateway.clone()}</td>
+                                                            <td colspan="4">
+                                                                <ActionForm action=update_action attr:class="inline-form">
+                                                                    <input type="hidden" name="group" value={group} />
+                                                                    <input type="number" name="vlan_id" min="1" max="4094"
+                                                                        value={vlan_id_str}
+                                                                        class="input-sm" />
+                                                                    <span class="settings-value">{v.subnet}</span>
+                                                                    <span class="settings-value">{v.gateway}</span>
+                                                                    {if enabled {
+                                                                        view! { <span class="settings-value mono">{iface_name}</span> }.into_any()
+                                                                    } else {
+                                                                        view! { }.into_any()
+                                                                    }}
+                                                                    <button type="submit" class="btn btn-sm btn-primary">"Save"</button>
+                                                                </ActionForm>
+                                                                <ErrorToast value=update_action.value() />
+                                                            </td>
                                                         </tr>
                                                     }
                                                 }).collect_view()}
