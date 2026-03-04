@@ -1290,3 +1290,17 @@ This document tracks security compromises made during implementation, why they w
 **Mitigating factor:** The endpoint is authenticated (web session required). The AP is on the LAN, not directly reachable from the WAN. An attacker who has compromised the web session already has significant control over the router.
 
 **Proper fix:** Acceptable for the threat model. For defense-in-depth, consider omitting firmware version from the default status response and requiring an explicit "detailed status" request.
+
+## Monitoring and Observability
+
+## 165. Dashboard stats and log count queries expose aggregate network telemetry
+
+**What:** New socket methods (`get_dashboard_stats`, `count_connection_logs`, `count_dns_logs`, `get_device_presence`) return aggregate network activity: connection/DNS counts, top talkers by bandwidth, and per-device online/offline history. The enhanced `list_connection_logs` and `list_dns_logs` accept additional filter parameters (port, protocol, since, offset).
+
+**Why:** Monitoring features provide the admin with network visibility for troubleshooting and security awareness.
+
+**Risk:** Low. The data is aggregate/summary level and no more sensitive than the existing `list_connection_logs`, `list_dns_logs`, and `get_bandwidth_history` endpoints which already expose the underlying records. Top talkers reveal which devices are most active by MAC/hostname, but `list_devices` already exposes device identities.
+
+**Mitigating factor:** All methods are in `WEB_ALLOWED_METHODS` (require authenticated web session). The socket is Unix-domain with `0666` permissions, accessible only from the router host. Dynamic SQL in filter queries uses parameterized placeholders throughout — column names are static string literals, never derived from user input. Device presence records are bounded by 90-day rotation and state-change deduplication.
+
+**Proper fix:** Acceptable for the threat model. MAC validation was added to `get_device_presence` for consistency with other device-scoped handlers.

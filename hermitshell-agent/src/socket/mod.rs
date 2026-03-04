@@ -625,6 +625,9 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 Some(m) => m.clone(),
                 None => return Response::err("device_mac required"),
             };
+            if let Err(e) = nftables::validate_mac(&mac) {
+                return Response::err(&e.to_string());
+            }
             let period = req.period.as_deref().unwrap_or("7d");
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
