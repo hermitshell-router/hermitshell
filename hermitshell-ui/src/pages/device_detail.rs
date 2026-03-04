@@ -372,12 +372,12 @@ pub fn DeviceDetail() -> impl IntoView {
                                 let device_ip = d.ipv4.clone();
 
                                 let conn_result: Result<Vec<_>, String> = match device_ip.as_ref() {
-                                    Some(ip) => client::list_connection_logs(Some(ip), 50),
+                                    Some(ip) => client::list_connection_logs(Some(ip), None, None, None, 50, 0),
                                     None => Ok(vec![]),
                                 };
 
                                 let dns_result: Result<Vec<_>, String> = match device_ip.as_ref() {
-                                    Some(ip) => client::list_dns_logs(Some(ip), 50),
+                                    Some(ip) => client::list_dns_logs(Some(ip), None, 50, 0),
                                     None => Ok(vec![]),
                                 };
 

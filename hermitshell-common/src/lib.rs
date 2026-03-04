@@ -200,6 +200,17 @@ pub struct TopTalker {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LogStats {
+    pub total: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unique_destinations: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unique_protocols: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unique_domains: Option<i64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TopDestination {
     pub dest_ip: String,
     pub dest_port: u16,

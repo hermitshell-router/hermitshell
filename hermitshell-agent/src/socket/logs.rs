@@ -5,7 +5,7 @@ pub(super) fn handle_list_connection_logs(req: &Request, db: &Arc<Mutex<Db>>) ->
     let offset = req.offset.unwrap_or(0);
     let device_ip = req.internal_ip.as_deref();
     let db = db.lock().unwrap();
-    match db.list_connection_logs(device_ip, limit, offset) {
+    match db.list_connection_logs(device_ip, req.port, req.protocol.as_deref(), req.since, limit, offset) {
         Ok(logs) => {
             let mut resp = Response::ok();
             resp.connection_logs = Some(logs);
@@ -20,10 +20,46 @@ pub(super) fn handle_list_dns_logs(req: &Request, db: &Arc<Mutex<Db>>) -> Respon
     let offset = req.offset.unwrap_or(0);
     let device_ip = req.internal_ip.as_deref();
     let db = db.lock().unwrap();
-    match db.list_dns_logs(device_ip, limit, offset) {
+    match db.list_dns_logs(device_ip, req.since, limit, offset) {
         Ok(logs) => {
             let mut resp = Response::ok();
             resp.dns_logs = Some(logs);
+            resp
+        }
+        Err(e) => Response::err(&e.to_string()),
+    }
+}
+
+pub(super) fn handle_count_connection_logs(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let device_ip = req.internal_ip.as_deref();
+    let db = db.lock().unwrap();
+    match db.count_connection_logs(device_ip, req.port, req.protocol.as_deref(), req.since) {
+        Ok((total, unique_dests, unique_protos)) => {
+            let mut resp = Response::ok();
+            resp.log_stats = Some(hermitshell_common::LogStats {
+                total,
+                unique_destinations: Some(unique_dests),
+                unique_protocols: Some(unique_protos),
+                unique_domains: None,
+            });
+            resp
+        }
+        Err(e) => Response::err(&e.to_string()),
+    }
+}
+
+pub(super) fn handle_count_dns_logs(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+    let device_ip = req.internal_ip.as_deref();
+    let db = db.lock().unwrap();
+    match db.count_dns_logs(device_ip, req.since) {
+        Ok((total, unique_domains)) => {
+            let mut resp = Response::ok();
+            resp.log_stats = Some(hermitshell_common::LogStats {
+                total,
+                unique_destinations: None,
+                unique_protocols: None,
+                unique_domains: Some(unique_domains),
+            });
             resp
         }
         Err(e) => Response::err(&e.to_string()),

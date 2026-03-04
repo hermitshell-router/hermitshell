@@ -79,6 +79,7 @@ const WEB_ALLOWED_METHODS: &[&str] = &[
     "get_qos_config", "set_qos_config", "set_qos_test_url",
     "run_speed_test", "get_speed_test_result",
     "list_connection_logs", "list_dns_logs",
+    "count_connection_logs", "count_dns_logs",
     "list_alerts", "get_alert", "acknowledge_alert", "acknowledge_all_alerts",
     "log_audit", "list_audit_logs",
     "wifi_list_aps", "wifi_list_providers", "wifi_add_provider", "wifi_remove_provider",
@@ -171,6 +172,8 @@ struct Request {
     hostname: Option<String>,
     id: Option<i64>,
     protocol: Option<String>,
+    port: Option<i64>,
+    since: Option<i64>,
     port_start: Option<u16>,
     port_end: Option<u16>,
     external_port_start: Option<u16>,
@@ -309,6 +312,8 @@ struct Response {
     dns_blocklists: Option<Vec<hermitshell_common::DnsBlocklist>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     dashboard_stats: Option<crate::db::DashboardStats>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    log_stats: Option<hermitshell_common::LogStats>,
 }
 
 #[derive(Debug, Serialize)]
@@ -545,6 +550,8 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "get_speed_test_result" => config::handle_get_speed_test_result(&req, speed_test_state),
         "list_connection_logs" => logs::handle_list_connection_logs(&req, db),
         "list_dns_logs" => logs::handle_list_dns_logs(&req, db),
+        "count_connection_logs" => logs::handle_count_connection_logs(&req, db),
+        "count_dns_logs" => logs::handle_count_dns_logs(&req, db),
         "list_alerts" => logs::handle_list_alerts(&req, db),
         "get_alert" => logs::handle_get_alert(&req, db),
         "acknowledge_alert" => logs::handle_acknowledge_alert(&req, db),

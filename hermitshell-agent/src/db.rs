@@ -1057,34 +1057,99 @@ impl Db {
         Ok(())
     }
 
-    pub fn list_connection_logs(&self, device_ip: Option<&str>, limit: i64, offset: i64) -> Result<Vec<ConnectionLog>> {
+    pub fn list_connection_logs(
+        &self,
+        device_ip: Option<&str>,
+        port: Option<i64>,
+        protocol: Option<&str>,
+        since: Option<i64>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<ConnectionLog>> {
+        let mut sql = "SELECT id, device_ip, dest_ip, dest_port, protocol, bytes_sent, bytes_recv, started_at, ended_at FROM connection_logs".to_string();
+        let mut conditions: Vec<String> = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        let mut idx = 1;
         if let Some(ip) = device_ip {
-            let mut stmt = self.conn.prepare(
-                "SELECT id, device_ip, dest_ip, dest_port, protocol, bytes_sent, bytes_recv, started_at, ended_at
-                 FROM connection_logs WHERE device_ip = ?1 ORDER BY started_at DESC LIMIT ?2 OFFSET ?3"
-            )?;
-            let rows = stmt.query_map(rusqlite::params![ip, limit, offset], |row| {
-                Ok(ConnectionLog {
-                    id: row.get(0)?, device_ip: row.get(1)?, dest_ip: row.get(2)?,
-                    dest_port: row.get(3)?, protocol: row.get(4)?, bytes_sent: row.get(5)?,
-                    bytes_recv: row.get(6)?, started_at: row.get(7)?, ended_at: row.get(8)?,
-                })
-            })?;
-            Ok(rows.filter_map(|r| r.ok()).collect())
-        } else {
-            let mut stmt = self.conn.prepare(
-                "SELECT id, device_ip, dest_ip, dest_port, protocol, bytes_sent, bytes_recv, started_at, ended_at
-                 FROM connection_logs ORDER BY started_at DESC LIMIT ?1 OFFSET ?2"
-            )?;
-            let rows = stmt.query_map(rusqlite::params![limit, offset], |row| {
-                Ok(ConnectionLog {
-                    id: row.get(0)?, device_ip: row.get(1)?, dest_ip: row.get(2)?,
-                    dest_port: row.get(3)?, protocol: row.get(4)?, bytes_sent: row.get(5)?,
-                    bytes_recv: row.get(6)?, started_at: row.get(7)?, ended_at: row.get(8)?,
-                })
-            })?;
-            Ok(rows.filter_map(|r| r.ok()).collect())
+            conditions.push(format!("device_ip = ?{}", idx));
+            params.push(Box::new(ip.to_string()));
+            idx += 1;
         }
+        if let Some(p) = port {
+            conditions.push(format!("dest_port = ?{}", idx));
+            params.push(Box::new(p));
+            idx += 1;
+        }
+        if let Some(proto) = protocol {
+            conditions.push(format!("protocol = ?{}", idx));
+            params.push(Box::new(proto.to_string()));
+            idx += 1;
+        }
+        if let Some(ts) = since {
+            conditions.push(format!("started_at >= ?{}", idx));
+            params.push(Box::new(ts));
+            idx += 1;
+        }
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+        sql.push_str(&format!(" ORDER BY started_at DESC LIMIT ?{} OFFSET ?{}", idx, idx + 1));
+        params.push(Box::new(limit));
+        params.push(Box::new(offset));
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            Ok(ConnectionLog {
+                id: row.get(0)?, device_ip: row.get(1)?, dest_ip: row.get(2)?,
+                dest_port: row.get(3)?, protocol: row.get(4)?, bytes_sent: row.get(5)?,
+                bytes_recv: row.get(6)?, started_at: row.get(7)?, ended_at: row.get(8)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn count_connection_logs(
+        &self,
+        device_ip: Option<&str>,
+        port: Option<i64>,
+        protocol: Option<&str>,
+        since: Option<i64>,
+    ) -> Result<(i64, i64, i64)> {
+        let mut sql = "SELECT COUNT(*), COUNT(DISTINCT dest_ip), COUNT(DISTINCT protocol) FROM connection_logs".to_string();
+        let mut conditions: Vec<String> = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        let mut idx = 1;
+        if let Some(ip) = device_ip {
+            conditions.push(format!("device_ip = ?{}", idx));
+            params.push(Box::new(ip.to_string()));
+            idx += 1;
+        }
+        if let Some(p) = port {
+            conditions.push(format!("dest_port = ?{}", idx));
+            params.push(Box::new(p));
+            idx += 1;
+        }
+        if let Some(proto) = protocol {
+            conditions.push(format!("protocol = ?{}", idx));
+            params.push(Box::new(proto.to_string()));
+            idx += 1;
+        }
+        if let Some(ts) = since {
+            conditions.push(format!("started_at >= ?{}", idx));
+            params.push(Box::new(ts));
+            // idx += 1;
+        }
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = self.conn.prepare(&sql)?;
+        let row = stmt.query_row(param_refs.as_slice(), |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+        })?;
+        Ok(row)
     }
 
     // DNS log methods
@@ -1097,30 +1162,74 @@ impl Db {
         Ok(())
     }
 
-    pub fn list_dns_logs(&self, device_ip: Option<&str>, limit: i64, offset: i64) -> Result<Vec<DnsLogEntry>> {
+    pub fn list_dns_logs(
+        &self,
+        device_ip: Option<&str>,
+        since: Option<i64>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<DnsLogEntry>> {
+        let mut sql = "SELECT id, device_ip, domain, query_type, ts FROM dns_logs".to_string();
+        let mut conditions: Vec<String> = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        let mut idx = 1;
         if let Some(ip) = device_ip {
-            let mut stmt = self.conn.prepare(
-                "SELECT id, device_ip, domain, query_type, ts FROM dns_logs WHERE device_ip = ?1 ORDER BY ts DESC LIMIT ?2 OFFSET ?3"
-            )?;
-            let rows = stmt.query_map(rusqlite::params![ip, limit, offset], |row| {
-                Ok(DnsLogEntry {
-                    id: row.get(0)?, device_ip: row.get(1)?, domain: row.get(2)?,
-                    query_type: row.get(3)?, ts: row.get(4)?,
-                })
-            })?;
-            Ok(rows.filter_map(|r| r.ok()).collect())
-        } else {
-            let mut stmt = self.conn.prepare(
-                "SELECT id, device_ip, domain, query_type, ts FROM dns_logs ORDER BY ts DESC LIMIT ?1 OFFSET ?2"
-            )?;
-            let rows = stmt.query_map(rusqlite::params![limit, offset], |row| {
-                Ok(DnsLogEntry {
-                    id: row.get(0)?, device_ip: row.get(1)?, domain: row.get(2)?,
-                    query_type: row.get(3)?, ts: row.get(4)?,
-                })
-            })?;
-            Ok(rows.filter_map(|r| r.ok()).collect())
+            conditions.push(format!("device_ip = ?{}", idx));
+            params.push(Box::new(ip.to_string()));
+            idx += 1;
         }
+        if let Some(ts) = since {
+            conditions.push(format!("ts >= ?{}", idx));
+            params.push(Box::new(ts));
+            idx += 1;
+        }
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+        sql.push_str(&format!(" ORDER BY ts DESC LIMIT ?{} OFFSET ?{}", idx, idx + 1));
+        params.push(Box::new(limit));
+        params.push(Box::new(offset));
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            Ok(DnsLogEntry {
+                id: row.get(0)?, device_ip: row.get(1)?, domain: row.get(2)?,
+                query_type: row.get(3)?, ts: row.get(4)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn count_dns_logs(
+        &self,
+        device_ip: Option<&str>,
+        since: Option<i64>,
+    ) -> Result<(i64, i64)> {
+        let mut sql = "SELECT COUNT(*), COUNT(DISTINCT domain) FROM dns_logs".to_string();
+        let mut conditions: Vec<String> = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        let mut idx = 1;
+        if let Some(ip) = device_ip {
+            conditions.push(format!("device_ip = ?{}", idx));
+            params.push(Box::new(ip.to_string()));
+            idx += 1;
+        }
+        if let Some(ts) = since {
+            conditions.push(format!("ts >= ?{}", idx));
+            params.push(Box::new(ts));
+            // idx += 1;
+        }
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = self.conn.prepare(&sql)?;
+        let row = stmt.query_row(param_refs.as_slice(), |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        Ok(row)
     }
 
     // IPv6 pinhole methods

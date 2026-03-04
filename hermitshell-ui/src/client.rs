@@ -78,6 +78,7 @@ pub struct Response {
     pub dns_blocklists: Option<Vec<hermitshell_common::DnsBlocklist>>,
     pub ipv6_pinholes: Option<Vec<serde_json::Value>>,
     pub dashboard_stats: Option<hermitshell_common::DashboardStats>,
+    pub log_stats: Option<hermitshell_common::LogStats>,
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
@@ -314,22 +315,84 @@ pub fn import_config_v2(data: &str, passphrase: Option<&str>) -> Result<(), Stri
     Ok(())
 }
 
-pub fn list_connection_logs(device_ip: Option<&str>, limit: i64) -> Result<Vec<ConnectionLog>, String> {
-    let mut req = json!({"method": "list_connection_logs", "limit": limit});
+pub fn list_connection_logs(
+    device_ip: Option<&str>,
+    port: Option<i64>,
+    protocol: Option<&str>,
+    since: Option<i64>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<ConnectionLog>, String> {
+    let mut req = json!({"method": "list_connection_logs", "limit": limit, "offset": offset});
     if let Some(ip) = device_ip {
         req["internal_ip"] = serde_json::Value::String(ip.to_string());
+    }
+    if let Some(p) = port {
+        req["port"] = serde_json::Value::Number(p.into());
+    }
+    if let Some(proto) = protocol {
+        req["protocol"] = serde_json::Value::String(proto.to_string());
+    }
+    if let Some(ts) = since {
+        req["since"] = serde_json::Value::Number(ts.into());
     }
     let resp = ok_or_err(send(req)?)?;
     Ok(resp.connection_logs.unwrap_or_default())
 }
 
-pub fn list_dns_logs(device_ip: Option<&str>, limit: i64) -> Result<Vec<DnsLogEntry>, String> {
-    let mut req = json!({"method": "list_dns_logs", "limit": limit});
+pub fn list_dns_logs(
+    device_ip: Option<&str>,
+    since: Option<i64>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<DnsLogEntry>, String> {
+    let mut req = json!({"method": "list_dns_logs", "limit": limit, "offset": offset});
     if let Some(ip) = device_ip {
         req["internal_ip"] = serde_json::Value::String(ip.to_string());
     }
+    if let Some(ts) = since {
+        req["since"] = serde_json::Value::Number(ts.into());
+    }
     let resp = ok_or_err(send(req)?)?;
     Ok(resp.dns_logs.unwrap_or_default())
+}
+
+pub fn count_connection_logs(
+    device_ip: Option<&str>,
+    port: Option<i64>,
+    protocol: Option<&str>,
+    since: Option<i64>,
+) -> Result<hermitshell_common::LogStats, String> {
+    let mut req = json!({"method": "count_connection_logs"});
+    if let Some(ip) = device_ip {
+        req["internal_ip"] = serde_json::Value::String(ip.to_string());
+    }
+    if let Some(p) = port {
+        req["port"] = serde_json::Value::Number(p.into());
+    }
+    if let Some(proto) = protocol {
+        req["protocol"] = serde_json::Value::String(proto.to_string());
+    }
+    if let Some(ts) = since {
+        req["since"] = serde_json::Value::Number(ts.into());
+    }
+    let resp = ok_or_err(send(req)?)?;
+    resp.log_stats.ok_or_else(|| "no log_stats in response".to_string())
+}
+
+pub fn count_dns_logs(
+    device_ip: Option<&str>,
+    since: Option<i64>,
+) -> Result<hermitshell_common::LogStats, String> {
+    let mut req = json!({"method": "count_dns_logs"});
+    if let Some(ip) = device_ip {
+        req["internal_ip"] = serde_json::Value::String(ip.to_string());
+    }
+    if let Some(ts) = since {
+        req["since"] = serde_json::Value::Number(ts.into());
+    }
+    let resp = ok_or_err(send(req)?)?;
+    resp.log_stats.ok_or_else(|| "no log_stats in response".to_string())
 }
 
 pub fn get_log_config() -> Result<serde_json::Value, String> {
