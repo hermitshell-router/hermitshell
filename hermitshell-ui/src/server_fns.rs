@@ -907,3 +907,63 @@ pub async fn test_switch(name: String) -> Result<(), ServerFnError> {
     leptos_axum::redirect("/switches");
     Ok(())
 }
+
+// --- Guest Network ---
+
+#[server]
+pub async fn guest_network_status_fn() -> Result<String, ServerFnError> {
+    let status = crate::client::guest_network_status()
+        .map_err(ServerFnError::new)?;
+    Ok(status.to_string())
+}
+
+#[server]
+pub async fn enable_guest_network(
+    provider_id: String,
+    ssid_name: String,
+    password: String,
+    band: String,
+) -> Result<(), ServerFnError> {
+    crate::client::guest_network_enable(&provider_id, &ssid_name, &password, &band)
+        .map_err(ServerFnError::new)?;
+    let _ = crate::client::log_audit("guest_network_enable", &ssid_name);
+    leptos_axum::redirect("/guest");
+    Ok(())
+}
+
+#[server]
+pub async fn disable_guest_network() -> Result<(), ServerFnError> {
+    crate::client::guest_network_disable()
+        .map_err(ServerFnError::new)?;
+    let _ = crate::client::log_audit("guest_network_disable", "");
+    leptos_axum::redirect("/guest");
+    Ok(())
+}
+
+#[server]
+pub async fn regenerate_guest_password() -> Result<(), ServerFnError> {
+    crate::client::guest_network_regenerate_password()
+        .map_err(ServerFnError::new)?;
+    let _ = crate::client::log_audit("guest_network_regenerate_password", "");
+    leptos_axum::redirect("/guest");
+    Ok(())
+}
+
+#[server]
+pub async fn guest_qr_svg() -> Result<String, ServerFnError> {
+    let status = crate::client::guest_network_status()
+        .map_err(ServerFnError::new)?;
+    let ssid = status["ssid_name"].as_str().unwrap_or("");
+    let password = status["password"].as_str().unwrap_or("");
+    if ssid.is_empty() {
+        return Err(ServerFnError::new("guest network not configured"));
+    }
+    let wifi_string = format!("WIFI:T:WPA;S:{};P:{};;", ssid, password);
+    use qrcode::QrCode;
+    let code = QrCode::new(wifi_string.as_bytes())
+        .map_err(|e| ServerFnError::new(format!("QR generation failed: {}", e)))?;
+    let svg = code.render::<qrcode::render::svg::Color>()
+        .min_dimensions(200, 200)
+        .build();
+    Ok(svg)
+}

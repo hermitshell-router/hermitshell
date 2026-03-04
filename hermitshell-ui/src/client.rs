@@ -914,6 +914,35 @@ pub fn test_switch(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub fn guest_network_status() -> Result<serde_json::Value, String> {
+    let resp = ok_or_err(send(json!({"method": "guest_network_status"}))?)?;
+    let config_str = resp.config_value.ok_or("no config_value in response")?;
+    serde_json::from_str(&config_str).map_err(|e| format!("failed to parse guest config: {}", e))
+}
+
+pub fn guest_network_enable(provider_id: &str, ssid_name: &str, password: &str, band: &str) -> Result<(), String> {
+    ok_or_err(send(json!({
+        "method": "guest_network_enable",
+        "provider_id": provider_id,
+        "ssid_name": ssid_name,
+        "value": password,
+        "band": band,
+    }))?)?;
+    Ok(())
+}
+
+pub fn guest_network_disable() -> Result<(), String> {
+    ok_or_err(send(json!({"method": "guest_network_disable"}))?)?;
+    Ok(())
+}
+
+pub fn guest_network_regenerate_password() -> Result<String, String> {
+    let resp = ok_or_err(send(json!({"method": "guest_network_regenerate_password"}))?)?;
+    let config_str = resp.config_value.ok_or("no config_value")?;
+    let val: serde_json::Value = serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
+    val["password"].as_str().map(|s| s.to_string()).ok_or("no password in response".into())
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
