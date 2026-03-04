@@ -333,6 +333,20 @@ pub struct WifiRadioConfig {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DevicePresenceRecord {
+    pub state: String,
+    pub ts: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DeviceUptime {
+    pub records: Vec<DevicePresenceRecord>,
+    pub uptime_pct: f64,
+    pub period_start: i64,
+    pub period_end: i64,
+}
+
 /// A network interface discovered on the system.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NetworkInterface {

@@ -907,6 +907,8 @@ async fn main() -> Result<()> {
     let mut analysis_counter: u64 = 0;
     let mut blocklist_counter: u64 = 0;
     let unbound_for_loop = unbound_mgr.clone();
+    let mut device_last_activity: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    const OFFLINE_THRESHOLD_SECS: i64 = 300; // 5 minutes
 
     loop {
         interval.tick().await;
@@ -944,6 +946,49 @@ async fn main() -> Result<()> {
         }
         drop(db_guard);
 
+        // Presence tracking
+        {
+            let now_epoch = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+
+            // Mark devices with new traffic as active
+            for dev in &devices {
+                if let Some(ref ip) = dev.ipv4 {
+                    let rt = bandwidth_realtime.lock().unwrap();
+                    if let Some((prev_rx, prev_tx, curr_rx, curr_tx, _)) = rt.get(ip.as_str()).cloned() {
+                        drop(rt); // release lock before DB access
+                        if curr_rx != prev_rx || curr_tx != prev_tx {
+                            let db_guard = db_for_counters.lock().unwrap();
+                            let prev_state = db_guard.get_latest_presence(&dev.mac).unwrap_or(None);
+                            if prev_state.as_deref() != Some("online") {
+                                let _ = db_guard.insert_presence(&dev.mac, "online", now_epoch);
+                            }
+                            drop(db_guard);
+                            device_last_activity.insert(dev.mac.clone(), now_epoch);
+                        }
+                    }
+                }
+            }
+
+            // Check for devices that went offline
+            let offline_macs: Vec<String> = device_last_activity.iter()
+                .filter(|(_, last)| now_epoch - *last > OFFLINE_THRESHOLD_SECS)
+                .map(|(mac, _)| mac.clone())
+                .collect();
+
+            if !offline_macs.is_empty() {
+                let db_guard = db_for_counters.lock().unwrap();
+                for mac in &offline_macs {
+                    let prev_state = db_guard.get_latest_presence(mac).unwrap_or(None);
+                    if prev_state.as_deref() == Some("online") {
+                        let _ = db_guard.insert_presence(mac, "offline", now_epoch);
+                    }
+                }
+            }
+        }
+
         // Run behavioral analysis every 6 ticks (60 seconds)
         analysis_counter += 1;
         if analysis_counter.is_multiple_of(6) {
@@ -976,6 +1021,7 @@ async fn main() -> Result<()> {
             if let Err(e) = db_guard.rotate_audit_logs(audit_retention_days * 86400) {
                 error!(error = %e, "audit log rotation failed");
             }
+            let _ = db_guard.rotate_presence(90 * 86400); // 90 day retention
             // Bandwidth rollups
             match db_guard.rollup_all_pending() {
                 Ok((h, d)) => {

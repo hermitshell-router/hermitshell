@@ -1,4 +1,4 @@
-use hermitshell_common::BandwidthPoint;
+use hermitshell_common::{BandwidthPoint, DevicePresenceRecord};
 
 /// Render a stacked area SVG chart for bandwidth data.
 /// Returns an SVG string suitable for embedding in HTML.
@@ -127,6 +127,58 @@ fn format_bytes_short(bytes: i64) -> String {
     } else {
         format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
     }
+}
+
+/// Render a horizontal presence timeline SVG.
+/// Green segments = online, dark = offline.
+pub fn presence_timeline(
+    records: &[DevicePresenceRecord],
+    period_start: i64,
+    period_end: i64,
+    width: u32,
+    height: u32,
+) -> String {
+    let total_secs = (period_end - period_start).max(1) as f64;
+    let bar_height = height.saturating_sub(20);
+
+    let mut segments = String::new();
+
+    for (i, rec) in records.iter().enumerate() {
+        let end_ts = if i + 1 < records.len() { records[i + 1].ts } else { period_end };
+        let x = ((rec.ts - period_start) as f64 / total_secs * width as f64).max(0.0);
+        let w = ((end_ts - rec.ts) as f64 / total_secs * width as f64).max(0.5);
+        let fill = if rec.state == "online" { "rgba(34,197,94,0.5)" } else { "rgba(45,74,45,0.5)" };
+        segments.push_str(&format!(
+            r##"<rect x="{x:.1}" y="0" width="{w:.1}" height="{bar_height}" fill="{fill}" />"##,
+        ));
+    }
+
+    if records.is_empty() {
+        segments = format!(
+            r##"<rect x="0" y="0" width="{width}" height="{bar_height}" fill="rgba(45,74,45,0.5)" />"##,
+        );
+    }
+
+    let start_label = format_date_short(period_start);
+    let end_label = format_date_short(period_end);
+
+    format!(
+        r##"<svg width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg" style="background:var(--bg-raised,#1e3a1e);border-radius:4px">
+            {segments}
+            <text x="4" y="{}" fill="#5a7d5a" font-size="10">{start_label}</text>
+            <text x="{}" y="{}" fill="#5a7d5a" font-size="10" text-anchor="end">{end_label}</text>
+        </svg>"##,
+        height - 4,
+        width - 4, height - 4,
+    )
+}
+
+fn format_date_short(epoch: i64) -> String {
+    let days_since_epoch = epoch / 86400;
+    let day_of_year = (days_since_epoch % 365) as u32;
+    let month = day_of_year / 30 + 1;
+    let day = day_of_year % 30 + 1;
+    format!("{month}/{day}")
 }
 
 fn format_time_label(epoch: i64) -> String {

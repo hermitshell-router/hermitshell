@@ -107,6 +107,7 @@ const WEB_ALLOWED_METHODS: &[&str] = &[
     "vlan_enable", "vlan_disable", "vlan_status",
     "switch_add", "switch_remove", "switch_list", "switch_test",
     "get_dashboard_stats",
+    "get_device_presence",
 ];
 
 const SESSION_IDLE_TIMEOUT_SECS: u64 = 1800;     // 30 minutes
@@ -314,6 +315,8 @@ struct Response {
     dashboard_stats: Option<crate::db::DashboardStats>,
     #[serde(skip_serializing_if = "Option::is_none")]
     log_stats: Option<hermitshell_common::LogStats>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_uptime: Option<hermitshell_common::DeviceUptime>,
 }
 
 #[derive(Debug, Serialize)]
@@ -612,6 +615,54 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 Ok(stats) => {
                     let mut resp = Response::ok();
                     resp.dashboard_stats = Some(stats);
+                    resp
+                }
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
+        "get_device_presence" => {
+            let mac = match req.device_mac.as_ref().or(req.mac.as_ref()) {
+                Some(m) => m.clone(),
+                None => return Response::err("device_mac required"),
+            };
+            let period = req.period.as_deref().unwrap_or("7d");
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let since = match period {
+                "24h" => now - 86400,
+                "7d"  => now - 7 * 86400,
+                "30d" => now - 30 * 86400,
+                "1y"  => now - 365 * 86400,
+                _     => now - 7 * 86400,
+            };
+            let db = db.lock().unwrap();
+            match db.get_device_presence(&mac, since) {
+                Ok(rows) => {
+                    let records: Vec<hermitshell_common::DevicePresenceRecord> = rows.iter()
+                        .map(|(state, ts)| hermitshell_common::DevicePresenceRecord {
+                            state: state.clone(),
+                            ts: *ts,
+                        })
+                        .collect();
+                    // Calculate uptime percentage
+                    let total_secs = (now - since).max(1) as f64;
+                    let mut online_secs: f64 = 0.0;
+                    for (i, rec) in records.iter().enumerate() {
+                        if rec.state == "online" {
+                            let end_ts = if i + 1 < records.len() { records[i + 1].ts } else { now };
+                            online_secs += (end_ts - rec.ts) as f64;
+                        }
+                    }
+                    let uptime_pct = (online_secs / total_secs * 100.0).min(100.0);
+                    let mut resp = Response::ok();
+                    resp.device_uptime = Some(hermitshell_common::DeviceUptime {
+                        records,
+                        uptime_pct,
+                        period_start: since,
+                        period_end: now,
+                    });
                     resp
                 }
                 Err(e) => Response::err(&e.to_string()),

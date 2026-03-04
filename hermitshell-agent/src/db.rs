@@ -1,5 +1,6 @@
 use anyhow::Result;
 use rusqlite::Connection;
+use tracing::info;
 
 pub use hermitshell_common::{
     Alert, AuditEntry, BandwidthPoint, BandwidthRealtime, ConnectionLog, DashboardStats,
@@ -594,6 +595,24 @@ impl Db {
                  ON CONFLICT(key) DO UPDATE SET value = '13'",
                 [],
             )?;
+        }
+
+        if version < 14 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS device_presence (
+                    id INTEGER PRIMARY KEY,
+                    device_mac TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    ts INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_presence_mac_ts ON device_presence(device_mac, ts);",
+            )?;
+            conn.execute(
+                "INSERT INTO config (key, value) VALUES ('schema_version', '14')
+                 ON CONFLICT(key) DO UPDATE SET value = '14'",
+                [],
+            )?;
+            info!("Migrated database to schema version 14");
         }
 
         Ok(())
@@ -1860,6 +1879,51 @@ impl Db {
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs() as i64 - retention_secs;
         Ok(self.conn.execute("DELETE FROM audit_log WHERE created_at < ?1", [cutoff])?)
+    }
+
+    pub fn insert_presence(&self, device_mac: &str, state: &str, ts: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO device_presence (device_mac, state, ts) VALUES (?1, ?2, ?3)",
+            rusqlite::params![device_mac, state, ts],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_device_presence(&self, device_mac: &str, since: i64) -> Result<Vec<(String, i64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT state, ts FROM device_presence
+             WHERE device_mac = ?1 AND ts >= ?2
+             ORDER BY ts ASC"
+        )?;
+        let rows = stmt.query_map(rusqlite::params![device_mac, since], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn get_latest_presence(&self, device_mac: &str) -> Result<Option<String>> {
+        let result = self.conn.query_row(
+            "SELECT state FROM device_presence WHERE device_mac = ?1 ORDER BY ts DESC LIMIT 1",
+            [device_mac],
+            |row| row.get::<_, String>(0),
+        );
+        match result {
+            Ok(state) => Ok(Some(state)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn rotate_presence(&self, max_age_secs: i64) -> Result<usize> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+        let cutoff = now - max_age_secs;
+        let deleted = self.conn.execute(
+            "DELETE FROM device_presence WHERE ts < ?1",
+            [cutoff],
+        )?;
+        Ok(deleted)
     }
 
     pub fn list_audit_logs(&self, limit: i64) -> Result<Vec<AuditEntry>> {

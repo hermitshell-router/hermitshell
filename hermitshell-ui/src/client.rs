@@ -79,6 +79,7 @@ pub struct Response {
     pub ipv6_pinholes: Option<Vec<serde_json::Value>>,
     pub dashboard_stats: Option<hermitshell_common::DashboardStats>,
     pub log_stats: Option<hermitshell_common::LogStats>,
+    pub device_uptime: Option<hermitshell_common::DeviceUptime>,
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
@@ -756,6 +757,15 @@ pub fn get_top_destinations(device_mac: &str, period: &str, limit: i64) -> Resul
         "limit": limit,
     }))?)?;
     Ok(resp.top_destinations.unwrap_or_default())
+}
+
+pub fn get_device_presence(mac: &str, period: &str) -> Result<hermitshell_common::DeviceUptime, String> {
+    let resp = ok_or_err(send(json!({
+        "method": "get_device_presence",
+        "device_mac": mac,
+        "period": period,
+    }))?)?;
+    resp.device_uptime.ok_or_else(|| "No device_uptime in response".to_string())
 }
 
 pub fn run_bandwidth_rollup() -> Result<String, String> {

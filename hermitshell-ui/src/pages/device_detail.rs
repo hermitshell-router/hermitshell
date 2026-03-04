@@ -220,6 +220,35 @@ pub fn DeviceDetail() -> impl IntoView {
                                 }
                             }
 
+                            // Uptime / Presence tracking
+                            {
+                                let query_up = use_query_map();
+                                let raw_up_period = query_up.with(|q| q.get("period").unwrap_or_else(|| "7d".to_string()));
+                                let up_period = match raw_up_period.as_str() {
+                                    "24h" | "7d" | "30d" | "1y" => raw_up_period.as_str(),
+                                    _ => "7d",
+                                };
+                                match client::get_device_presence(&d.mac, up_period) {
+                                    Ok(uptime) => {
+                                        let pct_str = format!("{:.1}%", uptime.uptime_pct);
+                                        let timeline_svg = crate::charts::presence_timeline(
+                                            &uptime.records, uptime.period_start, uptime.period_end, 800, 30,
+                                        );
+                                        view! {
+                                            <h2 class="section-header">"Uptime"</h2>
+                                            <div class="bw-summary">
+                                                <div class="bw-summary-item">
+                                                    <span class="bw-summary-label">"Online"</span>
+                                                    <span class="bw-summary-value rx">{pct_str}</span>
+                                                </div>
+                                            </div>
+                                            <div inner_html={timeline_svg}></div>
+                                        }.into_any()
+                                    }
+                                    Err(_) => view! { <span></span> }.into_any(),
+                                }
+                            }
+
                             // mDNS Services
                             {
                                 match client::list_mdns_services(&d.mac) {
