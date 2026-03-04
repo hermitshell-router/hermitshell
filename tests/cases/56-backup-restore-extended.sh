@@ -72,7 +72,7 @@ qty_pf=$(ssh $SSH_COMMON $args 'bash -s' 2>/dev/null <<'PFSCRIPT'
 SOCK=/run/hermitshell/agent.sock
 payload=$(python3 -c "
 import json
-pfs = [{'protocol': 'tcp', 'external_port_start': i, 'external_port_end': i, 'internal_ip': '10.0.1.1', 'internal_port': i} for i in range(1001)]
+pfs = [{'protocol': 'tcp', 'external_port_start': i, 'external_port_end': i, 'internal_ip': '10.0.1.1', 'internal_port': i} for i in range(1, 1002)]
 print(json.dumps({'method': 'import_config', 'value': json.dumps({'version': 2, 'port_forwards': pfs})}))
 " 2>/dev/null)
 echo "$payload" | socat -t 5 - UNIX-CONNECT:$SOCK
@@ -87,8 +87,18 @@ assert_contains "$gateway_result" '"ok":false' "Import rejects gateway IP port f
 assert_contains "$gateway_result" "gateway" "Error mentions gateway"
 
 # --- Port forward description too long (>256 chars) ---
+desc_result=$(ssh $SSH_COMMON $args 'bash -s' 2>/dev/null <<'DESCSCRIPT'
+SOCK=/run/hermitshell/agent.sock
 long_desc=$(python3 -c "print('x' * 257)")
-desc_result=$(vm_exec router "echo '{\"method\":\"import_config\",\"value\":\"{\\\\\"version\\\\\":2,\\\\\"port_forwards\\\\\":[{\\\\\"protocol\\\\\":\\\\\"tcp\\\\\",\\\\\"external_port_start\\\\\":80,\\\\\"external_port_end\\\\\":80,\\\\\"internal_ip\\\\\":\\\\\"10.0.1.1\\\\\",\\\\\"internal_port\\\\\":80,\\\\\"description\\\\\":\\\\\"${long_desc}\\\\\"}]}\"}' | socat -t 5 - UNIX-CONNECT:/run/hermitshell/agent.sock")
+payload=$(python3 -c "
+import json, sys
+desc = sys.argv[1]
+inner = json.dumps({'version': 2, 'port_forwards': [{'protocol': 'tcp', 'external_port_start': 80, 'external_port_end': 80, 'internal_ip': '10.0.1.1', 'internal_port': 80, 'description': desc}]})
+print(json.dumps({'method': 'import_config', 'value': inner}))
+" "$long_desc" 2>/dev/null)
+echo "$payload" | socat -t 5 - UNIX-CONNECT:$SOCK
+DESCSCRIPT
+)
 assert_contains "$desc_result" '"ok":false' "Import rejects description >256 chars"
 assert_contains "$desc_result" "description too long" "Error mentions description too long"
 
@@ -121,6 +131,10 @@ echo "$import_payload" | socat -t 5 - UNIX-CONNECT:$SOCK > /dev/null
 # Check port forwards are cleared
 post=$(echo '{"method":"list_port_forwards"}' | socat - UNIX-CONNECT:$SOCK)
 echo "POST_5555:$(echo "$post" | grep -c '5555')"
+
+# Clean up in case import didn't clear it
+fwd_id=$(echo '{"method":"list_port_forwards"}' | socat - UNIX-CONNECT:$SOCK | grep -oP '"id":\K[0-9]+' | tail -1)
+[ -n "$fwd_id" ] && echo "{\"method\":\"remove_port_forward\",\"id\":$fwd_id}" | socat - UNIX-CONNECT:$SOCK > /dev/null
 EMPTYSCRIPT
 )
 assert_contains "$empty_result" "PRE_5555:1" "Port forward exists before empty import"
@@ -256,6 +270,10 @@ socket_ready() {
 }
 wait_for 15 "Agent socket ready after restart" socket_ready
 
+# Wait for web UI to recover (needed for subsequent tests)
+_webui_ready() { deploy_check_webui; }
+wait_for 30 "Web UI ready after restart" _webui_ready || true
+
 # 3. Import the previously exported config
 restart_import=$(ssh $SSH_COMMON $args 'bash -s' 2>/dev/null <<'ISCRIPT'
 SOCK=/run/hermitshell/agent.sock
@@ -303,12 +321,14 @@ print(json.dumps(d))
 " 2>/dev/null)
 
 # Import the modified config
-import_payload=$(python3 -c "import sys,json; print(json.dumps({'method':'import_config','value':sys.argv[1]}))" "$modified" 2>/dev/null)
+echo "$modified" > /tmp/wg-modified.json
+import_payload=$(python3 -c "import sys,json; d=open('/tmp/wg-modified.json').read(); print(json.dumps({'method':'import_config','value':d}))" 2>/dev/null)
 echo "$import_payload" | socat -t 5 - UNIX-CONNECT:$SOCK > /dev/null
 
 # Check that the fake peer was NOT added
 wg_status=$(echo '{"method":"get_wireguard"}' | socat - UNIX-CONNECT:$SOCK)
 echo "FAKE_PEER:$(echo "$wg_status" | grep -c 'fake-peer')"
+rm -f /tmp/wg-modified.json
 WGSCRIPT
 )
 assert_contains "$wg_result" "FAKE_PEER:0" "WireGuard peers excluded from import"
