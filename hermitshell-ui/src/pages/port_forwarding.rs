@@ -27,6 +27,7 @@ pub fn PortForwarding() -> impl IntoView {
 
                         view! {
                             <h2 class="section-header">"Rules"</h2>
+                            <div class="table-scroll">
                             <table class="data-table">
                                 <thead>
                                     <tr>
@@ -88,6 +89,7 @@ pub fn PortForwarding() -> impl IntoView {
                                     }).collect_view()}
                                 </tbody>
                             </table>
+                            </div>
 
                             <h2 class="section-header">"Add Rule"</h2>
                             <ActionForm action=add_action attr:class="form-inline">
@@ -156,6 +158,7 @@ pub fn PortForwarding() -> impl IntoView {
                         {move || pinholes.get().map(|result| match result {
                             Ok(list) => {
                                 view! {
+                                    <div class="table-scroll">
                                     <table class="data-table">
                                         <thead>
                                             <tr>
@@ -195,6 +198,7 @@ pub fn PortForwarding() -> impl IntoView {
                                             }).collect_view()}
                                         </tbody>
                                     </table>
+                                    </div>
                                 }.into_any()
                             }
                             Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),

@@ -85,6 +85,7 @@ pub fn Logs() -> impl IntoView {
                                         view! { <p class="text-muted">"No DNS log entries."</p> }.into_any()
                                     } else {
                                         view! {
+                                            <div class="table-scroll">
                                             <table class="device-table">
                                                 <thead>
                                                     <tr>
@@ -108,6 +109,7 @@ pub fn Logs() -> impl IntoView {
                                                     }).collect_view()}
                                                 </tbody>
                                             </table>
+                                            </div>
                                         }.into_any()
                                     }
                                 }
@@ -124,6 +126,7 @@ pub fn Logs() -> impl IntoView {
                                         view! { <p class="text-muted">"No connection log entries."</p> }.into_any()
                                     } else {
                                         view! {
+                                            <div class="table-scroll">
                                             <table class="device-table">
                                                 <thead>
                                                     <tr>
@@ -155,6 +158,7 @@ pub fn Logs() -> impl IntoView {
                                                     }).collect_view()}
                                                 </tbody>
                                             </table>
+                                            </div>
                                         }.into_any()
                                     }
                                 }

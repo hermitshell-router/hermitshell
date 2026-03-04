@@ -87,6 +87,7 @@ fn render_traffic(mut devices: Vec<crate::types::Device>, realtime: Vec<hermitsh
             view! {
                 <div class="section">
                     <h2>"Real-time Throughput"</h2>
+                    <div class="table-scroll">
                     <table class="table">
                         <thead>
                             <tr>
@@ -108,6 +109,7 @@ fn render_traffic(mut devices: Vec<crate::types::Device>, realtime: Vec<hermitsh
                             }).collect_view()}
                         </tbody>
                     </table>
+                    </div>
                 </div>
             }.into_any()
         } else {
@@ -116,6 +118,7 @@ fn render_traffic(mut devices: Vec<crate::types::Device>, realtime: Vec<hermitsh
 
         <div class="section">
             <h2>"Device Traffic"</h2>
+            <div class="table-scroll">
             <table class="table">
                 <thead>
                     <tr>
@@ -149,6 +152,7 @@ fn render_traffic(mut devices: Vec<crate::types::Device>, realtime: Vec<hermitsh
                     }).collect_view()}
                 </tbody>
             </table>
+            </div>
         </div>
     }.into_any()
 }

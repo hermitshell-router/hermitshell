@@ -150,6 +150,7 @@ pub fn DeviceDetail() -> impl IntoView {
                                             Ok(top_dests) if !top_dests.is_empty() => {
                                                 view! {
                                                     <h2 class="section-header">"Top Destinations"</h2>
+                                                    <div class="table-scroll">
                                                     <table class="data-table">
                                                         <thead><tr>
                                                             <th>"Destination"</th><th>"Port"</th><th>"Total"</th>
@@ -166,6 +167,7 @@ pub fn DeviceDetail() -> impl IntoView {
                                                             }).collect_view()}
                                                         </tbody>
                                                     </table>
+                                                    </div>
                                                 }.into_any()
                                             }
                                             Ok(_) => view! { <span></span> }.into_any(),
@@ -191,6 +193,7 @@ pub fn DeviceDetail() -> impl IntoView {
                                     Ok(services) if !services.is_empty() => {
                                         view! {
                                             <h2 class="section-header">"Discovered Services"</h2>
+                                            <div class="table-scroll">
                                             <table class="data-table">
                                                 <thead><tr>
                                                     <th>"Service"</th><th>"Name"</th><th>"Port"</th>
@@ -207,6 +210,7 @@ pub fn DeviceDetail() -> impl IntoView {
                                                     }).collect_view()}
                                                 </tbody>
                                             </table>
+                                            </div>
                                         }.into_any()
                                     }
                                     Ok(_) => view! { <span></span> }.into_any(),
@@ -352,6 +356,7 @@ pub fn DeviceDetail() -> impl IntoView {
                                     }
                                     Ok(conn_logs) => {
                                         view! {
+                                            <div class="table-scroll">
                                             <table class="data-table">
                                                 <thead><tr>
                                                     <th>"Destination"</th><th>"Port"</th><th>"Protocol"</th>
@@ -372,6 +377,7 @@ pub fn DeviceDetail() -> impl IntoView {
                                                     }).collect_view()}
                                                 </tbody>
                                             </table>
+                                            </div>
                                         }.into_any()
                                     }
                                     Err(e) => {
@@ -385,6 +391,7 @@ pub fn DeviceDetail() -> impl IntoView {
                                     }
                                     Ok(dns_logs) => {
                                         view! {
+                                            <div class="table-scroll">
                                             <table class="data-table">
                                                 <thead><tr>
                                                     <th>"Domain"</th><th>"Type"</th><th>"Time"</th>
@@ -401,6 +408,7 @@ pub fn DeviceDetail() -> impl IntoView {
                                                     }).collect_view()}
                                                 </tbody>
                                             </table>
+                                            </div>
                                         }.into_any()
                                     }
                                     Err(e) => {
@@ -424,6 +432,7 @@ pub fn DeviceDetail() -> impl IntoView {
                                     }
                                     Ok(device_alerts) => {
                                         view! {
+                                            <div class="table-scroll">
                                             <table class="data-table">
                                                 <thead><tr>
                                                     <th>"Time"</th><th>"Rule"</th><th>"Severity"</th><th>"Message"</th>
@@ -446,6 +455,7 @@ pub fn DeviceDetail() -> impl IntoView {
                                                     }).collect_view()}
                                                 </tbody>
                                             </table>
+                                            </div>
                                         }.into_any()
                                     }
                                     Err(e) => {

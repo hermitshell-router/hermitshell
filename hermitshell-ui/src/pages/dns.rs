@@ -139,6 +139,7 @@ pub fn Dns() -> impl IntoView {
                                     view! { <p class="settings-empty">"No blocklists configured"</p> }.into_any()
                                 } else {
                                     view! {
+                                        <div class="table-scroll">
                                         <table class="data-table">
                                             <thead>
                                                 <tr>
@@ -181,6 +182,7 @@ pub fn Dns() -> impl IntoView {
                                                 }).collect_view()}
                                             </tbody>
                                         </table>
+                                        </div>
                                     }.into_any()
                                 }}
 
@@ -222,6 +224,7 @@ pub fn Dns() -> impl IntoView {
                                     view! { <p class="settings-empty">"No forward zones configured"</p> }.into_any()
                                 } else {
                                     view! {
+                                        <div class="table-scroll">
                                         <table class="data-table">
                                             <thead>
                                                 <tr>
@@ -262,6 +265,7 @@ pub fn Dns() -> impl IntoView {
                                                 }).collect_view()}
                                             </tbody>
                                         </table>
+                                        </div>
                                     }.into_any()
                                 }}
 
@@ -296,6 +300,7 @@ pub fn Dns() -> impl IntoView {
                                     view! { <p class="settings-empty">"No custom rules configured"</p> }.into_any()
                                 } else {
                                     view! {
+                                        <div class="table-scroll">
                                         <table class="data-table">
                                             <thead>
                                                 <tr>
@@ -338,6 +343,7 @@ pub fn Dns() -> impl IntoView {
                                                 }).collect_view()}
                                             </tbody>
                                         </table>
+                                        </div>
                                     }.into_any()
                                 }}
 
