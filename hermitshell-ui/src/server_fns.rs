@@ -911,13 +911,6 @@ pub async fn test_switch(name: String) -> Result<(), ServerFnError> {
 // --- Guest Network ---
 
 #[server]
-pub async fn guest_network_status_fn() -> Result<String, ServerFnError> {
-    let status = crate::client::guest_network_status()
-        .map_err(ServerFnError::new)?;
-    Ok(status.to_string())
-}
-
-#[server]
 pub async fn enable_guest_network(
     provider_id: String,
     ssid_name: String,
@@ -958,7 +951,15 @@ pub async fn guest_qr_svg() -> Result<String, ServerFnError> {
     if ssid.is_empty() {
         return Err(ServerFnError::new("guest network not configured"));
     }
-    let wifi_string = format!("WIFI:T:WPA;S:{};P:{};;", ssid, password);
+    // Escape special chars per WiFi QR code spec (ZXing)
+    fn escape_wifi(s: &str) -> String {
+        s.replace('\\', "\\\\")
+         .replace(';', "\\;")
+         .replace(',', "\\,")
+         .replace('"', "\\\"")
+         .replace(':', "\\:")
+    }
+    let wifi_string = format!("WIFI:T:WPA;S:{};P:{};;", escape_wifi(ssid), escape_wifi(password));
     use qrcode::QrCode;
     let code = QrCode::new(wifi_string.as_bytes())
         .map_err(|e| ServerFnError::new(format!("QR generation failed: {}", e)))?;

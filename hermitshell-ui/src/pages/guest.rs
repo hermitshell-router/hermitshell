@@ -79,15 +79,14 @@ fn render_setup(providers: Vec<hermitshell_common::WifiProviderInfo>) -> AnyView
                     </div>
                     <div class="form-group">
                         <label for="guest-password">"Password"</label>
-                        <input type="text" id="guest-password" name="password" required minlength="8" maxlength="63"
-                            placeholder="Leave blank to auto-generate" />
+                        <input type="password" id="guest-password" name="password" required minlength="8" maxlength="63"
+                            placeholder="Min 8 characters" />
                     </div>
                     <div class="form-group">
                         <label for="guest-band">"Band"</label>
                         <select id="guest-band" name="band">
-                            <option value="2.4GHz">"2.4 GHz"</option>
+                            <option value="2.4GHz" selected=true>"2.4 GHz"</option>
                             <option value="5GHz">"5 GHz"</option>
-                            <option value="both" selected=true>"Both"</option>
                         </select>
                     </div>
                 </div>
@@ -118,7 +117,7 @@ fn render_enabled(status: serde_json::Value) -> AnyView {
     );
 
     view! {
-        <div class="card-grid" style="grid-template-columns: 1fr 1fr;">
+        <div class="card-grid card-grid-2col">
             // QR Code card
             <div class="card">
                 <h2 class="section-header">"QR Code"</h2>
