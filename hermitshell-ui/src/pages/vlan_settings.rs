@@ -59,28 +59,30 @@ pub fn VlanSettings() -> impl IntoView {
                                     view! { <p class="settings-empty">"No VLANs configured"</p> }.into_any()
                                 } else {
                                     view! {
-                                        <table class="data-table">
-                                            <thead>
-                                                <tr>
-                                                    <th>"Trust Group"</th>
-                                                    <th>"VLAN ID"</th>
-                                                    <th>"Subnet"</th>
-                                                    <th>"Gateway"</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {vlans.iter().map(|v| {
-                                                    view! {
-                                                        <tr>
-                                                            <td>{v.group.clone()}</td>
-                                                            <td>{v.vlan_id.to_string()}</td>
-                                                            <td>{v.subnet.clone()}</td>
-                                                            <td>{v.gateway.clone()}</td>
-                                                        </tr>
-                                                    }
-                                                }).collect_view()}
-                                            </tbody>
-                                        </table>
+                                        <div class="table-scroll">
+                                            <table class="data-table">
+                                                <thead>
+                                                    <tr>
+                                                        <th>"Trust Group"</th>
+                                                        <th>"VLAN ID"</th>
+                                                        <th>"Subnet"</th>
+                                                        <th>"Gateway"</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {vlans.iter().map(|v| {
+                                                        view! {
+                                                            <tr>
+                                                                <td>{v.group.clone()}</td>
+                                                                <td>{v.vlan_id.to_string()}</td>
+                                                                <td>{v.subnet.clone()}</td>
+                                                                <td>{v.gateway.clone()}</td>
+                                                            </tr>
+                                                        }
+                                                    }).collect_view()}
+                                                </tbody>
+                                            </table>
+                                        </div>
                                     }.into_any()
                                 }}
                             </div>

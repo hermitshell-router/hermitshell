@@ -77,7 +77,8 @@ fn render_dashboard(status: Status, mut devices: Vec<Device>) -> AnyView {
         </div>
 
         <h2 class="section-header">"Recent Devices"</h2>
-        <table>
+        <div class="table-scroll">
+            <table>
                 <thead>
                     <tr>
                         <th>"Hostname"</th>
@@ -103,5 +104,6 @@ fn render_dashboard(status: Status, mut devices: Vec<Device>) -> AnyView {
                     }).collect_view()}
                 </tbody>
             </table>
+        </div>
     }.into_any()
 }

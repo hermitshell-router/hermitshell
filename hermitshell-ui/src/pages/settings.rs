@@ -427,34 +427,36 @@ pub fn Settings() -> impl IntoView {
                         view! {
                             <div class="settings-section">
                                 <h3>"DHCP Reservations"</h3>
-                                <table class="data-table">
-                                    <thead>
-                                        <tr>
-                                            <th>"MAC Address"</th>
-                                            <th>"Subnet ID"</th>
-                                            <th>"Actions"</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {res.iter().map(|r| {
-                                            let mac = r.mac.clone();
-                                            let remove_action = ServerAction::<RemoveReservation>::new();
-                                            view! {
-                                                <tr>
-                                                    <td>{r.mac.clone()}</td>
-                                                    <td>{r.subnet_id}</td>
-                                                    <td>
-                                                        <ActionForm action=remove_action attr:class="inline-form">
-                                                            <input type="hidden" name="mac" value={mac} />
-                                                            <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
-                                                        </ActionForm>
-                                                        <ErrorToast value=remove_action.value() />
-                                                    </td>
-                                                </tr>
-                                            }
-                                        }).collect_view()}
-                                    </tbody>
-                                </table>
+                                <div class="table-scroll">
+                                    <table class="data-table">
+                                        <thead>
+                                            <tr>
+                                                <th>"MAC Address"</th>
+                                                <th>"Subnet ID"</th>
+                                                <th>"Actions"</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {res.iter().map(|r| {
+                                                let mac = r.mac.clone();
+                                                let remove_action = ServerAction::<RemoveReservation>::new();
+                                                view! {
+                                                    <tr>
+                                                        <td>{r.mac.clone()}</td>
+                                                        <td>{r.subnet_id}</td>
+                                                        <td>
+                                                            <ActionForm action=remove_action attr:class="inline-form">
+                                                                <input type="hidden" name="mac" value={mac} />
+                                                                <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
+                                                            </ActionForm>
+                                                            <ErrorToast value=remove_action.value() />
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            }).collect_view()}
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                         }.into_any()
                     }

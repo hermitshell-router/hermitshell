@@ -56,82 +56,84 @@ fn render_groups(devices: Vec<crate::types::Device>) -> AnyView {
 
         <div class="section">
             <h2>"Access Policy Matrix"</h2>
-            <table class="policy-matrix">
-                <thead>
-                    <tr>
-                        <th></th>
-                        <th>"Trusted"</th>
-                        <th>"IoT"</th>
-                        <th>"Guest"</th>
-                        <th>"Servers"</th>
-                        <th>"Quarantine"</th>
-                        <th>"Blocked"</th>
-                        <th>"Internet"</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td><strong>"Trusted"</strong></td>
-                        <td class="policy-allow">"\u{2713}"</td>
-                        <td class="policy-allow">"\u{2713}"</td>
-                        <td class="policy-allow">"\u{2713}"</td>
-                        <td class="policy-allow">"\u{2713}"</td>
-                        <td class="policy-allow">"\u{2713}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-allow">"\u{2713}"</td>
-                    </tr>
-                    <tr>
-                        <td><strong>"IoT"</strong></td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-allow">"\u{2713}"</td>
-                    </tr>
-                    <tr>
-                        <td><strong>"Guest"</strong></td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-allow">"\u{2713}"</td>
-                    </tr>
-                    <tr>
-                        <td><strong>"Servers"</strong></td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-allow">"\u{2713}"</td>
-                    </tr>
-                    <tr>
-                        <td><strong>"Quarantine"</strong></td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-allow">"\u{2713}"</td>
-                    </tr>
-                    <tr>
-                        <td><strong>"Blocked"</strong></td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                        <td class="policy-deny">"\u{2717}"</td>
-                    </tr>
-                </tbody>
-            </table>
+            <div class="table-scroll">
+                <table class="policy-matrix">
+                    <thead>
+                        <tr>
+                            <th></th>
+                            <th>"Trusted"</th>
+                            <th>"IoT"</th>
+                            <th>"Guest"</th>
+                            <th>"Servers"</th>
+                            <th>"Quarantine"</th>
+                            <th>"Blocked"</th>
+                            <th>"Internet"</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>"Trusted"</strong></td>
+                            <td class="policy-allow">"\u{2713}"</td>
+                            <td class="policy-allow">"\u{2713}"</td>
+                            <td class="policy-allow">"\u{2713}"</td>
+                            <td class="policy-allow">"\u{2713}"</td>
+                            <td class="policy-allow">"\u{2713}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-allow">"\u{2713}"</td>
+                        </tr>
+                        <tr>
+                            <td><strong>"IoT"</strong></td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-allow">"\u{2713}"</td>
+                        </tr>
+                        <tr>
+                            <td><strong>"Guest"</strong></td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-allow">"\u{2713}"</td>
+                        </tr>
+                        <tr>
+                            <td><strong>"Servers"</strong></td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-allow">"\u{2713}"</td>
+                        </tr>
+                        <tr>
+                            <td><strong>"Quarantine"</strong></td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-allow">"\u{2713}"</td>
+                        </tr>
+                        <tr>
+                            <td><strong>"Blocked"</strong></td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                            <td class="policy-deny">"\u{2717}"</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
     }.into_any()
 }
