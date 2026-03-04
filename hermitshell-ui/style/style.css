@@ -752,7 +752,7 @@ input:focus, textarea:focus, select:focus {
     background: transparent;
     color: var(--text-muted);
     font-size: 0.75rem;
-    font-family: var(--font-mono);
+    font-family: var(--font-data);
     text-decoration: none;
     letter-spacing: 0.05em;
     transition: all 0.15s;
@@ -790,7 +790,7 @@ input:focus, textarea:focus, select:focus {
 
 .bw-summary-value {
     font-size: 1.5rem;
-    font-family: var(--font-mono);
+    font-family: var(--font-data);
     font-weight: 700;
 }
 
