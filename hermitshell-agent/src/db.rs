@@ -1138,7 +1138,6 @@ impl Db {
         if let Some(ts) = since {
             conditions.push(format!("started_at >= ?{}", idx));
             params.push(Box::new(ts));
-            // idx += 1;
         }
         if !conditions.is_empty() {
             sql.push_str(" WHERE ");
@@ -1218,7 +1217,6 @@ impl Db {
         if let Some(ts) = since {
             conditions.push(format!("ts >= ?{}", idx));
             params.push(Box::new(ts));
-            // idx += 1;
         }
         if !conditions.is_empty() {
             sql.push_str(" WHERE ");

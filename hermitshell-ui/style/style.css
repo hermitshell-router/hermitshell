@@ -869,3 +869,5 @@ input:focus, textarea:focus, select:focus {
 tr.row-highlight {
     background: rgba(234, 179, 8, 0.08);
 }
+
+.input-narrow { width: 5rem; }

@@ -170,7 +170,7 @@ pub fn Logs() -> impl IntoView {
                     if !is_dns() {
                         view! {
                             <label>" Port: "</label>
-                            <input type="text" name="port" value=port_value placeholder="e.g. 443" style="width:5rem" />
+                            <input type="text" name="port" value=port_value placeholder="e.g. 443" class="input-narrow" />
                             <label>" Protocol: "</label>
                             <select name="protocol">
                                 <option value="" selected=move || protocol_value().is_empty()>"All"</option>

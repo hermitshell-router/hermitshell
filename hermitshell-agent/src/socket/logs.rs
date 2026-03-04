@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) fn handle_list_connection_logs(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let limit = req.limit.unwrap_or(100).min(1000);
-    let offset = req.offset.unwrap_or(0);
+    let offset = req.offset.unwrap_or(0).max(0);
     let device_ip = req.internal_ip.as_deref();
     let db = db.lock().unwrap();
     match db.list_connection_logs(device_ip, req.port, req.protocol.as_deref(), req.since, limit, offset) {
@@ -17,7 +17,7 @@ pub(super) fn handle_list_connection_logs(req: &Request, db: &Arc<Mutex<Db>>) ->
 
 pub(super) fn handle_list_dns_logs(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let limit = req.limit.unwrap_or(100).min(1000);
-    let offset = req.offset.unwrap_or(0);
+    let offset = req.offset.unwrap_or(0).max(0);
     let device_ip = req.internal_ip.as_deref();
     let db = db.lock().unwrap();
     match db.list_dns_logs(device_ip, req.since, limit, offset) {
