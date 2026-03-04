@@ -141,12 +141,27 @@ pub fn DeviceDetail() -> impl IntoView {
                             // Bandwidth history chart and top destinations
                             {
                                 let bw_mac = d.mac.clone();
+                                let query = use_query_map();
+                                let raw_period = query.with(|q| q.get("period").unwrap_or_else(|| "24h".to_string()));
+                                let period = match raw_period.as_str() {
+                                    "24h" | "7d" | "30d" | "1y" => raw_period.as_str(),
+                                    _ => "24h",
+                                };
+                                let period_label = match period {
+                                    "24h" => "24 Hours",
+                                    "7d" => "7 Days",
+                                    "30d" => "30 Days",
+                                    "1y" => "1 Year",
+                                    _ => "24 Hours",
+                                };
 
-                                match client::get_bandwidth_history(Some(&bw_mac), "24h") {
+                                match client::get_bandwidth_history(Some(&bw_mac), period) {
                                     Ok(bw_data) => {
+                                        let total_rx: i64 = bw_data.iter().map(|p| p.rx_bytes).sum();
+                                        let total_tx: i64 = bw_data.iter().map(|p| p.tx_bytes).sum();
                                         let chart_svg = crate::charts::bandwidth_chart(&bw_data, 800, 200);
 
-                                        let top_dests_view = match client::get_top_destinations(&bw_mac, "24h", 10) {
+                                        let top_dests_view = match client::get_top_destinations(&bw_mac, period, 10) {
                                             Ok(top_dests) if !top_dests.is_empty() => {
                                                 view! {
                                                     <h2 class="section-header">"Top Destinations"</h2>
@@ -172,14 +187,34 @@ pub fn DeviceDetail() -> impl IntoView {
                                             Err(e) => view! { <p class="error">{format!("Error loading top destinations: {e}")}</p> }.into_any(),
                                         };
 
+                                        let periods = [("24h", "24H"), ("7d", "7D"), ("30d", "30D"), ("1y", "1Y")];
+                                        let mac_for_links = bw_mac.clone();
+
                                         view! {
-                                            <h2 class="section-header">"Bandwidth (24h)"</h2>
+                                            <h2 class="section-header">"Bandwidth (" {period_label} ")"</h2>
+                                            <div class="bw-summary">
+                                                <div class="bw-summary-item">
+                                                    <span class="bw-summary-label">"Downloaded"</span>
+                                                    <span class="bw-summary-value rx">{format_bytes(total_rx)}</span>
+                                                </div>
+                                                <div class="bw-summary-item">
+                                                    <span class="bw-summary-label">"Uploaded"</span>
+                                                    <span class="bw-summary-value tx">{format_bytes(total_tx)}</span>
+                                                </div>
+                                            </div>
                                             <div inner_html={chart_svg}></div>
+                                            <div class="period-selector">
+                                                {periods.iter().map(|(val, label)| {
+                                                    let cls = if *val == period { "period-btn active" } else { "period-btn" };
+                                                    let href = format!("/devices/{}?period={}", mac_for_links, val);
+                                                    view! { <a href={href} class={cls}>{*label}</a> }
+                                                }).collect_view()}
+                                            </div>
                                             {top_dests_view}
                                         }.into_any()
                                     }
                                     Err(e) => view! {
-                                        <h2 class="section-header">"Bandwidth (24h)"</h2>
+                                        <h2 class="section-header">"Bandwidth (" {period_label} ")"</h2>
                                         <p class="error">{format!("Error loading bandwidth: {e}")}</p>
                                     }.into_any(),
                                 }
