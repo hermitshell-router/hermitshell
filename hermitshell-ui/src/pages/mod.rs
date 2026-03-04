@@ -5,6 +5,7 @@ pub mod device_detail;
 pub mod devices;
 pub mod dns;
 pub mod groups;
+pub mod guest;
 pub mod login;
 pub mod logs;
 pub mod port_forwarding;
