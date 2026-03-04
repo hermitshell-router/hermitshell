@@ -1304,3 +1304,43 @@ This document tracks security compromises made during implementation, why they w
 **Mitigating factor:** All methods are in `WEB_ALLOWED_METHODS` (require authenticated web session). The socket is Unix-domain with `0666` permissions, accessible only from the router host. Dynamic SQL in filter queries uses parameterized placeholders throughout — column names are static string literals, never derived from user input. Device presence records are bounded by 90-day rotation and state-change deduplication.
 
 **Proper fix:** Acceptable for the threat model. MAC validation was added to `get_device_presence` for consistency with other device-scoped handlers.
+
+---
+
+## Guest Network
+
+## 166. Guest auto-assignment bypasses quarantine review
+
+**What:** Devices connecting to the guest SSID are automatically moved from quarantine to the guest group by the WiFi poll loop. No admin approval is required. Detection uses SSID name matching: if a device's `wifi_ssid` equals the configured guest SSID name, it is promoted.
+
+**Why:** Guest network usability requires zero-touch onboarding. Guests scan a QR code and connect; requiring admin approval for each guest device would defeat the purpose.
+
+**Risk:** Medium. An attacker who knows the guest SSID name could connect a device that gets auto-promoted to the guest group, bypassing quarantine review. However, the guest group has restricted nftables rules (internet-only, no LAN access), so the blast radius is limited to WAN access — the same access any device on a typical guest WiFi would get. The SSID name is not secret (broadcast in beacon frames unless hidden), but the password is required.
+
+**Mitigating factor:** Guest group nftables rules deny all inter-device and LAN traffic. Guest devices can only reach the WAN. The guest password is WPA-PSK (8-63 ASCII chars) and must be known to connect. On disable, all guest devices are moved back to quarantine with nftables rules updated.
+
+**Proper fix:** Acceptable for the threat model. The guest group's isolation rules are the primary security boundary, not quarantine review.
+
+## 167. Guest WiFi password decrypted in status response
+
+**What:** The `guest_network_status` handler decrypts the stored password (AES-256-GCM, `enc:v1:` scheme) and returns it in plaintext over the Unix socket to the web UI, which displays it on the /guest page and embeds it in a QR code SVG.
+
+**Why:** The admin needs to see the current password to share it with guests (verbally, printed, or via QR code).
+
+**Risk:** Low. The password is already available to anyone who can scan the QR code or read the admin UI. The transport is a Unix-domain socket on the router host, not a network socket. The web UI serves it over HTTPS to the authenticated admin session.
+
+**Mitigating factor:** Same encryption scheme and transport as existing WiFi AP passwords (entry #72). The QR code is generated server-side (no client-side JavaScript exposure). The password is only returned in the `guest_network_status` response, which requires an authenticated web session.
+
+**Proper fix:** Acceptable. Same pattern as existing WiFi password handling.
+
+## 168. Guest SSID name is the sole auto-assignment criterion
+
+**What:** The WiFi poll loop matches devices to the guest network based solely on `wifi_ssid` string equality with the configured guest SSID name. There is no secondary verification (e.g., BSSID, AP MAC, or provider confirmation).
+
+**Why:** WiFi providers may report SSIDs differently (with/without quoting, trimming), and the SSID is the stable identifier across provider types (EAP, UniFi).
+
+**Risk:** Low. If an attacker creates a rogue AP with the same SSID name, devices connecting to it could report that SSID to HermitShell's WiFi poll and get auto-assigned to the guest group. However, this requires the rogue AP to be reachable from the managed network, and the guest group only grants WAN access (no LAN). The real risk is that the rogue AP could intercept guest traffic (evil twin), but that is a WiFi-layer attack outside HermitShell's scope.
+
+**Mitigating factor:** The WiFi poll only queries managed providers (EAP/UniFi controllers). A device would need to appear in the managed provider's client list with the matching SSID — a rogue AP's clients would not appear there unless the rogue AP is the managed provider itself.
+
+**Proper fix:** Acceptable. The managed provider's client list is the trust anchor, not the SSID name alone.
