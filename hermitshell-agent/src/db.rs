@@ -1705,7 +1705,6 @@ impl Db {
             |row| row.get(0),
         )?;
 
-        let hour_cutoff = now - 86400;
         let mut stmt = self.conn.prepare(
             "SELECT bh.device_mac, d.hostname, SUM(bh.rx_bytes + bh.tx_bytes) as total
              FROM bandwidth_hourly bh
@@ -1715,7 +1714,7 @@ impl Db {
              ORDER BY total DESC
              LIMIT 5"
         )?;
-        let rows = stmt.query_map([hour_cutoff], |row| {
+        let rows = stmt.query_map([cutoff_24h], |row| {
             Ok(TopTalker {
                 mac: row.get(0)?,
                 hostname: row.get(1)?,
