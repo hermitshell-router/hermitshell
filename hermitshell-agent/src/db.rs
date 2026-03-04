@@ -2311,13 +2311,6 @@ impl Db {
         Ok(())
     }
 
-    pub fn set_guest_network_enabled(&self, enabled: bool) -> Result<()> {
-        self.conn.execute(
-            "UPDATE guest_network_config SET enabled = ?1",
-            rusqlite::params![if enabled { 1 } else { 0 }],
-        )?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]

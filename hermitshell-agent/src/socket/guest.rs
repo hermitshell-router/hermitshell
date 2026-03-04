@@ -159,6 +159,25 @@ async fn handle_guest_network_disable(_req: &Request, db: &Arc<Mutex<Db>>) -> Re
         }
     }
 
+    // Move all guest devices back to quarantine
+    {
+        let db_guard = db.lock().unwrap();
+        if let Ok(devices) = db_guard.list_devices() {
+            for device in devices.iter().filter(|d| d.device_group == "guest") {
+                let _ = db_guard.set_device_group(&device.mac, "quarantine");
+                if let Some(ref ipv4) = device.ipv4 {
+                    let _ = crate::nftables::remove_device_forward_rule(ipv4);
+                    let _ = crate::nftables::add_device_forward_rule(ipv4, "quarantine");
+                }
+                if let Some(ref ipv6) = device.ipv6_ula {
+                    let _ = crate::nftables::remove_device_forward_rule_v6(ipv6);
+                    let _ = crate::nftables::add_device_forward_rule_v6(ipv6, "quarantine");
+                }
+                info!(mac = %device.mac, "moved guest device to quarantine");
+            }
+        }
+    }
+
     // Remove from DB
     let db_guard = db.lock().unwrap();
     if let Err(e) = db_guard.delete_guest_network() {
