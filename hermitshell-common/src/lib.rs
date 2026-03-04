@@ -185,6 +185,21 @@ pub struct BandwidthRealtime {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DashboardStats {
+    pub connections_24h: i64,
+    pub dns_queries_24h: i64,
+    pub unacked_alerts: i64,
+    pub top_talkers: Vec<TopTalker>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TopTalker {
+    pub mac: String,
+    pub hostname: Option<String>,
+    pub total_bytes: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TopDestination {
     pub dest_ip: String,
     pub dest_port: u16,

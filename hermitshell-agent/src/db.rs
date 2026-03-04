@@ -2,10 +2,10 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 pub use hermitshell_common::{
-    Alert, AuditEntry, BandwidthPoint, BandwidthRealtime, ConnectionLog, Device,
-    DhcpReservation, DnsBlocklist, DnsCustomRule, DnsForwardZone, DnsLogEntry,
-    PortForward, SnmpSwitchInfo, TopDestination, VlanGroupConfig, WgPeer, WifiAp,
-    WifiClient,
+    Alert, AuditEntry, BandwidthPoint, BandwidthRealtime, ConnectionLog, DashboardStats,
+    Device, DhcpReservation, DnsBlocklist, DnsCustomRule, DnsForwardZone, DnsLogEntry,
+    PortForward, SnmpSwitchInfo, TopDestination, TopTalker, VlanGroupConfig, WgPeer,
+    WifiAp, WifiClient,
 };
 
 /// Practical bottlenecks before hitting address space limits:
@@ -1678,6 +1678,58 @@ impl Db {
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Get aggregate dashboard statistics: connection/DNS counts, unacked alerts, top talkers.
+    pub fn get_dashboard_stats(&self) -> Result<DashboardStats> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+        let cutoff_24h = now - 86400;
+
+        let connections_24h: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM connection_logs WHERE started_at >= ?1",
+            [cutoff_24h],
+            |row| row.get(0),
+        )?;
+
+        let dns_queries_24h: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM dns_logs WHERE ts >= ?1",
+            [cutoff_24h],
+            |row| row.get(0),
+        )?;
+
+        let unacked_alerts: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM alerts WHERE acknowledged = 0",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let hour_cutoff = now - 86400;
+        let mut stmt = self.conn.prepare(
+            "SELECT bh.device_mac, d.hostname, SUM(bh.rx_bytes + bh.tx_bytes) as total
+             FROM bandwidth_hourly bh
+             LEFT JOIN devices d ON d.mac = bh.device_mac
+             WHERE bh.hour_bucket >= ?1
+             GROUP BY bh.device_mac
+             ORDER BY total DESC
+             LIMIT 5"
+        )?;
+        let rows = stmt.query_map([hour_cutoff], |row| {
+            Ok(TopTalker {
+                mac: row.get(0)?,
+                hostname: row.get(1)?,
+                total_bytes: row.get(2)?,
+            })
+        })?;
+        let top_talkers: Vec<TopTalker> = rows.filter_map(|r| r.ok()).collect();
+
+        Ok(DashboardStats {
+            connections_24h,
+            dns_queries_24h,
+            unacked_alerts,
+            top_talkers,
+        })
     }
 
     pub fn rotate_alerts(&self, retention_secs: i64) -> Result<usize> {

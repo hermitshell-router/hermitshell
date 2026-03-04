@@ -1,11 +1,12 @@
 use leptos::prelude::*;
 use crate::client;
+use crate::charts;
 use crate::components::layout::Layout;
 use crate::components::stat_card::StatCard;
 use crate::components::toast::ErrorToast;
 use crate::server_fns::ToggleAdBlocking;
 use crate::types::{Device, Status};
-use crate::format_uptime;
+use crate::{format_bytes, format_uptime};
 
 #[component]
 pub fn Dashboard() -> impl IntoView {
@@ -66,6 +67,18 @@ fn render_dashboard(status: Status, mut devices: Vec<Device>) -> AnyView {
             <StatCard label="Ad Blocking" value={ad_blocking_text.to_string()} class={ad_blocking_class.to_string()} />
         </div>
 
+        <div class="section">
+            <h2 class="section-header">"Network Bandwidth (24h)"</h2>
+            {match client::get_bandwidth_history(None, "24h") {
+                Ok(history) => {
+                    view! { <div inner_html={charts::bandwidth_chart(&history, 800, 120)}></div> }.into_any()
+                }
+                Err(e) => {
+                    view! { <p class="error">{format!("Error loading bandwidth: {e}")}</p> }.into_any()
+                }
+            }}
+        </div>
+
         <div class="actions-bar">
             <ActionForm action=ad_action>
                 <input type="hidden" name="enabled" value={toggle_value} />
@@ -75,6 +88,51 @@ fn render_dashboard(status: Status, mut devices: Vec<Device>) -> AnyView {
             </ActionForm>
             <ErrorToast value=ad_action.value() />
         </div>
+
+        {match client::get_dashboard_stats() {
+            Ok(stats) => {
+                let alerts_class = if stats.unacked_alerts > 0 { "danger" } else { "success" };
+                let top_talkers = stats.top_talkers;
+                view! {
+                    <div class="card-grid">
+                        <StatCard label="Connections (24h)" value={stats.connections_24h.to_string()} />
+                        <StatCard label="DNS Queries (24h)" value={stats.dns_queries_24h.to_string()} />
+                        <StatCard label="Unacked Alerts" value={stats.unacked_alerts.to_string()} class={alerts_class.to_string()} />
+                    </div>
+
+                    {if !top_talkers.is_empty() {
+                        view! {
+                            <h2 class="section-header">"Top Talkers (24h)"</h2>
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>"Device"</th>
+                                        <th>"Total"</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {top_talkers.into_iter().map(|t| {
+                                        let display = t.hostname.unwrap_or_else(|| t.mac.clone());
+                                        let link = format!("/devices/{}", t.mac);
+                                        view! {
+                                            <tr>
+                                                <td><a href={link}>{display}</a></td>
+                                                <td>{format_bytes(t.total_bytes)}</td>
+                                            </tr>
+                                        }
+                                    }).collect_view()}
+                                </tbody>
+                            </table>
+                        }.into_any()
+                    } else {
+                        view! { }.into_any()
+                    }}
+                }.into_any()
+            }
+            Err(e) => {
+                view! { <p class="error">{format!("Error loading stats: {e}")}</p> }.into_any()
+            }
+        }}
 
         <h2 class="section-header">"Recent Devices"</h2>
         <table>

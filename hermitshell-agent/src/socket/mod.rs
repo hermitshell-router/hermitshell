@@ -105,6 +105,7 @@ const WEB_ALLOWED_METHODS: &[&str] = &[
     "list_dns_blocklists", "add_dns_blocklist", "remove_dns_blocklist", "set_dns_blocklist_enabled",
     "vlan_enable", "vlan_disable", "vlan_status",
     "switch_add", "switch_remove", "switch_list", "switch_test",
+    "get_dashboard_stats",
 ];
 
 const SESSION_IDLE_TIMEOUT_SECS: u64 = 1800;     // 30 minutes
@@ -306,6 +307,8 @@ struct Response {
     dns_custom_rules: Option<Vec<hermitshell_common::DnsCustomRule>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     dns_blocklists: Option<Vec<hermitshell_common::DnsBlocklist>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dashboard_stats: Option<crate::db::DashboardStats>,
 }
 
 #[derive(Debug, Serialize)]
@@ -596,6 +599,17 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "switch_add" => switch::handle_switch_add(&req, db),
         "switch_remove" => switch::handle_switch_remove(&req, db),
         "switch_list" => switch::handle_switch_list(&req, db),
+        "get_dashboard_stats" => {
+            let db = db.lock().unwrap();
+            match db.get_dashboard_stats() {
+                Ok(stats) => {
+                    let mut resp = Response::ok();
+                    resp.dashboard_stats = Some(stats);
+                    resp
+                }
+                Err(e) => Response::err(&e.to_string()),
+            }
+        }
         _ => Response::err("unknown method"),
     }
 }

@@ -77,6 +77,7 @@ pub struct Response {
     pub dns_custom_rules: Option<Vec<hermitshell_common::DnsCustomRule>>,
     pub dns_blocklists: Option<Vec<hermitshell_common::DnsBlocklist>>,
     pub ipv6_pinholes: Option<Vec<serde_json::Value>>,
+    pub dashboard_stats: Option<hermitshell_common::DashboardStats>,
 }
 
 fn send(request: serde_json::Value) -> Result<Response, String> {
@@ -672,6 +673,11 @@ pub fn get_bandwidth_history(device_mac: Option<&str>, period: &str) -> Result<V
     }
     let resp = ok_or_err(send(req)?)?;
     Ok(resp.bandwidth_history.unwrap_or_default())
+}
+
+pub fn get_dashboard_stats() -> Result<hermitshell_common::DashboardStats, String> {
+    let resp = ok_or_err(send(json!({"method": "get_dashboard_stats"}))?)?;
+    resp.dashboard_stats.ok_or_else(|| "No dashboard_stats in response".to_string())
 }
 
 pub fn get_bandwidth_realtime() -> Result<Vec<hermitshell_common::BandwidthRealtime>, String> {
