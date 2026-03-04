@@ -46,3 +46,82 @@ assert_match "$nofile_code" "^400$" "Restore without file returns 400"
 
 # Clean up
 vm_exec lan "rm -f /tmp/cookies-br /tmp/backup-test.json /tmp/backup-enc-test.json" >/dev/null 2>&1
+
+# =====================================================
+# Edge Cases & Robustness
+# =====================================================
+
+# --- Quantity limit: too many devices ---
+args=$(_vm_ssh_args router)
+qty_result=$(ssh $SSH_COMMON $args 'bash -s' 2>/dev/null <<'QSCRIPT'
+SOCK=/run/hermitshell/agent.sock
+# Generate 10001 devices via python3
+payload=$(python3 -c "
+import json
+devices = [{'mac': f'aa:bb:cc:{i//256//256%256:02x}:{i//256%256:02x}:{i%256:02x}', 'device_group': 'trusted'} for i in range(10001)]
+print(json.dumps({'method': 'import_config', 'value': json.dumps({'version': 2, 'devices': devices})}))
+" 2>/dev/null)
+echo "$payload" | socat -t 5 - UNIX-CONNECT:$SOCK
+QSCRIPT
+)
+assert_contains "$qty_result" '"ok":false' "Import rejects >10000 devices"
+assert_contains "$qty_result" "too many devices" "Error mentions too many devices"
+
+# --- Quantity limit: too many port forwards ---
+qty_pf=$(ssh $SSH_COMMON $args 'bash -s' 2>/dev/null <<'PFSCRIPT'
+SOCK=/run/hermitshell/agent.sock
+payload=$(python3 -c "
+import json
+pfs = [{'protocol': 'tcp', 'external_port_start': i, 'external_port_end': i, 'internal_ip': '10.0.1.1', 'internal_port': i} for i in range(1001)]
+print(json.dumps({'method': 'import_config', 'value': json.dumps({'version': 2, 'port_forwards': pfs})}))
+" 2>/dev/null)
+echo "$payload" | socat -t 5 - UNIX-CONNECT:$SOCK
+PFSCRIPT
+)
+assert_contains "$qty_pf" '"ok":false' "Import rejects >1000 port forwards"
+assert_contains "$qty_pf" "too many port forwards" "Error mentions too many port forwards"
+
+# --- Gateway IP rejection ---
+gateway_result=$(vm_exec router 'echo "{\"method\":\"import_config\",\"value\":\"{\\\"version\\\":2,\\\"port_forwards\\\":[{\\\"protocol\\\":\\\"tcp\\\",\\\"external_port_start\\\":80,\\\"external_port_end\\\":80,\\\"internal_ip\\\":\\\"10.0.0.1\\\",\\\"internal_port\\\":80}]}\"}" | socat -t 5 - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_contains "$gateway_result" '"ok":false' "Import rejects gateway IP port forward"
+assert_contains "$gateway_result" "gateway" "Error mentions gateway"
+
+# --- Port forward description too long (>256 chars) ---
+long_desc=$(python3 -c "print('x' * 257)")
+desc_result=$(vm_exec router "echo '{\"method\":\"import_config\",\"value\":\"{\\\\\"version\\\\\":2,\\\\\"port_forwards\\\\\":[{\\\\\"protocol\\\\\":\\\\\"tcp\\\\\",\\\\\"external_port_start\\\\\":80,\\\\\"external_port_end\\\\\":80,\\\\\"internal_ip\\\\\":\\\\\"10.0.1.1\\\\\",\\\\\"internal_port\\\\\":80,\\\\\"description\\\\\":\\\\\"${long_desc}\\\\\"}]}\"}' | socat -t 5 - UNIX-CONNECT:/run/hermitshell/agent.sock")
+assert_contains "$desc_result" '"ok":false' "Import rejects description >256 chars"
+assert_contains "$desc_result" "description too long" "Error mentions description too long"
+
+# --- Invalid WAN interface ---
+wan_result=$(vm_exec router 'echo "{\"method\":\"import_config\",\"value\":\"{\\\"version\\\":2,\\\"config\\\":{\\\"wan_iface\\\":\\\"../etc/passwd\\\"}}\"}" | socat -t 5 - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_contains "$wan_result" '"ok":false' "Import rejects invalid WAN interface"
+assert_contains "$wan_result" "invalid WAN interface" "Error mentions WAN interface"
+
+# --- Invalid LAN interface ---
+lan_result=$(vm_exec router 'echo "{\"method\":\"import_config\",\"value\":\"{\\\"version\\\":2,\\\"config\\\":{\\\"lan_iface\\\":\\\"foo bar\\\"}}\"}" | socat -t 5 - UNIX-CONNECT:/run/hermitshell/agent.sock')
+assert_contains "$lan_result" '"ok":false' "Import rejects invalid LAN interface"
+assert_contains "$lan_result" "invalid LAN interface" "Error mentions LAN interface"
+
+# --- Empty config import clears port forwards ---
+args=$(_vm_ssh_args router)
+empty_result=$(ssh $SSH_COMMON $args 'bash -s' 2>/dev/null <<'EMPTYSCRIPT'
+SOCK=/run/hermitshell/agent.sock
+
+# Add a port forward
+echo '{"method":"add_port_forward","protocol":"tcp","external_port_start":5555,"external_port_end":5555,"internal_ip":"10.0.1.1","internal_port":5050,"description":"empty-test"}' | socat - UNIX-CONNECT:$SOCK > /dev/null
+
+# Verify it exists
+pre=$(echo '{"method":"list_port_forwards"}' | socat - UNIX-CONNECT:$SOCK)
+echo "PRE_5555:$(echo "$pre" | grep -c '5555')"
+
+# Import empty config (no port_forwards section = DELETE all)
+import_payload=$(python3 -c "import json; print(json.dumps({'method':'import_config','value':json.dumps({'version':2})}))")
+echo "$import_payload" | socat -t 5 - UNIX-CONNECT:$SOCK > /dev/null
+
+# Check port forwards are cleared
+post=$(echo '{"method":"list_port_forwards"}' | socat - UNIX-CONNECT:$SOCK)
+echo "POST_5555:$(echo "$post" | grep -c '5555')"
+EMPTYSCRIPT
+)
+assert_contains "$empty_result" "PRE_5555:1" "Port forward exists before empty import"
+assert_contains "$empty_result" "POST_5555:0" "Port forward cleared by empty import"
