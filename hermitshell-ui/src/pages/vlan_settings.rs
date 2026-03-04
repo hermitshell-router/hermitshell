@@ -59,6 +59,7 @@ pub fn VlanSettings() -> impl IntoView {
                                     view! { <p class="settings-empty">"No VLANs configured"</p> }.into_any()
                                 } else {
                                     view! {
+                                        <div class="table-scroll">
                                         <table class="data-table">
                                             <thead>
                                                 <tr>
@@ -105,6 +106,7 @@ pub fn VlanSettings() -> impl IntoView {
                                                 }).collect_view()}
                                             </tbody>
                                         </table>
+                                        </div>
                                     }.into_any()
                                 }}
                             </div>

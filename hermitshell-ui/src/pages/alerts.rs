@@ -65,49 +65,51 @@ pub fn Alerts() -> impl IntoView {
                             view! { <p class="muted">"No alerts."</p> }.into_any()
                         } else {
                             view! {
-                                <table class="data-table">
-                                    <thead><tr>
-                                        <th>"Time"</th>
-                                        <th>"Device"</th>
-                                        <th>"Rule"</th>
-                                        <th>"Severity"</th>
-                                        <th>"Message"</th>
-                                        <th>"Actions"</th>
-                                    </tr></thead>
-                                    <tbody>
-                                        {alert_list.into_iter().map(|a| {
-                                            let sev_class = severity_class(&a.severity);
-                                            let ack_class = if a.acknowledged { "muted" } else { "" };
-                                            let rule_name = rule_display(&a.rule);
-                                            let ack_action = ServerAction::<AcknowledgeAlert>::new();
-                                            let id_str = a.id.to_string();
-                                            let acknowledged = a.acknowledged;
-                                            let device_link = format!("/devices/{}", a.device_mac);
-                                            view! {
-                                                <tr class={ack_class}>
-                                                    <td>{format_timestamp(a.created_at)}</td>
-                                                    <td><a href={device_link}>{a.device_mac}</a></td>
-                                                    <td>{rule_name}</td>
-                                                    <td><span class={sev_class}>{a.severity}</span></td>
-                                                    <td>{a.message}</td>
-                                                    <td>
-                                                        {if !acknowledged {
-                                                            view! {
-                                                                <ActionForm action=ack_action attr:class="inline-form">
-                                                                    <input type="hidden" name="id" value={id_str} />
-                                                                    <button type="submit" class="btn btn-sm">"Ack"</button>
-                                                                </ActionForm>
-                                                            }.into_any()
-                                                        } else {
-                                                            view! { <span class="muted">"acked"</span> }.into_any()
-                                                        }}
-                                                        <ErrorToast value=ack_action.value() />
-                                                    </td>
-                                                </tr>
-                                            }
-                                        }).collect_view()}
-                                    </tbody>
-                                </table>
+                                <div class="table-scroll">
+                                    <table class="data-table">
+                                        <thead><tr>
+                                            <th>"Time"</th>
+                                            <th>"Device"</th>
+                                            <th>"Rule"</th>
+                                            <th>"Severity"</th>
+                                            <th>"Message"</th>
+                                            <th>"Actions"</th>
+                                        </tr></thead>
+                                        <tbody>
+                                            {alert_list.into_iter().map(|a| {
+                                                let sev_class = severity_class(&a.severity);
+                                                let ack_class = if a.acknowledged { "muted" } else { "" };
+                                                let rule_name = rule_display(&a.rule);
+                                                let ack_action = ServerAction::<AcknowledgeAlert>::new();
+                                                let id_str = a.id.to_string();
+                                                let acknowledged = a.acknowledged;
+                                                let device_link = format!("/devices/{}", a.device_mac);
+                                                view! {
+                                                    <tr class={ack_class}>
+                                                        <td>{format_timestamp(a.created_at)}</td>
+                                                        <td><a href={device_link}>{a.device_mac}</a></td>
+                                                        <td>{rule_name}</td>
+                                                        <td><span class={sev_class}>{a.severity}</span></td>
+                                                        <td>{a.message}</td>
+                                                        <td>
+                                                            {if !acknowledged {
+                                                                view! {
+                                                                    <ActionForm action=ack_action attr:class="inline-form">
+                                                                        <input type="hidden" name="id" value={id_str} />
+                                                                        <button type="submit" class="btn btn-sm">"Ack"</button>
+                                                                    </ActionForm>
+                                                                }.into_any()
+                                                            } else {
+                                                                view! { <span class="muted">"acked"</span> }.into_any()
+                                                            }}
+                                                            <ErrorToast value=ack_action.value() />
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            }).collect_view()}
+                                        </tbody>
+                                    </table>
+                                </div>
                             }.into_any()
                         }
                     }

@@ -5,7 +5,7 @@ use hermitshell_common::{BandwidthPoint, DevicePresenceRecord};
 pub fn bandwidth_chart(data: &[BandwidthPoint], width: u32, height: u32) -> String {
     if data.is_empty() {
         return format!(
-            r##"<svg width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg">
+            r##"<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">
                 <text x="{}" y="{}" fill="#5a7d5a" font-size="14" text-anchor="middle">No data</text>
             </svg>"##,
             width / 2, height / 2
@@ -100,7 +100,7 @@ pub fn bandwidth_chart(data: &[BandwidthPoint], width: u32, height: u32) -> Stri
     }
 
     format!(
-        r##"<svg width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg" style="background:var(--bg-raised,#1e3a1e)">
+        r##"<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg" style="background:var(--bg-raised,#1e3a1e)">
             {y_labels}
             {x_labels}
             <path d="{rx_fill}" fill="rgba(34,197,94,0.35)" />

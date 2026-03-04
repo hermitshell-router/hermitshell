@@ -54,52 +54,54 @@ pub fn Wireguard() -> impl IntoView {
                                     view! { <p class="text-muted">"No peers configured."</p> }.into_any()
                                 } else {
                                     view! {
-                                        <table class="device-table">
-                                            <thead>
-                                                <tr>
-                                                    <th>"Name"</th>
-                                                    <th>"IP"</th>
-                                                    <th>"Group"</th>
-                                                    <th>"Public Key"</th>
-                                                    <th>"Actions"</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {wg.peers.iter().map(|peer| {
-                                                    let pk = peer.public_key.clone();
-                                                    let pk2 = peer.public_key.clone();
-                                                    let short_key = format!("{}...", &peer.public_key[..12.min(peer.public_key.len())]);
-                                                    let group_action = ServerAction::<SetWgPeerGroup>::new();
-                                                    let remove_action = ServerAction::<RemoveWgPeer>::new();
-                                                    view! {
-                                                        <tr>
-                                                            <td>{peer.name.clone()}</td>
-                                                            <td>{peer.ip.clone()}</td>
-                                                            <td><span class="group-badge">{peer.device_group.clone()}</span></td>
-                                                            <td>{short_key}</td>
-                                                            <td>
-                                                                <ActionForm action=group_action attr:class="inline-form">
-                                                                    <input type="hidden" name="public_key" value={pk.clone()} />
-                                                                    <select name="group">
-                                                                        <option value="trusted">"trusted"</option>
-                                                                        <option value="iot">"iot"</option>
-                                                                        <option value="guest">"guest"</option>
-                                                                        <option value="servers">"servers"</option>
-                                                                    </select>
-                                                                    <button type="submit" class="btn btn-sm">"Move"</button>
-                                                                </ActionForm>
-                                                                <ErrorToast value=group_action.value() />
-                                                                <ActionForm action=remove_action attr:class="inline-form">
-                                                                    <input type="hidden" name="public_key" value={pk2} />
-                                                                    <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
-                                                                </ActionForm>
-                                                                <ErrorToast value=remove_action.value() />
-                                                            </td>
-                                                        </tr>
-                                                    }
-                                                }).collect_view()}
-                                            </tbody>
-                                        </table>
+                                        <div class="table-scroll">
+                                            <table class="device-table">
+                                                <thead>
+                                                    <tr>
+                                                        <th>"Name"</th>
+                                                        <th>"IP"</th>
+                                                        <th>"Group"</th>
+                                                        <th>"Public Key"</th>
+                                                        <th>"Actions"</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {wg.peers.iter().map(|peer| {
+                                                        let pk = peer.public_key.clone();
+                                                        let pk2 = peer.public_key.clone();
+                                                        let short_key = format!("{}...", &peer.public_key[..12.min(peer.public_key.len())]);
+                                                        let group_action = ServerAction::<SetWgPeerGroup>::new();
+                                                        let remove_action = ServerAction::<RemoveWgPeer>::new();
+                                                        view! {
+                                                            <tr>
+                                                                <td>{peer.name.clone()}</td>
+                                                                <td>{peer.ip.clone()}</td>
+                                                                <td><span class="group-badge">{peer.device_group.clone()}</span></td>
+                                                                <td>{short_key}</td>
+                                                                <td>
+                                                                    <ActionForm action=group_action attr:class="inline-form">
+                                                                        <input type="hidden" name="public_key" value={pk.clone()} />
+                                                                        <select name="group">
+                                                                            <option value="trusted">"trusted"</option>
+                                                                            <option value="iot">"iot"</option>
+                                                                            <option value="guest">"guest"</option>
+                                                                            <option value="servers">"servers"</option>
+                                                                        </select>
+                                                                        <button type="submit" class="btn btn-sm">"Move"</button>
+                                                                    </ActionForm>
+                                                                    <ErrorToast value=group_action.value() />
+                                                                    <ActionForm action=remove_action attr:class="inline-form">
+                                                                        <input type="hidden" name="public_key" value={pk2} />
+                                                                        <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
+                                                                    </ActionForm>
+                                                                    <ErrorToast value=remove_action.value() />
+                                                                </td>
+                                                            </tr>
+                                                        }
+                                                    }).collect_view()}
+                                                </tbody>
+                                            </table>
+                                        </div>
                                     }.into_any()
                                 }}
 

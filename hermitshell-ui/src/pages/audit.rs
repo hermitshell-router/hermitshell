@@ -32,27 +32,29 @@ pub fn Audit() -> impl IntoView {
                             view! { <p class="text-muted">"No audit entries yet."</p> }.into_any()
                         } else {
                             view! {
-                                <table class="device-table">
-                                    <thead>
-                                        <tr>
-                                            <th>"Time"</th>
-                                            <th>"Action"</th>
-                                            <th>"Detail"</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {entries.into_iter().map(|entry| {
-                                            let time = format_timestamp(entry.created_at);
-                                            view! {
-                                                <tr>
-                                                    <td>{time}</td>
-                                                    <td>{entry.action}</td>
-                                                    <td>{entry.detail}</td>
-                                                </tr>
-                                            }
-                                        }).collect_view()}
-                                    </tbody>
-                                </table>
+                                <div class="table-scroll">
+                                    <table class="device-table">
+                                        <thead>
+                                            <tr>
+                                                <th>"Time"</th>
+                                                <th>"Action"</th>
+                                                <th>"Detail"</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {entries.into_iter().map(|entry| {
+                                                let time = format_timestamp(entry.created_at);
+                                                view! {
+                                                    <tr>
+                                                        <td>{time}</td>
+                                                        <td>{entry.action}</td>
+                                                        <td>{entry.detail}</td>
+                                                    </tr>
+                                                }
+                                            }).collect_view()}
+                                        </tbody>
+                                    </table>
+                                </div>
                             }.into_any()
                         }
                     }

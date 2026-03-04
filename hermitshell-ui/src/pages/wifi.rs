@@ -41,6 +41,7 @@ pub fn Wifi() -> impl IntoView {
                                 view! { <p class="text-muted">"No WiFi providers configured."</p> }.into_any()
                             } else {
                                 view! {
+                                    <div class="table-scroll">
                                     <table class="device-table">
                                         <thead>
                                             <tr>
@@ -81,6 +82,7 @@ pub fn Wifi() -> impl IntoView {
                                             }).collect_view()}
                                         </tbody>
                                     </table>
+                                    </div>
                                 }.into_any()
                             }
                         }
@@ -170,6 +172,7 @@ pub fn Wifi() -> impl IntoView {
                                 view! { <p class="text-muted">"No access points discovered."</p> }.into_any()
                             } else {
                                 view! {
+                                    <div class="table-scroll">
                                     <table class="device-table">
                                         <thead>
                                             <tr>
@@ -224,6 +227,7 @@ pub fn Wifi() -> impl IntoView {
                                             }).collect_view()}
                                         </tbody>
                                     </table>
+                                    </div>
                                     <ErrorToast value=set_radio_action.value() />
                                 }.into_any()
                             }
@@ -248,6 +252,7 @@ pub fn Wifi() -> impl IntoView {
                                 view! { <p class="text-muted">"No WiFi clients detected."</p> }.into_any()
                             } else {
                                 view! {
+                                    <div class="table-scroll">
                                     <table class="device-table">
                                         <thead>
                                             <tr>
@@ -284,6 +289,7 @@ pub fn Wifi() -> impl IntoView {
                                             }).collect_view()}
                                         </tbody>
                                     </table>
+                                    </div>
                                 }.into_any()
                             }
                         }
@@ -327,6 +333,7 @@ fn ProviderDetail(
                             view! { <p class="text-muted">"No SSIDs configured."</p> }.into_any()
                         } else {
                             view! {
+                                <div class="table-scroll">
                                 <table class="device-table">
                                     <thead>
                                         <tr>
@@ -361,6 +368,7 @@ fn ProviderDetail(
                                         }).collect_view()}
                                     </tbody>
                                 </table>
+                                </div>
                             }.into_any()
                         }
                     }
@@ -499,6 +507,7 @@ fn ApDetail(
                 view! { <p class="text-muted">"No clients connected to this AP."</p> }.into_any()
             } else {
                 view! {
+                    <div class="table-scroll">
                     <table class="device-table">
                         <thead>
                             <tr>
@@ -528,6 +537,7 @@ fn ApDetail(
                             }).collect_view()}
                         </tbody>
                     </table>
+                    </div>
                 }.into_any()
             }}
         </div>

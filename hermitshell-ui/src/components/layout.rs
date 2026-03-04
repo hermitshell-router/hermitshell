@@ -53,6 +53,9 @@ pub fn Layout(
             </head>
             <body>
                 <div class="app-shell">
+                    <input type="checkbox" id="nav-toggle" class="nav-toggle" />
+                    <label for="nav-toggle" class="nav-hamburger">{"\u{2630}"}</label>
+                    <label for="nav-toggle" class="nav-overlay"></label>
                     <nav class="sidebar">
                         <div class="sidebar-brand">
                             <h1>"HermitShell"</h1>

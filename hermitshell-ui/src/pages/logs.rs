@@ -229,6 +229,7 @@ pub fn Logs() -> impl IntoView {
                                         let prev_url = build_query(&tab_s, &dev_s, "", "", &range_s, prev_offset);
                                         let next_url = build_query(&tab_s, &dev_s, "", "", &range_s, next_offset);
                                         view! {
+                                            <div class="table-scroll">
                                             <table class="device-table">
                                                 <thead>
                                                     <tr>
@@ -252,6 +253,7 @@ pub fn Logs() -> impl IntoView {
                                                     }).collect_view()}
                                                 </tbody>
                                             </table>
+                                            </div>
                                             <div class="flex-row my-sm">
                                                 {if has_prev {
                                                     view! { <a href=prev_url class="btn btn-sm">"Prev"</a> }.into_any()
@@ -312,6 +314,7 @@ pub fn Logs() -> impl IntoView {
                                         let prev_url = build_query(&tab_s, &dev_s, &port_s, &proto_s, &range_s, prev_offset);
                                         let next_url = build_query(&tab_s, &dev_s, &port_s, &proto_s, &range_s, next_offset);
                                         view! {
+                                            <div class="table-scroll">
                                             <table class="device-table">
                                                 <thead>
                                                     <tr>
@@ -345,6 +348,7 @@ pub fn Logs() -> impl IntoView {
                                                     }).collect_view()}
                                                 </tbody>
                                             </table>
+                                            </div>
                                             <div class="flex-row my-sm">
                                                 {if has_prev {
                                                     view! { <a href=prev_url class="btn btn-sm">"Prev"</a> }.into_any()

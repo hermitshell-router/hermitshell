@@ -165,7 +165,8 @@ fn render_dashboard(status: Status, mut devices: Vec<Device>, guest_status: serd
         </div>
 
         <h2 class="section-header">"Recent Devices"</h2>
-        <table>
+        <div class="table-scroll">
+            <table>
                 <thead>
                     <tr>
                         <th>"Hostname"</th>
@@ -191,5 +192,6 @@ fn render_dashboard(status: Status, mut devices: Vec<Device>, guest_status: serd
                     }).collect_view()}
                 </tbody>
             </table>
+        </div>
     }.into_any()
 }
