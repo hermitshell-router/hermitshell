@@ -220,13 +220,13 @@ pub fn DeviceDetail() -> impl IntoView {
                                 }
                             }
 
-                            // Uptime / Presence tracking
+                            // Uptime / Presence tracking (uses same period as bandwidth chart)
                             {
                                 let query_up = use_query_map();
-                                let raw_up_period = query_up.with(|q| q.get("period").unwrap_or_else(|| "7d".to_string()));
+                                let raw_up_period = query_up.with(|q| q.get("period").unwrap_or_else(|| "24h".to_string()));
                                 let up_period = match raw_up_period.as_str() {
                                     "24h" | "7d" | "30d" | "1y" => raw_up_period.as_str(),
-                                    _ => "7d",
+                                    _ => "24h",
                                 };
                                 match client::get_device_presence(&d.mac, up_period) {
                                     Ok(uptime) => {

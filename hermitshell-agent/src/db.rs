@@ -1914,6 +1914,20 @@ impl Db {
         }
     }
 
+    /// Get the most recent presence state before a given timestamp.
+    pub fn get_presence_before(&self, device_mac: &str, before: i64) -> Result<Option<String>> {
+        let result = self.conn.query_row(
+            "SELECT state FROM device_presence WHERE device_mac = ?1 AND ts < ?2 ORDER BY ts DESC LIMIT 1",
+            rusqlite::params![device_mac, before],
+            |row| row.get::<_, String>(0),
+        );
+        match result {
+            Ok(state) => Ok(Some(state)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     pub fn rotate_presence(&self, max_age_secs: i64) -> Result<usize> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?

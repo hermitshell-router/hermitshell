@@ -649,6 +649,15 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                     // Calculate uptime percentage
                     let total_secs = (now - since).max(1) as f64;
                     let mut online_secs: f64 = 0.0;
+
+                    // Account for pre-window state: if device was online before the window,
+                    // count time from window start to first record (or end if no records)
+                    let pre_state = db.get_presence_before(&mac, since).unwrap_or(None);
+                    if pre_state.as_deref() == Some("online") {
+                        let first_end = if records.is_empty() { now } else { records[0].ts };
+                        online_secs += (first_end - since) as f64;
+                    }
+
                     for (i, rec) in records.iter().enumerate() {
                         if rec.state == "online" {
                             let end_ts = if i + 1 < records.len() { records[i + 1].ts } else { now };

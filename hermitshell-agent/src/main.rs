@@ -986,6 +986,10 @@ async fn main() -> Result<()> {
                         let _ = db_guard.insert_presence(mac, "offline", now_epoch);
                     }
                 }
+                drop(db_guard);
+                for mac in &offline_macs {
+                    device_last_activity.remove(mac);
+                }
             }
         }
 
