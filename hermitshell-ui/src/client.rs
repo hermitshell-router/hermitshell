@@ -943,6 +943,15 @@ pub fn vlan_disable() -> Result<(), String> {
     Ok(())
 }
 
+pub fn vlan_update_config(group: &str, vlan_id: u16) -> Result<(), String> {
+    ok_or_err(send(json!({
+        "method": "vlan_update_config",
+        "group": group,
+        "vlan_id": vlan_id,
+    }))?)?;
+    Ok(())
+}
+
 pub fn list_switches() -> Result<Vec<SwitchInfo>, String> {
     let resp = ok_or_err(send(json!({"method": "switch_list"}))?)?;
     let s = resp.config_value.unwrap_or_else(|| "[]".to_string());
@@ -991,6 +1000,35 @@ pub fn remove_switch(name: &str) -> Result<(), String> {
 pub fn test_switch(name: &str) -> Result<(), String> {
     ok_or_err(send(json!({"method": "switch_test", "name": name}))?)?;
     Ok(())
+}
+
+pub fn guest_network_status() -> Result<serde_json::Value, String> {
+    let resp = ok_or_err(send(json!({"method": "guest_network_status"}))?)?;
+    let config_str = resp.config_value.ok_or("no config_value in response")?;
+    serde_json::from_str(&config_str).map_err(|e| format!("failed to parse guest config: {}", e))
+}
+
+pub fn guest_network_enable(provider_id: &str, ssid_name: &str, password: &str, band: &str) -> Result<(), String> {
+    ok_or_err(send(json!({
+        "method": "guest_network_enable",
+        "provider_id": provider_id,
+        "ssid_name": ssid_name,
+        "value": password,
+        "band": band,
+    }))?)?;
+    Ok(())
+}
+
+pub fn guest_network_disable() -> Result<(), String> {
+    ok_or_err(send(json!({"method": "guest_network_disable"}))?)?;
+    Ok(())
+}
+
+pub fn guest_network_regenerate_password() -> Result<String, String> {
+    let resp = ok_or_err(send(json!({"method": "guest_network_regenerate_password"}))?)?;
+    let config_str = resp.config_value.ok_or("no config_value")?;
+    let val: serde_json::Value = serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
+    val["password"].as_str().map(|s| s.to_string()).ok_or("no password in response".into())
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@ mod wireguard;
 mod wifi;
 mod setup;
 mod switch;
+mod guest;
 mod vlan;
 
 use anyhow::Result;
@@ -104,10 +105,12 @@ const WEB_ALLOWED_METHODS: &[&str] = &[
     "list_dns_forwards", "add_dns_forward", "remove_dns_forward", "set_dns_forward_enabled",
     "list_dns_rules", "add_dns_rule", "remove_dns_rule", "set_dns_rule_enabled",
     "list_dns_blocklists", "add_dns_blocklist", "remove_dns_blocklist", "set_dns_blocklist_enabled",
-    "vlan_enable", "vlan_disable", "vlan_status",
+    "vlan_enable", "vlan_disable", "vlan_status", "vlan_update_config",
     "switch_add", "switch_remove", "switch_list", "switch_test",
     "get_dashboard_stats",
     "get_device_presence",
+    "guest_network_status", "guest_network_enable", "guest_network_disable",
+    "guest_network_update", "guest_network_regenerate_password",
 ];
 
 const SESSION_IDLE_TIMEOUT_SECS: u64 = 1800;     // 30 minutes
@@ -449,6 +452,10 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                             | "wifi_get_ap_status" => {
                                 wifi::handle_wifi_async(&req, &db).await
                             }
+                            "guest_network_enable" | "guest_network_disable"
+                            | "guest_network_update" | "guest_network_regenerate_password" => {
+                                guest::handle_guest_network_async(&req, &db).await
+                            }
                             "switch_test" => {
                                 switch::handle_switch_test(&req, &db).await
                             }
@@ -465,6 +472,10 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                         | "wifi_set_ssid_vlan" | "wifi_get_ssid_vlans"
                         | "wifi_kick_client" | "wifi_block_client" | "wifi_unblock_client" => {
                             wifi::handle_wifi_async(&req, &db).await
+                        }
+                        "guest_network_enable" | "guest_network_disable"
+                        | "guest_network_update" | "guest_network_regenerate_password" => {
+                            guest::handle_guest_network_async(&req, &db).await
                         }
                         "switch_test" => {
                             switch::handle_switch_test(&req, &db).await
@@ -606,6 +617,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "vlan_enable" => vlan::handle_vlan_enable(&req, db),
         "vlan_disable" => vlan::handle_vlan_disable(&req, db),
         "vlan_status" => vlan::handle_vlan_status(&req, db),
+        "vlan_update_config" => vlan::handle_vlan_update_config(&req, db),
         "switch_add" => switch::handle_switch_add(&req, db),
         "switch_remove" => switch::handle_switch_remove(&req, db),
         "switch_list" => switch::handle_switch_list(&req, db),
@@ -680,6 +692,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
                 Err(e) => Response::err(&e.to_string()),
             }
         }
+        "guest_network_status" => guest::handle_guest_network_status(&req, db),
         _ => Response::err("unknown method"),
     }
 }

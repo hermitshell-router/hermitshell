@@ -15,17 +15,19 @@ pub fn Dashboard() -> impl IntoView {
         |_| async move {
             let status = client::get_status();
             let devices = client::list_devices();
-            (status, devices)
+            let guest = client::guest_network_status();
+            (status, devices, guest)
         },
     );
 
     view! {
         <Layout title="Dashboard" active_page="dashboard">
             <Suspense fallback=move || view! { <p>"Loading dashboard..."</p> }>
-                {move || data.get().map(|(status_result, devices_result)| {
+                {move || data.get().map(|(status_result, devices_result, guest_result)| {
+                    let guest_status = guest_result.unwrap_or(serde_json::json!({"enabled": false}));
                     match (status_result, devices_result) {
                         (Ok(status), Ok(devices)) => {
-                            render_dashboard(status, devices)
+                            render_dashboard(status, devices, guest_status)
                         }
                         (Err(e), _) | (_, Err(e)) => {
                             view! {
@@ -41,7 +43,7 @@ pub fn Dashboard() -> impl IntoView {
     }
 }
 
-fn render_dashboard(status: Status, mut devices: Vec<Device>) -> AnyView {
+fn render_dashboard(status: Status, mut devices: Vec<Device>, guest_status: serde_json::Value) -> AnyView {
     let total = devices.len();
     let quarantined = devices.iter().filter(|d| d.device_group == "quarantine").count();
     let blocked = devices.iter().filter(|d| d.device_group == "blocked").count();
@@ -53,6 +55,10 @@ fn render_dashboard(status: Status, mut devices: Vec<Device>) -> AnyView {
     let toggle_value = if ad_blocking { "false" } else { "true" };
 
     let ad_action = ServerAction::<ToggleAdBlocking>::new();
+
+    let guest_enabled = guest_status["enabled"].as_bool().unwrap_or(false);
+    let guest_ssid = guest_status["ssid_name"].as_str().unwrap_or("").to_string();
+    let guest_count = devices.iter().filter(|d| d.device_group == "guest").count();
 
     devices.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
     let recent: Vec<Device> = devices.into_iter().take(5).collect();
@@ -133,6 +139,30 @@ fn render_dashboard(status: Status, mut devices: Vec<Device>) -> AnyView {
                 view! { <p class="error">{format!("Error loading stats: {e}")}</p> }.into_any()
             }
         }}
+
+        <div class="card">
+            <h2 class="section-header">"Guest Network"</h2>
+            {if guest_enabled {
+                view! {
+                    <div class="detail-grid">
+                        <div class="detail-item">
+                            <span class="detail-label">"SSID"</span>
+                            <span class="detail-value">{guest_ssid}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">"Guests"</span>
+                            <span class="detail-value">{guest_count.to_string()}</span>
+                        </div>
+                    </div>
+                    <a href="/guest" class="btn btn-sm">"Manage \u{2192}"</a>
+                }.into_any()
+            } else {
+                view! {
+                    <p class="text-muted">"Not configured"</p>
+                    <a href="/guest" class="btn btn-sm btn-primary">"Set Up \u{2192}"</a>
+                }.into_any()
+            }}
+        </div>
 
         <h2 class="section-header">"Recent Devices"</h2>
         <table>

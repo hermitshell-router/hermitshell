@@ -33,6 +33,7 @@ pub fn Layout(
         ("Alerts", "/alerts"),
         ("WireGuard", "/wireguard"),
         ("WiFi", "/wifi"),
+        ("Guest Network", "/guest"),
         ("VLANs", "/vlans"),
         ("Switches", "/switches"),
         ("Port Forwarding", "/port-forwarding"),

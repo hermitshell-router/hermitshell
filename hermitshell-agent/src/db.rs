@@ -183,6 +183,17 @@ fn device_from_row(row: &rusqlite::Row) -> rusqlite::Result<Device> {
     })
 }
 
+#[derive(Debug, Clone)]
+pub struct GuestNetworkConfig {
+    pub id: i64,
+    pub provider_id: String,
+    pub ssid_name: String,
+    pub password_enc: String,
+    pub band: String,
+    pub enabled: bool,
+    pub created_at: i64,
+}
+
 /// SQLite database holding device state, config, WireGuard peers, and logs.
 pub struct Db {
     conn: Connection,
@@ -613,6 +624,25 @@ impl Db {
                 [],
             )?;
             info!("Migrated database to schema version 14");
+        }
+
+        if version < 15 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS guest_network_config (
+                    id INTEGER PRIMARY KEY,
+                    provider_id TEXT NOT NULL,
+                    ssid_name TEXT NOT NULL,
+                    password_enc TEXT NOT NULL,
+                    band TEXT NOT NULL DEFAULT '2.4GHz',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at INTEGER NOT NULL
+                );",
+            )?;
+            conn.execute(
+                "INSERT INTO config (key, value) VALUES ('schema_version', '15')
+                 ON CONFLICT(key) DO UPDATE SET value = '15'",
+                [],
+            )?;
         }
 
         Ok(())
@@ -2357,6 +2387,16 @@ impl Db {
         Ok(())
     }
 
+    pub fn update_vlan_id(&self, group_name: &str, new_vlan_id: u16) -> Result<()> {
+        let subnet = format!("10.0.{}.0/24", new_vlan_id);
+        let gateway = format!("10.0.{}.1", new_vlan_id);
+        self.conn.execute(
+            "UPDATE vlan_config SET vlan_id = ?1, subnet = ?2, gateway = ?3 WHERE group_name = ?4",
+            rusqlite::params![new_vlan_id as i64, subnet, gateway, group_name],
+        )?;
+        Ok(())
+    }
+
     pub fn is_vlan_mode_enabled(&self) -> bool {
         self.get_config("vlan_mode")
             .ok()
@@ -2459,6 +2499,54 @@ impl Db {
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?)
     }
+
+    // --- Guest network config ---
+
+    pub fn get_guest_network(&self) -> Result<Option<GuestNetworkConfig>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, provider_id, ssid_name, password_enc, band, enabled, created_at FROM guest_network_config LIMIT 1"
+        )?;
+        let mut rows = stmt.query([])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(GuestNetworkConfig {
+                id: row.get(0)?,
+                provider_id: row.get(1)?,
+                ssid_name: row.get(2)?,
+                password_enc: row.get(3)?,
+                band: row.get(4)?,
+                enabled: row.get::<_, i64>(5)? != 0,
+                created_at: row.get(6)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn set_guest_network(&self, provider_id: &str, ssid_name: &str, password_enc: &str, band: &str) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+        self.conn.execute("DELETE FROM guest_network_config", [])?;
+        self.conn.execute(
+            "INSERT INTO guest_network_config (provider_id, ssid_name, password_enc, band, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![provider_id, ssid_name, password_enc, band, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_guest_network_password(&self, password_enc: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE guest_network_config SET password_enc = ?1",
+            rusqlite::params![password_enc],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_guest_network(&self) -> Result<()> {
+        self.conn.execute("DELETE FROM guest_network_config", [])?;
+        Ok(())
+    }
+
 }
 
 #[cfg(test)]

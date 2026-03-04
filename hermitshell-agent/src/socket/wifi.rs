@@ -296,7 +296,7 @@ async fn handle_wifi_unblock_client(req: &Request, db: &Arc<Mutex<Db>>) -> Respo
 
 /// Helper: connect to a provider by provider_id, looking up credentials from DB.
 /// If a TOFU cert is captured (first connection without CA), saves it.
-async fn connect_to_provider(provider_id: &str, db: &Arc<Mutex<Db>>) -> Result<Box<dyn crate::wifi::WifiProvider>, Response> {
+pub(super) async fn connect_to_provider(provider_id: &str, db: &Arc<Mutex<Db>>) -> Result<Box<dyn crate::wifi::WifiProvider>, Response> {
     let (provider_type, url, username, password_enc, site, api_key_enc, ca_cert_pem) = {
         let db = db.lock().unwrap();
         let creds = match db.get_wifi_provider_credentials(provider_id) {
