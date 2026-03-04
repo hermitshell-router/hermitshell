@@ -125,3 +125,91 @@ EMPTYSCRIPT
 )
 assert_contains "$empty_result" "PRE_5555:1" "Port forward exists before empty import"
 assert_contains "$empty_result" "POST_5555:0" "Port forward cleared by empty import"
+
+# =====================================================
+# DNS Data Round-Trip Tests
+# =====================================================
+
+args=$(_vm_ssh_args router)
+dns_trip=$(ssh $SSH_COMMON $args 'bash -s' 2>/dev/null <<'DNSSCRIPT'
+SOCK=/run/hermitshell/agent.sock
+
+# --- DNS Forward Zones Round-Trip ---
+# 1. Add a forward zone
+echo '{"method":"add_dns_forward","name":"roundtrip.local","value":"10.0.0.1"}' | socat - UNIX-CONNECT:$SOCK > /dev/null
+
+# 2. Export
+export_resp=$(echo '{"method":"export_config"}' | socat - UNIX-CONNECT:$SOCK)
+config_json=$(echo "$export_resp" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('config_value',''))" 2>/dev/null)
+echo "$config_json" > /tmp/dns-test-export.json
+echo "EXPORT_FWD:$(echo "$config_json" | grep -c 'roundtrip.local')"
+
+# 3. Delete the zone
+zone_id=$(echo '{"method":"list_dns_forwards"}' | socat - UNIX-CONNECT:$SOCK | python3 -c "import sys,json; zones=json.loads(sys.stdin.read()).get('dns_forward_zones',[]); print(next((z['id'] for z in zones if z['domain']=='roundtrip.local'), ''))" 2>/dev/null || echo "")
+[ -n "$zone_id" ] && echo "{\"method\":\"remove_dns_forward\",\"id\":$zone_id}" | socat - UNIX-CONNECT:$SOCK > /dev/null
+
+# 4. Verify gone
+pre=$(echo '{"method":"list_dns_forwards"}' | socat - UNIX-CONNECT:$SOCK)
+echo "PRE_IMPORT_FWD:$(echo "$pre" | grep -c 'roundtrip.local')"
+
+# 5. Import
+import_payload=$(python3 -c "import sys,json; d=open('/tmp/dns-test-export.json').read(); print(json.dumps({'method':'import_config','value':d}))" 2>/dev/null)
+echo "$import_payload" | socat -t 5 - UNIX-CONNECT:$SOCK > /dev/null
+
+# 6. Verify restored
+post=$(echo '{"method":"list_dns_forwards"}' | socat - UNIX-CONNECT:$SOCK)
+echo "POST_IMPORT_FWD:$(echo "$post" | grep -c 'roundtrip.local')"
+
+# --- DNS Custom Rules Round-Trip ---
+echo '{"method":"add_dns_rule","name":"myhost.test","key":"A","value":"10.0.1.99"}' | socat - UNIX-CONNECT:$SOCK > /dev/null
+
+export_resp2=$(echo '{"method":"export_config"}' | socat - UNIX-CONNECT:$SOCK)
+config_json2=$(echo "$export_resp2" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('config_value',''))" 2>/dev/null)
+echo "$config_json2" > /tmp/dns-test-export2.json
+echo "EXPORT_RULE:$(echo "$config_json2" | grep -c 'myhost.test')"
+
+# Delete
+rule_id=$(echo '{"method":"list_dns_rules"}' | socat - UNIX-CONNECT:$SOCK | python3 -c "import sys,json; rules=json.loads(sys.stdin.read()).get('dns_custom_rules',[]); print(next((r['id'] for r in rules if r['domain']=='myhost.test'), ''))" 2>/dev/null || echo "")
+[ -n "$rule_id" ] && echo "{\"method\":\"remove_dns_rule\",\"id\":$rule_id}" | socat - UNIX-CONNECT:$SOCK > /dev/null
+
+import_payload2=$(python3 -c "import sys,json; d=open('/tmp/dns-test-export2.json').read(); print(json.dumps({'method':'import_config','value':d}))" 2>/dev/null)
+echo "$import_payload2" | socat -t 5 - UNIX-CONNECT:$SOCK > /dev/null
+
+post2=$(echo '{"method":"list_dns_rules"}' | socat - UNIX-CONNECT:$SOCK)
+echo "POST_IMPORT_RULE:$(echo "$post2" | grep -c 'myhost.test')"
+
+# --- DNS Blocklists Round-Trip ---
+echo '{"method":"add_dns_blocklist","name":"test-blocklist","url":"https://example.com/blocklist.txt","key":"custom"}' | socat - UNIX-CONNECT:$SOCK > /dev/null
+
+export_resp3=$(echo '{"method":"export_config"}' | socat - UNIX-CONNECT:$SOCK)
+config_json3=$(echo "$export_resp3" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('config_value',''))" 2>/dev/null)
+echo "$config_json3" > /tmp/dns-test-export3.json
+echo "EXPORT_BL:$(echo "$config_json3" | grep -c 'test-blocklist')"
+
+bl_id=$(echo '{"method":"list_dns_blocklists"}' | socat - UNIX-CONNECT:$SOCK | python3 -c "import sys,json; bls=json.loads(sys.stdin.read()).get('dns_blocklists',[]); print(next((b['id'] for b in bls if b['name']=='test-blocklist'), ''))" 2>/dev/null || echo "")
+[ -n "$bl_id" ] && echo "{\"method\":\"remove_dns_blocklist\",\"id\":$bl_id}" | socat - UNIX-CONNECT:$SOCK > /dev/null
+
+import_payload3=$(python3 -c "import sys,json; d=open('/tmp/dns-test-export3.json').read(); print(json.dumps({'method':'import_config','value':d}))" 2>/dev/null)
+echo "$import_payload3" | socat -t 5 - UNIX-CONNECT:$SOCK > /dev/null
+
+post3=$(echo '{"method":"list_dns_blocklists"}' | socat - UNIX-CONNECT:$SOCK)
+echo "POST_IMPORT_BL:$(echo "$post3" | grep -c 'test-blocklist')"
+
+# Clean up all test DNS data
+zone_id=$(echo '{"method":"list_dns_forwards"}' | socat - UNIX-CONNECT:$SOCK | python3 -c "import sys,json; zones=json.loads(sys.stdin.read()).get('dns_forward_zones',[]); print(next((z['id'] for z in zones if z['domain']=='roundtrip.local'), ''))" 2>/dev/null || echo "")
+[ -n "$zone_id" ] && echo "{\"method\":\"remove_dns_forward\",\"id\":$zone_id}" | socat - UNIX-CONNECT:$SOCK > /dev/null
+rule_id=$(echo '{"method":"list_dns_rules"}' | socat - UNIX-CONNECT:$SOCK | python3 -c "import sys,json; rules=json.loads(sys.stdin.read()).get('dns_custom_rules',[]); print(next((r['id'] for r in rules if r['domain']=='myhost.test'), ''))" 2>/dev/null || echo "")
+[ -n "$rule_id" ] && echo "{\"method\":\"remove_dns_rule\",\"id\":$rule_id}" | socat - UNIX-CONNECT:$SOCK > /dev/null
+bl_id=$(echo '{"method":"list_dns_blocklists"}' | socat - UNIX-CONNECT:$SOCK | python3 -c "import sys,json; bls=json.loads(sys.stdin.read()).get('dns_blocklists',[]); print(next((b['id'] for b in bls if b['name']=='test-blocklist'), ''))" 2>/dev/null || echo "")
+[ -n "$bl_id" ] && echo "{\"method\":\"remove_dns_blocklist\",\"id\":$bl_id}" | socat - UNIX-CONNECT:$SOCK > /dev/null
+rm -f /tmp/dns-test-export.json /tmp/dns-test-export2.json /tmp/dns-test-export3.json
+DNSSCRIPT
+)
+
+assert_contains "$dns_trip" "EXPORT_FWD:1" "DNS forward zone in export"
+assert_contains "$dns_trip" "PRE_IMPORT_FWD:0" "DNS forward zone deleted before import"
+assert_contains "$dns_trip" "POST_IMPORT_FWD:1" "DNS forward zone restored after import"
+assert_contains "$dns_trip" "EXPORT_RULE:1" "DNS custom rule in export"
+assert_contains "$dns_trip" "POST_IMPORT_RULE:1" "DNS custom rule restored after import"
+assert_contains "$dns_trip" "EXPORT_BL:1" "DNS blocklist in export"
+assert_contains "$dns_trip" "POST_IMPORT_BL:1" "DNS blocklist restored after import"
