@@ -3,4 +3,5 @@ docker-ctx/
 tests/.vagrant/
 .worktrees/
 docs/plans/
+docs/book/book/
 result
