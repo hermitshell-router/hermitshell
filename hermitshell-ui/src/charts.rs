@@ -6,7 +6,7 @@ pub fn bandwidth_chart(data: &[BandwidthPoint], width: u32, height: u32) -> Stri
     if data.is_empty() {
         return format!(
             r##"<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">
-                <text x="{}" y="{}" fill="#5a7d5a" font-size="14" text-anchor="middle">No data</text>
+                <text x="{}" y="{}" fill="#A67C52" font-size="14" text-anchor="middle">No data</text>
             </svg>"##,
             width / 2, height / 2
         );
@@ -72,12 +72,12 @@ pub fn bandwidth_chart(data: &[BandwidthPoint], width: u32, height: u32) -> Stri
         let y = (margin_top + chart_h) as f64 - (i as f64 / 4.0) * chart_h as f64;
         let label = format_bytes_short(val as i64);
         y_labels.push_str(&format!(
-            r##"<text x="{}" y="{:.1}" fill="#5a7d5a" font-size="11" text-anchor="end" dominant-baseline="middle">{label}</text>"##,
+            r##"<text x="{}" y="{:.1}" fill="#A67C52" font-size="11" text-anchor="end" dominant-baseline="middle">{label}</text>"##,
             margin_left - 8, y
         ));
         // Grid line
         y_labels.push_str(&format!(
-            r##"<line x1="{}" y1="{y:.1}" x2="{}" y2="{y:.1}" stroke="#2d4a2d" stroke-width="0.5" />"##,
+            r##"<line x1="{}" y1="{y:.1}" x2="{}" y2="{y:.1}" stroke="#D4CFC7" stroke-width="0.5" />"##,
             margin_left, margin_left + chart_w
         ));
     }
@@ -93,24 +93,24 @@ pub fn bandwidth_chart(data: &[BandwidthPoint], width: u32, height: u32) -> Stri
             let bucket = data[idx].bucket;
             let label = format_time_label(bucket);
             x_labels.push_str(&format!(
-                r##"<text x="{x:.1}" y="{}" fill="#5a7d5a" font-size="11" text-anchor="middle">{label}</text>"##,
+                r##"<text x="{x:.1}" y="{}" fill="#A67C52" font-size="11" text-anchor="middle">{label}</text>"##,
                 margin_top + chart_h + 20
             ));
         }
     }
 
     format!(
-        r##"<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg" style="background:var(--bg-raised,#1e3a1e)">
+        r##"<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg" style="background:var(--cream,#FDFCFA)">
             {y_labels}
             {x_labels}
-            <path d="{rx_fill}" fill="rgba(34,197,94,0.35)" />
-            <path d="{tx_fill}" fill="rgba(234,179,8,0.35)" />
-            <path d="{rx_points}" fill="none" stroke="#4ade80" stroke-width="1.5" />
-            <path d="{total_points}" fill="none" stroke="#facc15" stroke-width="1.5" />
-            <rect x="{}" y="5" width="12" height="12" fill="rgba(34,197,94,0.35)" />
-            <text x="{}" y="15" fill="#5a7d5a" font-size="11">RX</text>
-            <rect x="{}" y="5" width="12" height="12" fill="rgba(234,179,8,0.35)" />
-            <text x="{}" y="15" fill="#5a7d5a" font-size="11">TX</text>
+            <path d="{rx_fill}" fill="rgba(82,183,136,0.25)" />
+            <path d="{tx_fill}" fill="rgba(233,163,25,0.25)" />
+            <path d="{rx_points}" fill="none" stroke="#52B788" stroke-width="1.5" />
+            <path d="{total_points}" fill="none" stroke="#E9A319" stroke-width="1.5" />
+            <rect x="{}" y="5" width="12" height="12" fill="rgba(82,183,136,0.25)" />
+            <text x="{}" y="15" fill="#A67C52" font-size="11">RX</text>
+            <rect x="{}" y="5" width="12" height="12" fill="rgba(233,163,25,0.25)" />
+            <text x="{}" y="15" fill="#A67C52" font-size="11">TX</text>
         </svg>"##,
         width - 90, width - 75,
         width - 50, width - 35,
@@ -147,7 +147,7 @@ pub fn presence_timeline(
         let end_ts = if i + 1 < records.len() { records[i + 1].ts } else { period_end };
         let x = ((rec.ts - period_start) as f64 / total_secs * width as f64).max(0.0);
         let w = ((end_ts - rec.ts) as f64 / total_secs * width as f64).max(0.5);
-        let fill = if rec.state == "online" { "rgba(34,197,94,0.5)" } else { "rgba(45,74,45,0.5)" };
+        let fill = if rec.state == "online" { "rgba(82,183,136,0.4)" } else { "rgba(212,207,199,0.5)" };
         segments.push_str(&format!(
             r##"<rect x="{x:.1}" y="0" width="{w:.1}" height="{bar_height}" fill="{fill}" />"##,
         ));
@@ -155,7 +155,7 @@ pub fn presence_timeline(
 
     if records.is_empty() {
         segments = format!(
-            r##"<rect x="0" y="0" width="{width}" height="{bar_height}" fill="rgba(45,74,45,0.5)" />"##,
+            r##"<rect x="0" y="0" width="{width}" height="{bar_height}" fill="rgba(212,207,199,0.5)" />"##,
         );
     }
 
@@ -163,10 +163,10 @@ pub fn presence_timeline(
     let end_label = format_date_short(period_end);
 
     format!(
-        r##"<svg width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg" style="background:var(--bg-raised,#1e3a1e);border-radius:4px">
+        r##"<svg width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg" style="background:var(--cream,#FDFCFA)">
             {segments}
-            <text x="4" y="{}" fill="#5a7d5a" font-size="10">{start_label}</text>
-            <text x="{}" y="{}" fill="#5a7d5a" font-size="10" text-anchor="end">{end_label}</text>
+            <text x="4" y="{}" fill="#A67C52" font-size="10">{start_label}</text>
+            <text x="{}" y="{}" fill="#A67C52" font-size="10" text-anchor="end">{end_label}</text>
         </svg>"##,
         height - 4,
         width - 4, height - 4,
