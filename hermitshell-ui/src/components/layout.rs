@@ -24,22 +24,17 @@ pub fn Layout(
 ) -> impl IntoView {
     let logout_action = ServerAction::<Logout>::new();
 
-    let pages = vec![
-        ("Dashboard", "/"),
-        ("Devices", "/devices"),
-        ("Groups", "/groups"),
-        ("Traffic", "/traffic"),
-        ("DNS", "/dns"),
-        ("Alerts", "/alerts"),
-        ("WireGuard", "/wireguard"),
-        ("WiFi", "/wifi"),
-        ("Guest Network", "/guest"),
-        ("VLANs", "/vlans"),
-        ("Switches", "/switches"),
-        ("Port Forwarding", "/port-forwarding"),
-        ("Settings", "/settings"),
-        ("Audit", "/audit"),
-        ("Logs", "/logs"),
+    let nav_items: Vec<(Option<&str>, &str, &str)> = vec![
+        (None, "Dashboard", "/"),
+        (None, "Devices", "/devices"),
+        (Some("Network"), "WiFi", "/wifi"),
+        (None, "Guest Network", "/guest"),
+        (None, "WireGuard", "/wireguard"),
+        (None, "DNS", "/dns"),
+        (Some("Monitoring"), "Traffic", "/traffic"),
+        (None, "Alerts", "/alerts"),
+        (None, "Logs", "/logs"),
+        (Some(""), "Settings", "/settings"),
     ];
 
     view! {
@@ -62,10 +57,26 @@ pub fn Layout(
                             <p>"Router Dashboard"</p>
                         </div>
                         <ul class="sidebar-nav">
-                            {pages.into_iter().map(|(name, href)| {
-                                let class = if name.to_lowercase() == active_page { "active" } else { "" };
-                                view! {
-                                    <li><a href={href} class={class}>{name}</a></li>
+                            {nav_items.into_iter().map(|(group, name, href)| {
+                                let class = if name.to_lowercase().replace(' ', "-") == active_page
+                                    || (name == "Dashboard" && active_page == "dashboard")
+                                { "active" } else { "" };
+                                if let Some(label) = group {
+                                    if label.is_empty() {
+                                        view! {
+                                            <li class="nav-spacer"></li>
+                                            <li><a href={href} class={class}>{name}</a></li>
+                                        }.into_any()
+                                    } else {
+                                        view! {
+                                            <li class="nav-group-label">{label}</li>
+                                            <li><a href={href} class={class}>{name}</a></li>
+                                        }.into_any()
+                                    }
+                                } else {
+                                    view! {
+                                        <li><a href={href} class={class}>{name}</a></li>
+                                    }.into_any()
                                 }
                             }).collect_view()}
                         </ul>
