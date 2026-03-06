@@ -28,6 +28,7 @@ pub(super) fn handle_switch_add(req: &Request, db: &Arc<Mutex<Db>>) -> Response 
         db_guard.get_config("session_secret").ok().flatten().unwrap_or_default()
     });
 
+    #[allow(clippy::result_large_err)]
     let encrypt = |plaintext: &str| -> Result<String, Response> {
         if session_secret.is_empty() {
             Ok(plaintext.to_string())
