@@ -1046,3 +1046,50 @@ tr.row-highlight {
     margin-bottom: 0.75rem;
     scroll-margin-top: 1rem;
 }
+
+/* --- TOTP Setup --- */
+.totp-setup {
+    max-width: 400px;
+}
+
+.qr-code {
+    margin: 1rem 0;
+    padding: 1rem;
+    background: white;
+    display: inline-block;
+    border: 1px dashed var(--grid-line);
+}
+
+.qr-code svg {
+    width: 200px;
+    height: 200px;
+}
+
+.badge-ok {
+    background: var(--canopy);
+    color: white;
+    padding: 0.125rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+/* --- Alert Banner --- */
+.alert-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+    background: var(--dawn);
+    border: 1px dashed var(--canopy);
+    font-size: 0.8125rem;
+    color: var(--soil);
+}
+
+.alert-banner-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-shrink: 0;
+}

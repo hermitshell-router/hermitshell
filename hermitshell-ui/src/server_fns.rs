@@ -1038,3 +1038,34 @@ pub async fn guest_qr_svg() -> Result<String, ServerFnError> {
         .build();
     Ok(svg)
 }
+
+#[server]
+pub async fn totp_setup() -> Result<String, ServerFnError> {
+    let (secret, uri) = crate::client::totp_setup()
+        .map_err(ServerFnError::new)?;
+    Ok(serde_json::json!({"secret": secret, "uri": uri}).to_string())
+}
+
+#[server]
+pub async fn totp_enable(code: String) -> Result<(), ServerFnError> {
+    crate::client::totp_enable(&code)
+        .map_err(ServerFnError::new)?;
+    leptos_axum::redirect("/settings#security");
+    Ok(())
+}
+
+#[server]
+pub async fn totp_disable(password: String) -> Result<(), ServerFnError> {
+    crate::client::totp_disable(&password)
+        .map_err(ServerFnError::new)?;
+    leptos_axum::redirect("/settings#security");
+    Ok(())
+}
+
+#[server]
+pub async fn dismiss_totp_nudge() -> Result<(), ServerFnError> {
+    crate::client::set_config("totp_nudge_dismissed", "true")
+        .map_err(ServerFnError::new)?;
+    leptos_axum::redirect("/");
+    Ok(())
+}

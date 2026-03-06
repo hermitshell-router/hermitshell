@@ -16,6 +16,7 @@ use crate::server_fns::{
     AddIpv6Pinhole, RemoveIpv6Pinhole,
     EnableVlan, DisableVlan, UpdateVlanId,
     AddSwitch, RemoveSwitch, TestSwitch,
+    TotpSetup, TotpEnable, TotpDisable,
 };
 
 struct GroupInfo {
@@ -83,6 +84,10 @@ pub fn Settings() -> impl IntoView {
     let vlan_status = Resource::new(|| (), |_| async { client::get_vlan_status() });
     let switches = Resource::new(|| (), |_| async { client::list_switches() });
     let devices_for_groups = Resource::new(|| (), |_| async { client::list_devices() });
+    let totp_status = Resource::new(
+        || (),
+        |_| async { client::totp_status() },
+    );
 
     let password_action = ServerAction::<ChangePassword>::new();
 
@@ -785,6 +790,95 @@ pub fn Settings() -> impl IntoView {
                     </div>
                 </ActionForm>
                 <ErrorToast value=password_action.value() />
+            </div>
+
+            <div class="settings-section" id="two-factor">
+                <h3 class="settings-section-sub">"Two-Factor Authentication"</h3>
+                <Suspense fallback=move || view! { <p>"Loading..."</p> }>
+                    {move || totp_status.get().map(|result| match result {
+                        Ok(true) => {
+                            let disable_action = ServerAction::<TotpDisable>::new();
+                            view! {
+                                <p class="text-sm">
+                                    <span class="badge badge-ok">"Enabled"</span>
+                                    " Two-factor authentication is active."
+                                </p>
+                                <ActionForm action=disable_action>
+                                    <div class="settings-row">
+                                        <span class="settings-label">"Password"</span>
+                                        <span class="settings-value"><input type="password" name="password" required placeholder="Enter password to disable" /></span>
+                                    </div>
+                                    <div class="actions-bar">
+                                        <button type="submit" class="btn btn-sm btn-danger">"Disable 2FA"</button>
+                                    </div>
+                                </ActionForm>
+                                <ErrorToast value=disable_action.value() />
+                            }.into_any()
+                        }
+                        Ok(false) => {
+                            let setup_action = ServerAction::<TotpSetup>::new();
+                            let enable_action = ServerAction::<TotpEnable>::new();
+                            view! {
+                                <p class="text-sm text-muted">"Add a second layer of security using an authenticator app."</p>
+                                {move || {
+                                    match setup_action.value().get() {
+                                        Some(Ok(json_str)) => {
+                                            let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap_or_default();
+                                            let secret = parsed["secret"].as_str().unwrap_or("").to_string();
+                                            let uri = parsed["uri"].as_str().unwrap_or("").to_string();
+
+                                            let qr_svg = qrcode::QrCode::new(uri.as_bytes())
+                                                .map(|code| code.render::<qrcode::render::svg::Color>()
+                                                    .min_dimensions(200, 200)
+                                                    .build())
+                                                .unwrap_or_default();
+
+                                            view! {
+                                                <div class="totp-setup">
+                                                    <p class="text-sm">"Scan this QR code with your authenticator app:"</p>
+                                                    <div class="qr-code" inner_html=qr_svg></div>
+                                                    <p class="text-sm text-muted">"Or enter this secret manually: "<code>{secret}</code></p>
+                                                    <ActionForm action=enable_action>
+                                                        <div class="settings-row">
+                                                            <span class="settings-label">"Verification Code"</span>
+                                                            <span class="settings-value">
+                                                                <input
+                                                                    type="text"
+                                                                    name="code"
+                                                                    inputmode="numeric"
+                                                                    pattern="[0-9]{6}"
+                                                                    maxlength="6"
+                                                                    autocomplete="one-time-code"
+                                                                    required
+                                                                    autofocus
+                                                                    placeholder="000000"
+                                                                />
+                                                            </span>
+                                                        </div>
+                                                        <div class="actions-bar">
+                                                            <button type="submit" class="btn btn-primary btn-sm">"Enable 2FA"</button>
+                                                        </div>
+                                                    </ActionForm>
+                                                    <ErrorToast value=enable_action.value() />
+                                                </div>
+                                            }.into_any()
+                                        }
+                                        _ => {
+                                            view! {
+                                                <ActionForm action=setup_action>
+                                                    <div class="actions-bar">
+                                                        <button type="submit" class="btn btn-primary btn-sm">"Set Up 2FA"</button>
+                                                    </div>
+                                                </ActionForm>
+                                            }.into_any()
+                                        }
+                                    }
+                                }}
+                            }.into_any()
+                        }
+                        Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
+                    })}
+                </Suspense>
             </div>
 
             <Suspense fallback=move || view! { <p>"Loading TLS status..."</p> }>

@@ -294,6 +294,26 @@ fn cli_import(args: &[String]) -> i32 {
     0
 }
 
+fn cli_totp_disable() -> i32 {
+    let req = serde_json::json!({"method": "totp_disable", "value": ""});
+    match socket_request(&req) {
+        Ok(resp) => {
+            if resp["ok"].as_bool() == Some(true) {
+                println!("TOTP two-factor authentication disabled.");
+                0
+            } else {
+                let err = resp["error"].as_str().unwrap_or("unknown error");
+                eprintln!("Failed to disable TOTP: {}", err);
+                1
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to connect to agent: {}", e);
+            1
+        }
+    }
+}
+
 /// Check if a CLI subcommand was requested; return Some(exit_code) to short-circuit daemon startup.
 fn cli_main() -> Option<i32> {
     let args: Vec<String> = std::env::args().collect();
@@ -303,6 +323,7 @@ fn cli_main() -> Option<i32> {
     match args[1].as_str() {
         "export" => Some(cli_export(&args[2..])),
         "import" => Some(cli_import(&args[2..])),
+        "totp-disable" => Some(cli_totp_disable()),
         _ => None,
     }
 }

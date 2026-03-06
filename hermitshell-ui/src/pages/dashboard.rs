@@ -4,7 +4,7 @@ use crate::charts;
 use crate::components::layout::Layout;
 use crate::components::stat_card::StatCard;
 use crate::components::toast::ErrorToast;
-use crate::server_fns::ToggleAdBlocking;
+use crate::server_fns::{ToggleAdBlocking, DismissTotpNudge};
 use crate::types::{Device, Status};
 use crate::{format_bytes, format_uptime};
 
@@ -19,9 +19,43 @@ pub fn Dashboard() -> impl IntoView {
             (status, devices, guest)
         },
     );
+    let totp_status = Resource::new(
+        || (),
+        |_| async { client::totp_status() },
+    );
+    let nudge_dismissed = Resource::new(
+        || (),
+        |_| async { client::get_config("totp_nudge_dismissed") },
+    );
 
     view! {
         <Layout title="Dashboard" active_page="dashboard">
+            // 2FA nudge banner
+            <Suspense fallback=move || ()>
+                {move || {
+                    let totp_on = totp_status.get().and_then(|r| r.ok()).unwrap_or(false);
+                    let dismissed = nudge_dismissed.get()
+                        .and_then(|r| r.ok())
+                        .flatten()
+                        .map_or(false, |v| v == "true");
+                    if !totp_on && !dismissed {
+                        let dismiss_action = ServerAction::<DismissTotpNudge>::new();
+                        view! {
+                            <div class="alert-banner">
+                                <span>"Protect your router with two-factor authentication."</span>
+                                <div class="alert-banner-actions">
+                                    <a href="/settings#two-factor" class="btn btn-sm btn-primary">"Enable in Settings"</a>
+                                    <ActionForm action=dismiss_action>
+                                        <button type="submit" class="btn btn-sm">"Dismiss"</button>
+                                    </ActionForm>
+                                </div>
+                            </div>
+                        }.into_any()
+                    } else {
+                        ().into_any()
+                    }
+                }}
+            </Suspense>
             <Suspense fallback=move || view! { <p>"Loading dashboard..."</p> }>
                 {move || data.get().map(|(status_result, devices_result, guest_result)| {
                     let guest_status = guest_result.unwrap_or(serde_json::json!({"enabled": false}));
