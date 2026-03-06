@@ -1,3 +1,4 @@
+#![allow(clippy::unused_unit, clippy::unit_arg)]
 use leptos::prelude::*;
 use crate::client;
 use crate::charts;
@@ -37,7 +38,7 @@ pub fn Dashboard() -> impl IntoView {
                     let dismissed = nudge_dismissed.get()
                         .and_then(|r| r.ok())
                         .flatten()
-                        .map_or(false, |v| v == "true");
+                        .is_some_and(|v| v == "true");
                     if !totp_on && !dismissed {
                         let dismiss_action = ServerAction::<DismissTotpNudge>::new();
                         view! {

@@ -89,7 +89,7 @@ pub(super) fn handle_vlan_update_config(req: &Request, db: &Arc<Mutex<Db>>) -> R
     let Some(vlan_id) = req.vlan_id else {
         return Response::err("vlan_id required");
     };
-    if vlan_id < 1 || vlan_id > 4094 {
+    if !(1..=4094).contains(&vlan_id) {
         return Response::err("vlan_id must be 1-4094");
     }
 

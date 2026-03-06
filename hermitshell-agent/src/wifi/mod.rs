@@ -194,22 +194,20 @@ pub async fn run(db: Arc<Mutex<Db>>) {
                                         Some(&client.ap_mac),
                                     );
                                     // Auto-assign guest SSID devices to guest group
-                                    if let Ok(Some(device)) = db.get_device(&client.mac) {
-                                        if device.device_group == "quarantine" {
-                                            if let Ok(Some(guest_config)) = db.get_guest_network() {
-                                                if guest_config.enabled && client.ssid == guest_config.ssid_name {
-                                                    info!(mac = %client.mac, ssid = %client.ssid, "auto-assigning to guest group");
-                                                    let _ = db.set_device_group(&client.mac, "guest");
-                                                    if let Some(ref ipv4) = device.ipv4 {
-                                                        let _ = crate::nftables::remove_device_forward_rule(ipv4);
-                                                        let _ = crate::nftables::add_device_forward_rule(ipv4, "guest");
-                                                    }
-                                                    if let Some(ref ipv6) = device.ipv6_ula {
-                                                        let _ = crate::nftables::remove_device_forward_rule_v6(ipv6);
-                                                        let _ = crate::nftables::add_device_forward_rule_v6(ipv6, "guest");
-                                                    }
-                                                }
-                                            }
+                                    if let Ok(Some(device)) = db.get_device(&client.mac)
+                                        && device.device_group == "quarantine"
+                                        && let Ok(Some(guest_config)) = db.get_guest_network()
+                                        && guest_config.enabled && client.ssid == guest_config.ssid_name
+                                    {
+                                        info!(mac = %client.mac, ssid = %client.ssid, "auto-assigning to guest group");
+                                        let _ = db.set_device_group(&client.mac, "guest");
+                                        if let Some(ref ipv4) = device.ipv4 {
+                                            let _ = crate::nftables::remove_device_forward_rule(ipv4);
+                                            let _ = crate::nftables::add_device_forward_rule(ipv4, "guest");
+                                        }
+                                        if let Some(ref ipv6) = device.ipv6_ula {
+                                            let _ = crate::nftables::remove_device_forward_rule_v6(ipv6);
+                                            let _ = crate::nftables::add_device_forward_rule_v6(ipv6, "guest");
                                         }
                                     }
                                 }

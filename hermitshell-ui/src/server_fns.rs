@@ -900,7 +900,7 @@ pub async fn disable_vlan() -> Result<(), ServerFnError> {
 #[server]
 pub async fn update_vlan_id(group: String, vlan_id: u16) -> Result<(), ServerFnError> {
     crate::client::vlan_update_config(&group, vlan_id)
-        .map_err(|e| ServerFnError::new(e))?;
+        .map_err(ServerFnError::new)?;
     let _ = crate::client::log_audit("vlan_update_config", &format!("{}: {}", group, vlan_id));
     leptos_axum::redirect("/settings#vlans");
     Ok(())

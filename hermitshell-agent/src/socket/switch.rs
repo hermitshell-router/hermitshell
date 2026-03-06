@@ -160,6 +160,7 @@ pub(super) async fn handle_switch_test(req: &Request, db: &Arc<Mutex<Db>>) -> Re
     }
 }
 
+#[allow(clippy::result_large_err)]
 fn resolve_switch_id(name_or_id: &str, db: &Db) -> Result<String, Response> {
     let switches = db.list_snmp_switches().unwrap_or_default();
     if let Some(s) = switches.iter().find(|s| s.id == name_or_id) {
@@ -171,6 +172,7 @@ fn resolve_switch_id(name_or_id: &str, db: &Db) -> Result<String, Response> {
     Err(Response::err("switch not found"))
 }
 
+#[allow(clippy::result_large_err)]
 fn get_switch_info(
     name_or_id: &str,
     db: &Arc<Mutex<Db>>,

@@ -140,7 +140,7 @@ pub fn Logs() -> impl IntoView {
 
     // Audit logs resource
     let audit_data = Resource::new(
-        move || tab(),
+        tab,
         |t| async move {
             if t == "audit" {
                 client::list_audit_logs(200)

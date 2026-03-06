@@ -244,10 +244,9 @@ async fn handle_guest_network_update(req: &Request, db: &Arc<Mutex<Db>>) -> Resp
     // If name or band changed, delete old SSID first
     let name_changed = new_ssid_name != config.ssid_name;
     let band_changed = new_band != config.band;
-    if name_changed || band_changed {
-        if let Err(e) = provider.delete_ssid(&config.ssid_name, &config.band).await {
+    if (name_changed || band_changed)
+        && let Err(e) = provider.delete_ssid(&config.ssid_name, &config.band).await {
             warn!(ssid = %config.ssid_name, error = %e, "failed to delete old guest SSID (may already be removed)");
-        }
     }
 
     // Create/update SSID on provider

@@ -117,7 +117,7 @@ pub(super) fn handle_totp_enable(req: &Request, db: &Arc<Mutex<Db>>) -> Response
 }
 
 pub(super) fn handle_totp_disable(req: &Request, db: &Arc<Mutex<Db>>, password_lock: &PasswordLock, login_rate_limit: &LoginRateLimit) -> Response {
-    let from_cli = req.value.as_ref().map_or(true, |v| v.is_empty());
+    let from_cli = req.value.as_ref().is_none_or(|v| v.is_empty());
 
     if !from_cli {
         let password = req.value.as_ref().unwrap();
@@ -154,7 +154,7 @@ pub(super) fn handle_totp_disable(req: &Request, db: &Arc<Mutex<Db>>, password_l
 pub(super) fn handle_totp_status(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let db = db.lock().unwrap();
     let enabled = db.get_config("totp_enabled").ok().flatten()
-        .map_or(false, |v| v == "true");
+        .is_some_and(|v| v == "true");
     let mut resp = Response::ok();
     resp.config_value = Some(if enabled { "true" } else { "false" }.to_string());
     resp

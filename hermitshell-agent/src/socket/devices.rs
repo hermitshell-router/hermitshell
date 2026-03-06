@@ -117,14 +117,13 @@ pub(super) fn handle_set_device_group(req: &Request, db: &Arc<Mutex<Db>>) -> Res
     // 2. Manual switch_provision_vlans command
     // 3. Device gets new IP on next DHCP renewal in new VLAN subnet
     let vlan_enabled = db.get_config("vlan_mode").ok().flatten().as_deref() == Some("enabled");
-    if vlan_enabled {
-        if let Ok(Some(vlan_cfg)) = db.get_vlan_for_group(group) {
+    if vlan_enabled
+        && let Ok(Some(vlan_cfg)) = db.get_vlan_for_group(group) {
             info!(
                 mac = %mac, group = %group, vlan_id = vlan_cfg.vlan_id,
                 switch_port = ?device.switch_port,
                 "device group changed, VLAN reassignment pending"
             );
-        }
     }
     match db.get_device(mac) {
         Ok(Some(device)) => {

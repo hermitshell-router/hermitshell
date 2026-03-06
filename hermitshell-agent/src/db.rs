@@ -184,6 +184,7 @@ fn device_from_row(row: &rusqlite::Row) -> rusqlite::Result<Device> {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct GuestNetworkConfig {
     pub id: i64,
     pub provider_id: String,
@@ -2379,6 +2380,7 @@ impl Db {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_vlan_config(&self, group: &str, vlan_id: u16, subnet: &str, gateway: &str) -> Result<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO vlan_config (group_name, vlan_id, subnet, gateway) VALUES (?1, ?2, ?3, ?4)",
@@ -2397,6 +2399,7 @@ impl Db {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn is_vlan_mode_enabled(&self) -> bool {
         self.get_config("vlan_mode")
             .ok()

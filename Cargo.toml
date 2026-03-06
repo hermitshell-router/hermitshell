@@ -21,5 +21,9 @@ snmp2 = { version = "0.5", features = ["v3"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[profile.dev]
+debug = 0
+split-debuginfo = "off"
+
 [workspace.lints.rust]
 unsafe_code = "forbid"

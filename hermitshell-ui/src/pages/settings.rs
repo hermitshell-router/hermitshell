@@ -1,3 +1,4 @@
+#![allow(clippy::unused_unit, clippy::unit_arg)]
 use leptos::prelude::*;
 use crate::client;
 use crate::components::layout::Layout;
