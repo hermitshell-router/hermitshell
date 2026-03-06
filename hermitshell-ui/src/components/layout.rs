@@ -8,7 +8,7 @@ use crate::server_fns::Logout;
 pub fn CspMeta() -> impl IntoView {
     let csp = use_nonce().map(|nonce| {
         format!(
-            "default-src 'self'; script-src 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'"
+            "default-src 'self'; script-src 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'"
         )
     });
     view! {
