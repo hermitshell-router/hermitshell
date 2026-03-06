@@ -23,6 +23,21 @@ pub async fn login(password: String) -> Result<(), ServerFnError> {
         Ok(true) => {}
         _ => return Err(ServerFnError::new("Invalid password")),
     }
+    // Check if 2FA is enabled
+    if crate::client::totp_status().unwrap_or(false) {
+        // Create a session but store it as totp_pending (5-min TTL)
+        let cookie = crate::client::create_session()
+            .map_err(ServerFnError::new)?;
+        let response = expect_context::<leptos_axum::ResponseOptions>();
+        response.insert_header(
+            axum::http::header::SET_COOKIE,
+            axum::http::HeaderValue::from_str(
+                &format!("totp_pending={}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=300", cookie)
+            ).unwrap(),
+        );
+        leptos_axum::redirect("/login?step=totp");
+        return Ok(());
+    }
     let cookie = crate::client::create_session()
         .map_err(ServerFnError::new)?;
     let response = expect_context::<leptos_axum::ResponseOptions>();
@@ -30,6 +45,52 @@ pub async fn login(password: String) -> Result<(), ServerFnError> {
         axum::http::header::SET_COOKIE,
         axum::http::HeaderValue::from_str(
             &format!("session={}; HttpOnly; Secure; SameSite=Strict; Path=/", cookie)
+        ).unwrap(),
+    );
+    leptos_axum::redirect("/");
+    Ok(())
+}
+
+#[server]
+pub async fn login_totp(totp_code: String) -> Result<(), ServerFnError> {
+    // Extract the totp_pending cookie from the request
+    let headers = expect_context::<axum::http::HeaderMap>();
+    let cookie_header = headers.get(axum::http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let pending = cookie_header.split(';')
+        .filter_map(|c| {
+            let c = c.trim();
+            c.strip_prefix("totp_pending=")
+        })
+        .next()
+        .unwrap_or("");
+    if pending.is_empty() {
+        return Err(ServerFnError::new("Session expired, please log in again"));
+    }
+    // Verify the pending session is still valid
+    match crate::client::verify_session(pending) {
+        Ok(true) => {}
+        _ => return Err(ServerFnError::new("Session expired, please log in again")),
+    }
+    // Verify the TOTP code
+    match crate::client::totp_verify(&totp_code) {
+        Ok(true) => {}
+        _ => return Err(ServerFnError::new("Invalid code")),
+    }
+    // Promote: set the pending session as the real session cookie
+    let response = expect_context::<leptos_axum::ResponseOptions>();
+    response.insert_header(
+        axum::http::header::SET_COOKIE,
+        axum::http::HeaderValue::from_str(
+            &format!("session={}; HttpOnly; Secure; SameSite=Strict; Path=/", pending)
+        ).unwrap(),
+    );
+    // Clear the pending cookie
+    response.append_header(
+        axum::http::header::SET_COOKIE,
+        axum::http::HeaderValue::from_str(
+            "totp_pending=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0"
         ).unwrap(),
     );
     leptos_axum::redirect("/");
