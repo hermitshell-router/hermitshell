@@ -86,6 +86,7 @@ pub fn Logs() -> impl IntoView {
     };
 
     let is_dns = move || tab() == "dns";
+    let is_audit = move || tab() == "audit";
 
     // Connection logs resource
     let conn_data = Resource::new(
@@ -137,6 +138,18 @@ pub fn Logs() -> impl IntoView {
         },
     );
 
+    // Audit logs resource
+    let audit_data = Resource::new(
+        move || tab(),
+        |t| async move {
+            if t == "audit" {
+                client::list_audit_logs(200)
+            } else {
+                Ok(vec![])
+            }
+        },
+    );
+
     let device_value = move || device();
     let port_value = move || port_str();
     let protocol_value = move || protocol_str();
@@ -147,54 +160,104 @@ pub fn Logs() -> impl IntoView {
             <div class="tab-nav">
                 <a
                     href="/logs"
-                    class=move || if !is_dns() { "tab-link active" } else { "tab-link" }
+                    class=move || if !is_dns() && !is_audit() { "tab-link active" } else { "tab-link" }
                 >"Connection Logs"</a>
-                " | "
                 <a
                     href="/logs?tab=dns"
                     class=move || if is_dns() { "tab-link active" } else { "tab-link" }
                 >"DNS Logs"</a>
+                <a
+                    href="/logs?tab=audit"
+                    class=move || if is_audit() { "tab-link active" } else { "tab-link" }
+                >"Audit"</a>
             </div>
 
-            <form method="get" action="/logs" class="form-inline mb-md">
-                {move || {
-                    if is_dns() {
-                        view! { <input type="hidden" name="tab" value="dns" /> }.into_any()
-                    } else {
-                        ().into_any()
-                    }
-                }}
-                <label>"Device IP: "</label>
-                <input type="text" name="device" value=device_value placeholder="e.g. 10.0.0.2" class="input-md" />
-                {move || {
-                    if !is_dns() {
-                        view! {
-                            <label>" Port: "</label>
-                            <input type="text" name="port" value=port_value placeholder="e.g. 443" class="input-narrow" />
-                            <label>" Protocol: "</label>
-                            <select name="protocol">
-                                <option value="" selected=move || protocol_value().is_empty()>"All"</option>
-                                <option value="tcp" selected=move || protocol_value() == "tcp">"TCP"</option>
-                                <option value="udp" selected=move || protocol_value() == "udp">"UDP"</option>
+            {move || {
+                if !is_audit() {
+                    view! {
+                        <form method="get" action="/logs" class="form-inline mb-md">
+                            {move || {
+                                if is_dns() {
+                                    view! { <input type="hidden" name="tab" value="dns" /> }.into_any()
+                                } else {
+                                    ().into_any()
+                                }
+                            }}
+                            <label>"Device IP: "</label>
+                            <input type="text" name="device" value=device_value placeholder="e.g. 10.0.0.2" class="input-md" />
+                            {move || {
+                                if !is_dns() {
+                                    view! {
+                                        <label>" Port: "</label>
+                                        <input type="text" name="port" value=port_value placeholder="e.g. 443" class="input-narrow" />
+                                        <label>" Protocol: "</label>
+                                        <select name="protocol">
+                                            <option value="" selected=move || protocol_value().is_empty()>"All"</option>
+                                            <option value="tcp" selected=move || protocol_value() == "tcp">"TCP"</option>
+                                            <option value="udp" selected=move || protocol_value() == "udp">"UDP"</option>
+                                        </select>
+                                    }.into_any()
+                                } else {
+                                    ().into_any()
+                                }
+                            }}
+                            <label>" Time: "</label>
+                            <select name="range">
+                                <option value="1h" selected=move || range_value() == "1h">"1 hour"</option>
+                                <option value="6h" selected=move || range_value() == "6h">"6 hours"</option>
+                                <option value="24h" selected=move || range_value() == "24h">"24 hours"</option>
+                                <option value="7d" selected=move || range_value() == "7d">"7 days"</option>
                             </select>
-                        }.into_any()
-                    } else {
-                        ().into_any()
-                    }
-                }}
-                <label>" Time: "</label>
-                <select name="range">
-                    <option value="1h" selected=move || range_value() == "1h">"1 hour"</option>
-                    <option value="6h" selected=move || range_value() == "6h">"6 hours"</option>
-                    <option value="24h" selected=move || range_value() == "24h">"24 hours"</option>
-                    <option value="7d" selected=move || range_value() == "7d">"7 days"</option>
-                </select>
-                " "
-                <button type="submit" class="btn btn-sm">"Filter"</button>
-            </form>
+                            " "
+                            <button type="submit" class="btn btn-sm">"Filter"</button>
+                        </form>
+                    }.into_any()
+                } else {
+                    ().into_any()
+                }
+            }}
 
             {move || {
-                if is_dns() {
+                if is_audit() {
+                    view! {
+                        <Suspense fallback=move || view! { <p>"Loading..."</p> }>
+                            {move || audit_data.get().map(|result| match result {
+                                Ok(entries) => {
+                                    if entries.is_empty() {
+                                        view! { <p class="text-muted">"No audit entries yet."</p> }.into_any()
+                                    } else {
+                                        view! {
+                                            <div class="table-scroll">
+                                                <table class="device-table">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>"Time"</th>
+                                                            <th>"Action"</th>
+                                                            <th>"Detail"</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {entries.into_iter().map(|entry| {
+                                                            let time = format_timestamp(entry.created_at);
+                                                            view! {
+                                                                <tr>
+                                                                    <td>{time}</td>
+                                                                    <td>{entry.action}</td>
+                                                                    <td>{entry.detail}</td>
+                                                                </tr>
+                                                            }
+                                                        }).collect_view()}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        }.into_any()
+                                    }
+                                }
+                                Err(e) => view! { <p class="error">{format!("Error: {}", e)}</p> }.into_any(),
+                            })}
+                        </Suspense>
+                    }.into_any()
+                } else if is_dns() {
                     view! {
                         // DNS stats summary
                         <Suspense fallback=move || ()>

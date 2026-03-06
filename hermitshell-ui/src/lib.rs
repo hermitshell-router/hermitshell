@@ -11,7 +11,6 @@ use leptos_router::components::*;
 use leptos_router::path;
 
 use pages::alerts::Alerts;
-use pages::audit::Audit;
 use pages::dashboard::Dashboard;
 use pages::device_detail::DeviceDetail;
 use pages::devices::DeviceList;
@@ -49,7 +48,6 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/vlans") view=VlanSettings />
                     <Route path=path!("/switches") view=SwitchSettings />
                     <Route path=path!("/settings") view=Settings />
-                    <Route path=path!("/audit") view=Audit />
                     <Route path=path!("/logs") view=Logs />
                     <Route path=path!("/login") view=Login />
                     <Route path=path!("/setup") view=Setup />
