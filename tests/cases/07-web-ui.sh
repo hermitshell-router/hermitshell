@@ -43,8 +43,8 @@ assert_match "$response" "Dashboard" "Dashboard page renders"
 response=$(vm_exec lan "curl -s -k -b /tmp/cookies $ROUTER/devices")
 assert_match "$response" "Devices" "Devices page responds"
 
-response=$(vm_exec lan "curl -s -k -b /tmp/cookies $ROUTER/groups")
-assert_match "$response" "Groups" "Groups page responds"
+response=$(vm_exec lan "curl -s -k -L -b /tmp/cookies $ROUTER/settings")
+assert_match "$response" "Access Policy" "Settings page contains groups reference"
 
 response=$(vm_exec lan "curl -s -k -b /tmp/cookies $ROUTER/traffic")
 assert_match "$response" "Traffic" "Traffic page responds"
@@ -54,12 +54,10 @@ assert_match "$response" "Ad Blocking" "DNS page responds"
 
 response=$(vm_exec lan "curl -s -k -b /tmp/cookies $ROUTER/settings")
 assert_match "$response" "Settings" "Settings page responds"
+assert_match "$response" "Port Forwarding" "Settings page contains port forwarding"
 
 response=$(vm_exec lan "curl -s -k -b /tmp/cookies $ROUTER/wireguard")
 assert_match "$response" "WireGuard" "WireGuard page responds"
-
-response=$(vm_exec lan "curl -s -k -b /tmp/cookies $ROUTER/port-forwarding")
-assert_match "$response" "Port Forwarding" "Port Forwarding page responds"
 
 # Check CSS is served (exempt from auth)
 response=$(vm_exec lan "curl -s -k -o /dev/null -w '%{http_code}' $ROUTER/style.css")

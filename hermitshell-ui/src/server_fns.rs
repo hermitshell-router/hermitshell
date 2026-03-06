@@ -75,7 +75,7 @@ pub async fn toggle_upnp(enabled: String) -> Result<(), ServerFnError> {
     crate::client::set_upnp_enabled(enabled)
         .map_err(ServerFnError::new)?;
     let _ = crate::client::log_audit("set_upnp_config", &enabled.to_string());
-    leptos_axum::redirect("/port-forwarding");
+    leptos_axum::redirect("/settings#port-forwarding");
     Ok(())
 }
 
@@ -146,7 +146,7 @@ pub async fn add_port_forward(
     )
     .map_err(ServerFnError::new)?;
     let _ = crate::client::log_audit("add_port_forward", &format!("{}:{}-{}", internal_ip, external_port_start, external_port_end));
-    leptos_axum::redirect("/port-forwarding");
+    leptos_axum::redirect("/settings#port-forwarding");
     Ok(())
 }
 
@@ -155,7 +155,7 @@ pub async fn remove_port_forward(id: i64) -> Result<(), ServerFnError> {
     crate::client::remove_port_forward(id)
         .map_err(ServerFnError::new)?;
     let _ = crate::client::log_audit("remove_port_forward", &id.to_string());
-    leptos_axum::redirect("/port-forwarding");
+    leptos_axum::redirect("/settings#port-forwarding");
     Ok(())
 }
 
@@ -761,7 +761,7 @@ pub async fn toggle_port_forward(id: i64, enabled: String) -> Result<(), ServerF
     crate::client::set_port_forward_enabled(id, enabled)
         .map_err(ServerFnError::new)?;
     let _ = crate::client::log_audit("set_port_forward_enabled", &format!("{}={}", id, enabled));
-    leptos_axum::redirect("/port-forwarding");
+    leptos_axum::redirect("/settings#port-forwarding");
     Ok(())
 }
 
@@ -776,7 +776,7 @@ pub async fn add_ipv6_pinhole(
     crate::client::add_ipv6_pinhole(&device_mac, &protocol, port_start, port_end, &description)
         .map_err(ServerFnError::new)?;
     let _ = crate::client::log_audit("add_ipv6_pinhole", &format!("{}: {}/{}-{}", device_mac, protocol, port_start, port_end));
-    leptos_axum::redirect("/port-forwarding");
+    leptos_axum::redirect("/settings#port-forwarding");
     Ok(())
 }
 
@@ -785,7 +785,7 @@ pub async fn remove_ipv6_pinhole(id: i64) -> Result<(), ServerFnError> {
     crate::client::remove_ipv6_pinhole(id)
         .map_err(ServerFnError::new)?;
     let _ = crate::client::log_audit("remove_ipv6_pinhole", &id.to_string());
-    leptos_axum::redirect("/port-forwarding");
+    leptos_axum::redirect("/settings#port-forwarding");
     Ok(())
 }
 
@@ -824,7 +824,7 @@ pub async fn set_wg_peer_group(public_key: String, group: String) -> Result<(), 
 pub async fn enable_vlan() -> Result<(), ServerFnError> {
     crate::client::vlan_enable().map_err(ServerFnError::new)?;
     let _ = crate::client::log_audit("vlan_enable", "");
-    leptos_axum::redirect("/vlans");
+    leptos_axum::redirect("/settings#vlans");
     Ok(())
 }
 
@@ -832,7 +832,7 @@ pub async fn enable_vlan() -> Result<(), ServerFnError> {
 pub async fn disable_vlan() -> Result<(), ServerFnError> {
     crate::client::vlan_disable().map_err(ServerFnError::new)?;
     let _ = crate::client::log_audit("vlan_disable", "");
-    leptos_axum::redirect("/vlans");
+    leptos_axum::redirect("/settings#vlans");
     Ok(())
 }
 
@@ -841,7 +841,7 @@ pub async fn update_vlan_id(group: String, vlan_id: u16) -> Result<(), ServerFnE
     crate::client::vlan_update_config(&group, vlan_id)
         .map_err(|e| ServerFnError::new(e))?;
     let _ = crate::client::log_audit("vlan_update_config", &format!("{}: {}", group, vlan_id));
-    leptos_axum::redirect("/vlans");
+    leptos_axum::redirect("/settings#vlans");
     Ok(())
 }
 
@@ -898,7 +898,7 @@ pub async fn add_switch(
             .map_err(ServerFnError::new)?;
     }
     let _ = crate::client::log_audit("switch_add", &name);
-    leptos_axum::redirect("/switches");
+    leptos_axum::redirect("/settings#switches");
     Ok(())
 }
 
@@ -906,14 +906,14 @@ pub async fn add_switch(
 pub async fn remove_switch(name: String) -> Result<(), ServerFnError> {
     crate::client::remove_switch(&name).map_err(ServerFnError::new)?;
     let _ = crate::client::log_audit("switch_remove", &name);
-    leptos_axum::redirect("/switches");
+    leptos_axum::redirect("/settings#switches");
     Ok(())
 }
 
 #[server]
 pub async fn test_switch(name: String) -> Result<(), ServerFnError> {
     crate::client::test_switch(&name).map_err(ServerFnError::new)?;
-    leptos_axum::redirect("/switches");
+    leptos_axum::redirect("/settings#switches");
     Ok(())
 }
 

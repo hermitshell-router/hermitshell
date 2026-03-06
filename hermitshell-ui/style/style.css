@@ -1004,3 +1004,45 @@ svg { max-width: 100%; height: auto; }
 tr.row-highlight {
     background: rgba(233, 163, 25, 0.08);
 }
+
+/* --- Settings jump links & section headings --- */
+.jump-links {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px dashed var(--grid-line);
+}
+
+.jump-links a {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--canopy);
+    text-decoration: none;
+}
+
+.jump-links a:hover {
+    text-decoration: underline;
+}
+
+.settings-section-heading {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--wood);
+    margin-top: 2rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px dashed var(--grid-line);
+    scroll-margin-top: 1rem;
+}
+
+.settings-section-sub {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--soil);
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+    scroll-margin-top: 1rem;
+}

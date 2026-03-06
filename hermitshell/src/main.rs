@@ -365,6 +365,11 @@ async fn main() {
         .route("/fonts/ibm-plex-mono-bold.woff2", axum::routing::get(|| async { serve_font(FONT_IBM_PLEX_MONO_BOLD).await }))
         .route("/api/backup/config", axum::routing::post(handle_backup_config))
         .route("/api/restore/config", axum::routing::post(handle_restore_config))
+        .route("/groups", axum::routing::get(|| async { axum::response::Redirect::permanent("/settings#groups") }))
+        .route("/port-forwarding", axum::routing::get(|| async { axum::response::Redirect::permanent("/settings#port-forwarding") }))
+        .route("/vlans", axum::routing::get(|| async { axum::response::Redirect::permanent("/settings#vlans") }))
+        .route("/switches", axum::routing::get(|| async { axum::response::Redirect::permanent("/settings#switches") }))
+        .route("/audit", axum::routing::get(|| async { axum::response::Redirect::permanent("/logs?tab=audit") }))
         .leptos_routes(&leptos_options, routes, App)
         .layer(axum::middleware::from_fn(auth_middleware))
         .layer(axum::middleware::from_fn_with_state(

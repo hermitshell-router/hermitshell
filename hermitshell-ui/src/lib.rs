@@ -15,16 +15,12 @@ use pages::dashboard::Dashboard;
 use pages::device_detail::DeviceDetail;
 use pages::devices::DeviceList;
 use pages::dns::Dns;
-use pages::groups::Groups;
 use pages::guest::Guest;
 use pages::login::Login;
 use pages::logs::Logs;
 use pages::settings::Settings;
 use pages::setup::{Setup, SetupStep1, SetupStep2, SetupStep3, SetupStep4, SetupStep5, SetupStep6, SetupStep7, SetupStep8};
 use pages::traffic::Traffic;
-use pages::port_forwarding::PortForwarding;
-use pages::switch_settings::SwitchSettings;
-use pages::vlan_settings::VlanSettings;
 use pages::wifi::Wifi;
 use pages::wireguard::Wireguard;
 
@@ -37,16 +33,12 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/") view=Dashboard />
                     <Route path=path!("/devices") view=DeviceList />
                     <Route path=path!("/devices/:mac") view=DeviceDetail />
-                    <Route path=path!("/groups") view=Groups />
                     <Route path=path!("/traffic") view=Traffic />
                     <Route path=path!("/dns") view=Dns />
                     <Route path=path!("/alerts") view=Alerts />
                     <Route path=path!("/wireguard") view=Wireguard />
-                    <Route path=path!("/port-forwarding") view=PortForwarding />
                     <Route path=path!("/guest") view=Guest />
                     <Route path=path!("/wifi") view=Wifi />
-                    <Route path=path!("/vlans") view=VlanSettings />
-                    <Route path=path!("/switches") view=SwitchSettings />
                     <Route path=path!("/settings") view=Settings />
                     <Route path=path!("/logs") view=Logs />
                     <Route path=path!("/login") view=Login />
