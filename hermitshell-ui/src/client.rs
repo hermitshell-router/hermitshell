@@ -1031,6 +1031,35 @@ pub fn guest_network_regenerate_password() -> Result<String, String> {
     val["password"].as_str().map(|s| s.to_string()).ok_or("no password in response".into())
 }
 
+pub fn totp_setup() -> Result<(String, String), String> {
+    let resp = ok_or_err(send(json!({"method": "totp_setup"}))?)?;
+    let val = resp.config_value.ok_or("no config_value".to_string())?;
+    let parsed: serde_json::Value = serde_json::from_str(&val).map_err(|e| e.to_string())?;
+    let secret = parsed["secret"].as_str().ok_or("missing secret".to_string())?.to_string();
+    let uri = parsed["uri"].as_str().ok_or("missing uri".to_string())?.to_string();
+    Ok((secret, uri))
+}
+
+pub fn totp_verify(code: &str) -> Result<bool, String> {
+    let resp = ok_or_err(send(json!({"method": "totp_verify", "value": code}))?)?;
+    Ok(resp.config_value.as_deref() == Some("true"))
+}
+
+pub fn totp_enable(code: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "totp_enable", "value": code}))?)?;
+    Ok(())
+}
+
+pub fn totp_disable(password: &str) -> Result<(), String> {
+    ok_or_err(send(json!({"method": "totp_disable", "value": password}))?)?;
+    Ok(())
+}
+
+pub fn totp_status() -> Result<bool, String> {
+    let resp = ok_or_err(send(json!({"method": "totp_status"}))?)?;
+    Ok(resp.config_value.as_deref() == Some("true"))
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

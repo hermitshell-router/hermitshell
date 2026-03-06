@@ -42,6 +42,8 @@ rustls-pki-types = "1"
 urlencoding = "2"
 nix = { version = "0.31", features = ["fs", "hostname", "signal", "user"] }
 tempfile = "3"
+sha1 = "0.10"
+data-encoding = "2"
 zeroize = "1"
 regex = "1"
 simple-dns = "0.11"

@@ -11,6 +11,7 @@ mod setup;
 mod switch;
 mod guest;
 mod vlan;
+mod totp;
 
 use anyhow::Result;
 use argon2::password_hash::SaltString;
@@ -47,6 +48,8 @@ const BLOCKED_CONFIG_KEYS: &[&str] = &[
     "setup_complete",
     "setup_step",
     "api_key_hash",
+    "totp_secret",
+    "totp_enabled",
 ];
 
 fn is_blocked_config_key(key: &str) -> bool {
@@ -111,6 +114,7 @@ const WEB_ALLOWED_METHODS: &[&str] = &[
     "get_device_presence",
     "guest_network_status", "guest_network_enable", "guest_network_disable",
     "guest_network_update", "guest_network_regenerate_password",
+    "totp_setup", "totp_verify", "totp_enable", "totp_disable", "totp_status",
 ];
 
 const SESSION_IDLE_TIMEOUT_SECS: u64 = 1800;     // 30 minutes
@@ -698,6 +702,11 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
             }
         }
         "guest_network_status" => guest::handle_guest_network_status(&req, db),
+        "totp_setup" => totp::handle_totp_setup(&req, db),
+        "totp_verify" => totp::handle_totp_verify(&req, db),
+        "totp_enable" => totp::handle_totp_enable(&req, db),
+        "totp_disable" => totp::handle_totp_disable(&req, db, password_lock, login_rate_limit),
+        "totp_status" => totp::handle_totp_status(&req, db),
         _ => Response::err("unknown method"),
     }
 }
