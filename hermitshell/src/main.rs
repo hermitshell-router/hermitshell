@@ -31,8 +31,23 @@ async fn serve_font(font: &'static [u8]) -> impl IntoResponse {
 }
 
 async fn handle_backup_config(
-    axum::extract::Form(params): axum::extract::Form<std::collections::HashMap<String, String>>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
 ) -> impl IntoResponse {
+    let is_form = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| ct.starts_with("application/x-www-form-urlencoded"))
+        .unwrap_or(false);
+    let params: std::collections::HashMap<String, String> = if is_form {
+        let body_str = std::str::from_utf8(&body).unwrap_or("");
+        body_str.split('&').filter_map(|pair| {
+            let mut parts = pair.splitn(2, '=');
+            Some((parts.next()?.to_string(), parts.next().unwrap_or("").to_string()))
+        }).collect()
+    } else {
+        std::collections::HashMap::new()
+    };
     let include_secrets = params.get("secrets").map(|v| v == "1").unwrap_or(false);
     let passphrase = params.get("passphrase").cloned();
     match client::export_config_v2(include_secrets, passphrase.as_deref()) {

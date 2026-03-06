@@ -430,9 +430,14 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
     while reader.read_line(&mut line).await? > 0 {
-        if line.len() > 65_536 {
-            warn!("request exceeds 64KB limit, closing connection");
-            return Ok(());
+        if line.len() > 2_097_152 {
+            warn!(len = line.len(), "request exceeds 2MB limit");
+            let err = Response::err("request too large (max 2MB)");
+            let mut json = serde_json::to_string(&err).unwrap_or_default();
+            json.push('\n');
+            let _ = writer.write_all(json.as_bytes()).await;
+            line.clear();
+            continue;
         }
         let response = match serde_json::from_str::<Request>(&line) {
             Ok(req) => {
