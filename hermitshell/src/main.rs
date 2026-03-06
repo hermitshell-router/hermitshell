@@ -40,11 +40,7 @@ async fn handle_backup_config(
         .map(|ct| ct.starts_with("application/x-www-form-urlencoded"))
         .unwrap_or(false);
     let params: std::collections::HashMap<String, String> = if is_form {
-        let body_str = std::str::from_utf8(&body).unwrap_or("");
-        body_str.split('&').filter_map(|pair| {
-            let mut parts = pair.splitn(2, '=');
-            Some((parts.next()?.to_string(), parts.next().unwrap_or("").to_string()))
-        }).collect()
+        serde_urlencoded::from_bytes(&body).unwrap_or_default()
     } else {
         std::collections::HashMap::new()
     };
