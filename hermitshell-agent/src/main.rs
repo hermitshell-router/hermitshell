@@ -525,7 +525,7 @@ async fn main() -> Result<()> {
         }
         // Generate session secret if missing
         if db_guard.get_config("session_secret").ok().flatten().is_none() {
-            let secret = hex::encode(rand::Rng::r#gen::<[u8; 32]>(&mut rand::rngs::OsRng));
+            let secret = hex::encode(rand::random::<[u8; 32]>());
             let _ = db_guard.set_config("session_secret", &secret);
             info!("session secret generated");
         }

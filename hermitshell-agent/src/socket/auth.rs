@@ -107,7 +107,7 @@ pub(super) fn handle_setup_password(req: &Request, db: &Arc<Mutex<Db>>, login_ra
         }
         reset_login_rate_limit(login_rate_limit);
     }
-    let salt = SaltString::generate(&mut rand::rngs::OsRng);
+    let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
     let new_hash = match Argon2::default().hash_password(value.as_bytes(), &salt) {
         Ok(h) => h.to_string(),
         Err(e) => return Response::err(&format!("hashing failed: {}", e)),
@@ -130,7 +130,7 @@ pub(super) fn handle_create_session(_req: &Request, db: &Arc<Mutex<Db>>) -> Resp
     let secret = match db.get_config("session_secret").ok().flatten() {
         Some(s) => Zeroizing::new(s),
         None => {
-            let s = hex::encode(rand::Rng::r#gen::<[u8; 32]>(&mut rand::rngs::OsRng));
+            let s = hex::encode(rand::random::<[u8; 32]>());
             if let Err(e) = db.set_config("session_secret", &s) {
                 return Response::err(&format!("failed to store secret: {}", e));
             }

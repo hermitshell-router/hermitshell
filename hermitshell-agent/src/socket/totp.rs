@@ -53,7 +53,7 @@ fn verify_code(secret: &[u8], code: &str) -> bool {
 
 pub(super) fn handle_totp_setup(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let mut secret_bytes = [0u8; TOTP_SECRET_BYTES];
-    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut secret_bytes);
+    rand::Fill::fill_slice(&mut secret_bytes, &mut rand::rng());
     let secret_b32 = BASE32.encode(&secret_bytes);
 
     let db = db.lock().unwrap();

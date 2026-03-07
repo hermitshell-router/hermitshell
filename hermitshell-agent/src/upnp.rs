@@ -7,7 +7,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
-use rand::Rng;
+use rand::RngExt as _;
 use tracing::{debug, error, info, warn};
 
 use crate::db::Db;
@@ -285,7 +285,7 @@ async fn run_ssdp(db: Arc<Mutex<Db>>, device_uuid: String, lan_iface: String, la
 
         // H9: Random delay 0..MX seconds before responding
         let mx = parse_mx(data);
-        let delay = rand::thread_rng().gen_range(0..=mx);
+        let delay = rand::rng().random_range(0..=mx);
         tokio::time::sleep(std::time::Duration::from_secs(delay as u64)).await;
 
         for rst in response_sts {

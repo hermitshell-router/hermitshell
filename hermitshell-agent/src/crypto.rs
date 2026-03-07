@@ -3,7 +3,6 @@ use aes_gcm::aead::Aead;
 use anyhow::{Context, Result};
 use base64::Engine;
 use hkdf::Hkdf;
-use rand::Rng;
 use sha2::Sha256;
 
 const HKDF_INFO: &[u8] = b"hermitshell-wifi-password-encryption";
@@ -32,7 +31,7 @@ pub fn encrypt_password(plaintext: &str, session_secret: &str) -> Result<String>
     let cipher = Aes256Gcm::new_from_slice(&key)
         .map_err(|e| anyhow::anyhow!("AES key init: {}", e))?;
 
-    let nonce_bytes: [u8; 12] = rand::rngs::OsRng.r#gen();
+    let nonce_bytes: [u8; 12] = rand::random();
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let ciphertext = cipher.encrypt(nonce, plaintext.as_bytes())
@@ -90,11 +89,11 @@ fn derive_key_from_passphrase(passphrase: &str, salt: &[u8; 16]) -> Result<[u8; 
 /// Encrypt a plaintext string with a user passphrase.
 /// Returns base64(salt(16) || nonce(12) || ciphertext).
 pub fn encrypt_with_passphrase(plaintext: &str, passphrase: &str) -> Result<String> {
-    let salt: [u8; 16] = rand::rngs::OsRng.r#gen();
+    let salt: [u8; 16] = rand::random();
     let key = derive_key_from_passphrase(passphrase, &salt)?;
     let cipher = Aes256Gcm::new_from_slice(&key)
         .map_err(|e| anyhow::anyhow!("AES key init: {}", e))?;
-    let nonce_bytes: [u8; 12] = rand::rngs::OsRng.r#gen();
+    let nonce_bytes: [u8; 12] = rand::random();
     let nonce = Nonce::from_slice(&nonce_bytes);
     let ciphertext = cipher.encrypt(nonce, plaintext.as_bytes())
         .map_err(|e| anyhow::anyhow!("AES encrypt: {}", e))?;

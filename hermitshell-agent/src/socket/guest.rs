@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use rand::Rng;
+use rand::RngExt as _;
 use tracing::{info, warn};
 use zeroize::Zeroizing;
 
@@ -301,10 +301,10 @@ async fn handle_guest_network_regenerate_password(
     // Generate random 12-char alphanumeric password
     let new_password: String = {
         const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         (0..12)
             .map(|_| {
-                let idx = rng.gen_range(0..CHARSET.len());
+                let idx = rng.random_range(0..CHARSET.len());
                 CHARSET[idx] as char
             })
             .collect()

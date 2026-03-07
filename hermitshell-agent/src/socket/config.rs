@@ -1150,7 +1150,7 @@ pub(super) fn handle_set_api_key(req: &Request, db: &Arc<Mutex<Db>>) -> Response
     if key.len() > 256 {
         return Response::err("API key must be at most 256 characters");
     }
-    let salt = SaltString::generate(&mut rand::rngs::OsRng);
+    let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
     let argon2 = Argon2::default();
     let hash = match argon2.hash_password(key.as_bytes(), &salt) {
         Ok(h) => h.to_string(),

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rand::Rng;
+use rand::RngExt as _;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::io::Read;
 use std::net::{Ipv6Addr, SocketAddrV6};
@@ -68,7 +68,7 @@ pub fn run_ra_sender(lan_iface: &str) -> Result<()> {
 
     info!(iface = lan_iface, "starting RA sender");
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut ra_count = 0u32;
     let mut buf = [0u8; 1500];
 
@@ -82,7 +82,7 @@ pub fn run_ra_sender(lan_iface: &str) -> Result<()> {
             }
         } else {
             // L1: Randomized steady-state interval (RFC 4861 section 6.2.4)
-            rng.gen_range(MIN_RA_INTERVAL_SECS..=MAX_RA_INTERVAL_SECS)
+            rng.random_range(MIN_RA_INTERVAL_SECS..=MAX_RA_INTERVAL_SECS)
         };
 
         let deadline =
@@ -99,7 +99,7 @@ pub fn run_ra_sender(lan_iface: &str) -> Result<()> {
                 Ok(len) if len >= 1 && buf[0] == 133 => {
                     // RS received -- respond after random 0..500ms delay
                     // (RFC 4861 section 6.2.6)
-                    let delay_ms = rng.gen_range(0..=RS_RESPONSE_MAX_DELAY_MS);
+                    let delay_ms = rng.random_range(0..=RS_RESPONSE_MAX_DELAY_MS);
                     std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                     if let Err(e) = sock.send_to(&ra, &dest.into()) {
                         error!(error = %e, "failed to send RA (RS response)");
