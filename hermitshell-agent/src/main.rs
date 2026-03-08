@@ -815,12 +815,12 @@ async fn main() -> Result<()> {
 
     // Spawn REST API server (plaintext HTTP on port 9080)
     {
-        let rest_state = rest_api::AppState {
-            db: db.clone(),
-            portmap: portmap_registry.clone(),
-            unbound: unbound_mgr.clone(),
+        let rest_state = rest_api::AppState::new(
+            db.clone(),
+            portmap_registry.clone(),
+            unbound_mgr.clone(),
             start_time,
-        };
+        );
         let rest_port: u16 = std::env::var("REST_API_PORT")
             .ok()
             .and_then(|v| v.parse().ok())

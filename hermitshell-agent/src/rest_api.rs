@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use axum::{
     Json, Router,
@@ -17,13 +18,40 @@ use crate::portmap;
 use crate::socket::config::{apply_hermit_config, build_hermit_config};
 use crate::unbound::UnboundManager;
 
+/// Tracks failed auth attempts for exponential backoff.
+struct ApiRateLimit {
+    failures: u32,
+    last_attempt: Instant,
+}
+
 /// Shared state passed to all REST API handlers.
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Mutex<Db>>,
     pub portmap: portmap::SharedRegistry,
     pub unbound: Arc<Mutex<UnboundManager>>,
-    pub start_time: std::time::Instant,
+    pub start_time: Instant,
+    rate_limit: Arc<Mutex<ApiRateLimit>>,
+}
+
+impl AppState {
+    pub fn new(
+        db: Arc<Mutex<Db>>,
+        portmap: portmap::SharedRegistry,
+        unbound: Arc<Mutex<UnboundManager>>,
+        start_time: Instant,
+    ) -> Self {
+        Self {
+            db,
+            portmap,
+            unbound,
+            start_time,
+            rate_limit: Arc::new(Mutex::new(ApiRateLimit {
+                failures: 0,
+                last_attempt: Instant::now(),
+            })),
+        }
+    }
 }
 
 /// Standard JSON error response.
@@ -98,6 +126,17 @@ async fn auth_middleware(
         return json_error(StatusCode::UNAUTHORIZED, "empty bearer token");
     }
 
+    // Exponential backoff: 2^min(failures, 6) seconds (max 64s)
+    {
+        let rl = state.rate_limit.lock().unwrap();
+        if rl.failures > 0 {
+            let backoff_secs = 1u64 << rl.failures.min(6);
+            if rl.last_attempt.elapsed().as_secs() < backoff_secs {
+                return json_error(StatusCode::TOO_MANY_REQUESTS, "too many failed attempts; try again later");
+            }
+        }
+    }
+
     // Look up API key hash from DB
     let hash_str = {
         let db = state.db.lock().unwrap();
@@ -131,9 +170,20 @@ async fn auth_middleware(
         .is_err()
     {
         warn!("REST API authentication failed: invalid API key");
+        {
+            let mut rl = state.rate_limit.lock().unwrap();
+            rl.failures = rl.failures.saturating_add(1);
+            rl.last_attempt = Instant::now();
+        }
         let db = state.db.lock().unwrap();
         let _ = db.log_audit("api_auth_failure", "invalid API key");
         return json_error(StatusCode::UNAUTHORIZED, "invalid API key");
+    }
+
+    // Auth succeeded — reset rate limit counter
+    {
+        let mut rl = state.rate_limit.lock().unwrap();
+        rl.failures = 0;
     }
 
     next.run(request).await
