@@ -439,6 +439,11 @@ impl UnboundManager {
                 Ok(content) => {
                     let path = format!("{}/{}.conf", paths::blocklist_dir(), bl.id);
                     std::fs::write(&path, &content)?;
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640));
+                    }
                     info!(
                         id = bl.id,
                         path = %path,
