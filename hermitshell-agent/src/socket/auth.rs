@@ -118,6 +118,14 @@ pub(super) fn handle_setup_password(req: &Request, db: &Arc<Mutex<Db>>, login_ra
     match db.set_config("admin_password_hash", &new_hash) {
         Ok(()) => {
             let _ = db.set_config("setup_step", "6");
+            // Rotate session secret to invalidate all existing sessions
+            {
+                let mut buf = [0u8; 32];
+                rand::rngs::SysRng.try_fill_bytes(&mut buf).expect("OS RNG failed");
+                let new_secret = hex::encode(buf);
+                let _ = db.set_config("session_secret", &new_secret);
+                info!("session secret rotated after password change");
+            }
             let action = if is_change { "password_changed" } else { "password_set" };
             let _ = db.log_audit(action, "");
             Response::ok()
