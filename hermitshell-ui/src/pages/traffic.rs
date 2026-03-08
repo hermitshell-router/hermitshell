@@ -79,7 +79,7 @@ fn render_traffic(mut devices: Vec<crate::types::Device>, realtime: Vec<hermitsh
             {if let Some(ref e) = history_err {
                 view! { <p class="error">{format!("Error loading bandwidth: {e}")}</p> }.into_any()
             } else {
-                view! { <div inner_html={chart_svg}></div> }.into_any()
+                view! { <div inner_html={chart_svg} role="img" aria-label="Network bandwidth chart"></div> }.into_any()
             }}
         </div>
 

@@ -112,7 +112,7 @@ fn render_dashboard(status: Status, mut devices: Vec<Device>, guest_status: serd
             <h2 class="section-header">"Network Bandwidth (24h)"</h2>
             {match client::get_bandwidth_history(None, "24h") {
                 Ok(history) => {
-                    view! { <div inner_html={charts::bandwidth_chart(&history, 800, 120)}></div> }.into_any()
+                    view! { <div inner_html={charts::bandwidth_chart(&history, 800, 120)} role="img" aria-label="Network bandwidth overview"></div> }.into_any()
                 }
                 Err(e) => {
                     view! { <p class="error">{format!("Error loading bandwidth: {e}")}</p> }.into_any()

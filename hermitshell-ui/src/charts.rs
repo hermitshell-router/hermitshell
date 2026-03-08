@@ -6,6 +6,7 @@ pub fn bandwidth_chart(data: &[BandwidthPoint], width: u32, height: u32) -> Stri
     if data.is_empty() {
         return format!(
             r##"<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">
+                <title>Network bandwidth chart — no data available</title>
                 <text x="{}" y="{}" fill="#A67C52" font-size="14" text-anchor="middle">No data</text>
             </svg>"##,
             width / 2, height / 2
@@ -101,6 +102,7 @@ pub fn bandwidth_chart(data: &[BandwidthPoint], width: u32, height: u32) -> Stri
 
     format!(
         r##"<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg" style="background:var(--cream,#FDFCFA)">
+            <title>Network bandwidth chart showing download and upload over time</title>
             {y_labels}
             {x_labels}
             <path d="{rx_fill}" fill="rgba(82,183,136,0.25)" />
@@ -164,6 +166,7 @@ pub fn presence_timeline(
 
     format!(
         r##"<svg width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg" style="background:var(--cream,#FDFCFA)">
+            <title>Device presence timeline showing online and offline periods</title>
             {segments}
             <text x="4" y="{}" fill="#A67C52" font-size="10">{start_label}</text>
             <text x="{}" y="{}" fill="#A67C52" font-size="10" text-anchor="end">{end_label}</text>
