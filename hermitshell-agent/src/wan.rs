@@ -29,6 +29,8 @@ pub struct WanLease {
     pub _rebind_at: Instant,
     pub _delegated_prefix: Option<String>,
     pub _prefix_valid_lifetime: Option<u32>,
+    /// DHCP server IP for sending RELEASE on shutdown.
+    pub server_ip: Option<Ipv4Addr>,
 }
 
 pub type SharedWanLease = Arc<Mutex<Option<WanLease>>>;
@@ -166,6 +168,7 @@ async fn run_static(
         _rebind_at: now + Duration::from_secs(365 * 24 * 3600),
         _delegated_prefix: None,
         _prefix_valid_lifetime: None,
+        server_ip: None, // static mode has no DHCP server
     };
 
     {
@@ -956,11 +959,32 @@ async fn run_dhcp(
         // --- Try DHCPv6-PD ---
         let delegated_prefix = dhcp6_pd(wan_iface).await;
 
-        // Store delegated prefix in DB
+        // Store delegated prefix in DB and spawn renewal task
         if let Some(ref prefix) = delegated_prefix {
             info!(prefix = %prefix, "IPv6 prefix delegated");
             let db_guard = db.lock().unwrap();
             let _ = db_guard.set_config("ipv6_delegated_prefix", prefix);
+        }
+
+        if delegated_prefix.is_some() {
+            let wan_pd = wan_iface.to_string();
+            let db_pd = db.clone();
+            tokio::spawn(async move {
+                // Renew at T1 (default 12 hours for typical ISP prefix lifetimes)
+                let t1 = Duration::from_secs(43200);
+                loop {
+                    tokio::time::sleep(t1).await;
+                    info!("DHCPv6-PD renewal timer fired");
+                    match dhcp6_pd(&wan_pd).await {
+                        Some(new_prefix) => {
+                            let db_guard = db_pd.lock().unwrap();
+                            let _ = db_guard.set_config("ipv6_delegated_prefix", &new_prefix);
+                            info!(prefix = %new_prefix, "DHCPv6-PD renewed");
+                        }
+                        None => warn!("DHCPv6-PD renewal failed"),
+                    }
+                }
+            });
         }
 
         // Store upstream DNS from lease in DB for Unbound
@@ -993,6 +1017,7 @@ async fn run_dhcp(
                 _rebind_at: lease_start + lease_dur * 7 / 8,
                 _delegated_prefix: delegated_prefix.clone(),
                 _prefix_valid_lifetime: None,
+                server_ip: Some(server_ip),
             });
         }
 
@@ -1041,6 +1066,7 @@ async fn run_dhcp(
                             _rebind_at: lease_start + new_dur * 7 / 8,
                             _delegated_prefix: delegated_prefix.clone(),
                             _prefix_valid_lifetime: None,
+                            server_ip: Some(server_ip),
                         });
                     }
 
@@ -1082,5 +1108,67 @@ async fn run_dhcp(
                 }
             }
         }
+    }
+}
+
+/// Build a DHCPv4 RELEASE message.
+fn build_release(xid: u32, mac: &[u8; 6], client_ip: Ipv4Addr, server_ip: Ipv4Addr) -> Vec<u8> {
+    let mut msg = v4::Message::default();
+    msg.set_opcode(v4::Opcode::BootRequest);
+    msg.set_htype(v4::HType::Eth);
+    msg.set_xid(xid);
+    msg.set_chaddr(mac);
+    msg.set_ciaddr(client_ip);
+
+    msg.opts_mut()
+        .insert(DhcpOption::MessageType(MessageType::Release));
+    msg.opts_mut()
+        .insert(DhcpOption::ServerIdentifier(server_ip));
+
+    let mut buf = Vec::new();
+    let mut enc = Encoder::new(&mut buf);
+    msg.encode(&mut enc).expect("DHCP RELEASE encode failed");
+    buf
+}
+
+/// Send a DHCPRELEASE for the current WAN lease. Called on SIGTERM.
+pub async fn send_dhcp_release(wan_iface: &str, lease: &SharedWanLease) {
+    let lease_info = lease.lock().unwrap().clone();
+    let Some(lease_data) = lease_info else {
+        info!("no active WAN lease, skipping DHCPRELEASE");
+        return;
+    };
+    let Some(server_ip) = lease_data.server_ip else {
+        info!("static WAN mode, skipping DHCPRELEASE");
+        return;
+    };
+
+    let mac = match get_mac(wan_iface) {
+        Ok(m) => m,
+        Err(e) => {
+            warn!(error = %e, "failed to read MAC for DHCPRELEASE");
+            return;
+        }
+    };
+
+    let iface = wan_iface.to_string();
+    let client_ip = lease_data.ip;
+
+    // Run the blocking socket I/O in a spawn_blocking to avoid blocking the runtime
+    let result = tokio::task::spawn_blocking(move || -> Result<()> {
+        let sock = make_dhcp_socket(&iface, client_ip)?;
+        let xid: u32 = rand::rngs::SysRng.try_next_u32().expect("OS RNG failed");
+        let release = build_release(xid, &mac, client_ip, server_ip);
+        let dest = SocketAddrV4::new(server_ip, DHCP_SERVER_PORT);
+        sock.send_to(&release, dest)
+            .context("sending DHCPRELEASE")?;
+        info!(client = %client_ip, server = %server_ip, "sent DHCPRELEASE");
+        Ok(())
+    }).await;
+
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => warn!(error = %e, "DHCPRELEASE failed"),
+        Err(e) => warn!(error = %e, "DHCPRELEASE task panicked"),
     }
 }

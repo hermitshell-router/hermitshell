@@ -794,6 +794,21 @@ async fn main() -> Result<()> {
         }
     });
 
+    // SIGTERM handler: send DHCPRELEASE before exiting
+    {
+        let lease_for_shutdown = wan_lease.clone();
+        let wan_for_shutdown = wan_iface.clone();
+        tokio::spawn(async move {
+            let mut sigterm = tokio::signal::unix::signal(
+                tokio::signal::unix::SignalKind::terminate(),
+            ).expect("failed to register SIGTERM handler");
+            sigterm.recv().await;
+            info!("SIGTERM received, sending DHCPRELEASE");
+            wan::send_dhcp_release(&wan_for_shutdown, &lease_for_shutdown).await;
+            std::process::exit(0);
+        });
+    }
+
     // Spawn socket server
     let db_clone = db.clone();
     let unbound_clone = unbound_mgr.clone();
