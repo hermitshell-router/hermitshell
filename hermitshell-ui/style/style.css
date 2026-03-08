@@ -38,7 +38,7 @@
     --sky:        #3A86A8;
     --water:      #89C2D9;
     --soil:       #5C4033;
-    --wood:       #A67C52;
+    --wood:       #7A5A3A;
     --linen:      #F5F1EB;
     --cream:      #FDFCFA;
     --terracotta: #C1694F;
@@ -351,6 +351,25 @@ input:focus, textarea:focus, select:focus {
     border-color: var(--canopy);
 }
 
+/* --- Focus Visible (keyboard navigation) --- */
+.btn:focus-visible,
+a:focus-visible,
+.filter-bar a:focus-visible,
+.tab-link:focus-visible,
+.period-btn:focus-visible,
+.nav-hamburger:focus-visible,
+.setup-back:focus-visible {
+    outline: 2px solid var(--canopy);
+    outline-offset: 2px;
+}
+
+input:focus-visible, textarea:focus-visible, select:focus-visible,
+.settings-input:focus-visible {
+    outline: 2px solid var(--canopy);
+    outline-offset: 1px;
+    border-color: var(--canopy);
+}
+
 .settings-input {
     background: var(--cream);
     color: var(--soil);
@@ -378,7 +397,7 @@ input:focus, textarea:focus, select:focus {
 .badge-quarantine { background: #fef3c7; color: #92400e; }
 .badge-trusted { background: #d1fae5; color: #065f46; }
 .badge-iot { background: #ccfbf1; color: #115e59; }
-.badge-guest { background: var(--dawn); color: var(--wood); }
+.badge-guest { background: var(--dawn); color: #5C4033; }
 .badge-servers { background: #dbeafe; color: #1e40af; }
 .badge-blocked { background: #fde8e4; color: var(--terracotta); }
 .badge-default { background: var(--linen); color: var(--wood); border: 1px dashed var(--grid-line); }
@@ -488,6 +507,7 @@ svg { max-width: 100%; height: auto; }
     .confirm-dialog { max-width: calc(100vw - 2rem); }
 
     .btn { min-height: 44px; }
+    .btn-sm { padding: 0.375rem 0.75rem; }
     .sidebar-nav a { min-height: 44px; display: flex; align-items: center; }
 
     .input-md { width: 100%; }
@@ -640,7 +660,11 @@ svg { max-width: 100%; height: auto; }
     font-size: 0.875rem;
     max-width: 400px;
     z-index: 1000;
-    animation: slideInOut 4s ease-in-out forwards;
+    animation: slideInOut 6s ease-in-out forwards;
+}
+
+.toast:hover {
+    animation-play-state: paused;
 }
 
 .toast-success { border-left: 3px solid var(--success); }
@@ -1092,4 +1116,13 @@ tr.row-highlight {
     gap: 0.5rem;
     align-items: center;
     flex-shrink: 0;
+}
+
+/* --- Reduced Motion --- */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
 }
