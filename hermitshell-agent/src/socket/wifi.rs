@@ -350,16 +350,28 @@ pub(super) async fn connect_to_provider(provider_id: &str, db: &Arc<Mutex<Db>>) 
         }
     });
 
+    let preferred_backend = {
+        let db = db.lock().unwrap();
+        db.get_config(&format!("wifi_tls_backend_{}", provider_id))
+            .ok().flatten()
+    };
+
     match crate::wifi::connect(
         &provider_type, &url, &username, &password,
         ca_cert_pem.as_deref(), site.as_deref(), api_key.as_ref().map(|k| k.as_str()),
+        preferred_backend.as_deref(),
     ).await {
-        Ok((provider, tofu_pem)) => {
+        Ok((provider, tofu_pem, tls_backend)) => {
             // Save TOFU cert if captured
+            let db = db.lock().unwrap();
             if let Some(ref pem) = tofu_pem {
-                let db = db.lock().unwrap();
                 let _ = db.set_wifi_provider_ca_cert(provider_id, Some(pem));
             }
+            // Cache TLS backend choice
+            let _ = db.set_config(
+                &format!("wifi_tls_backend_{}", provider_id),
+                tls_backend,
+            );
             Ok(provider)
         }
         Err(e) => Err(Response::err(&format!("provider connection failed: {}", e))),

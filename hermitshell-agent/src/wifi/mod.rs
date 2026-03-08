@@ -3,9 +3,10 @@ pub mod unifi;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::time::{Duration, interval};
-use tracing::{info, warn};
+use tracing::{info, warn, debug};
 use zeroize::Zeroizing;
 
 use crate::db::Db;
@@ -51,8 +52,9 @@ pub trait WifiDevice: Send + Sync {
 }
 
 /// Creates a provider session for a given provider type.
-/// Returns `(provider, tofu_cert_pem)` where tofu_cert_pem is `Some` if a TOFU
-/// certificate was captured (first connection without a CA cert).
+/// Returns `(provider, tofu_cert_pem, tls_backend)` where tofu_cert_pem is `Some` if a TOFU
+/// certificate was captured (first connection without a CA cert), and tls_backend
+/// indicates which TLS implementation was used (`"rustls"` or `"native"`).
 pub async fn connect(
     provider_type: &str,
     url: &str,
@@ -61,27 +63,46 @@ pub async fn connect(
     ca_cert_pem: Option<&str>,
     site: Option<&str>,
     api_key: Option<&str>,
-) -> Result<(Box<dyn WifiProvider>, Option<String>)> {
+    preferred_tls_backend: Option<&str>,
+) -> Result<(Box<dyn WifiProvider>, Option<String>, &'static str)> {
     match provider_type {
         "eap_standalone" => {
-            let (session, tofu_pem) =
-                eap_standalone::EapSession::login(url, username, password, ca_cert_pem).await?;
-            Ok((Box::new(session), tofu_pem))
+            let (session, tofu_pem, backend) =
+                eap_standalone::EapSession::login(url, username, password, ca_cert_pem, preferred_tls_backend).await?;
+            Ok((Box::new(session), tofu_pem, backend))
         }
         "unifi" => {
             let site = site.unwrap_or("default");
             let (session, tofu_pem) =
                 unifi::UnifiSession::connect(url, username, password, ca_cert_pem, site, api_key)
                     .await?;
-            Ok((Box::new(session), tofu_pem))
+            Ok((Box::new(session), tofu_pem, "rustls"))
         }
         _ => anyhow::bail!("unknown wifi provider: {}", provider_type),
     }
 }
 
+/// Try to use a cached provider session. Returns `true` if the cached session
+/// was usable (list_devices succeeded), `false` if it needs reconnection.
+async fn try_cached_provider(
+    provider: &dyn WifiProvider,
+    provider_name: &str,
+) -> bool {
+    match provider.list_devices().await {
+        Ok(_) => true,
+        Err(e) => {
+            debug!(provider = %provider_name, error = %e, "cached session expired, reconnecting");
+            false
+        }
+    }
+}
+
 /// Background polling loop — pulls client data from all enabled providers.
+/// Caches provider sessions across poll cycles to avoid re-authenticating
+/// every 60 seconds; reconnects on session expiry or error.
 pub async fn run(db: Arc<Mutex<Db>>) {
     let mut poll_interval = interval(Duration::from_secs(60));
+    let mut cached_sessions: HashMap<String, Box<dyn WifiProvider>> = HashMap::new();
 
     loop {
         poll_interval.tick().await;
@@ -91,141 +112,181 @@ pub async fn run(db: Arc<Mutex<Db>>) {
             db.list_wifi_providers().unwrap_or_default()
         };
 
+        // Remove cached sessions for providers that no longer exist or are disabled
+        let active_ids: std::collections::HashSet<String> = providers.iter()
+            .filter(|p| p.enabled)
+            .map(|p| p.id.clone())
+            .collect();
+        cached_sessions.retain(|id, _| active_ids.contains(id));
+
         for provider_info in &providers {
             if !provider_info.enabled {
                 continue;
             }
 
-            let creds = {
-                let db = db.lock().unwrap();
-                db.get_wifi_provider_credentials(&provider_info.id).ok().flatten()
+            // Check if we have a valid cached session
+            let need_reconnect = match cached_sessions.get(&provider_info.id) {
+                Some(provider) => !try_cached_provider(provider.as_ref(), &provider_info.name).await,
+                None => true,
             };
-            let Some((provider_type, url, username, password_enc, site, api_key_enc)) = creds else {
+
+            if need_reconnect {
+                // Need to establish a new session
+                let creds = {
+                    let db = db.lock().unwrap();
+                    db.get_wifi_provider_credentials(&provider_info.id).ok().flatten()
+                };
+                let Some((provider_type, url, username, password_enc, site, api_key_enc)) = creds else {
+                    continue;
+                };
+
+                let (ca_cert, preferred_backend) = {
+                    let db = db.lock().unwrap();
+                    let cert = db.get_wifi_provider_ca_cert(&provider_info.id).ok().flatten();
+                    let backend = db.get_config(&format!("wifi_tls_backend_{}", provider_info.id))
+                        .ok().flatten();
+                    (cert, backend)
+                };
+
+                // Decrypt password
+                let password: Zeroizing<String> = {
+                    let session_secret = Zeroizing::new({
+                        let db_lock = db.lock().unwrap();
+                        db_lock.get_config("session_secret").ok().flatten().unwrap_or_default()
+                    });
+                    if session_secret.is_empty() || !crate::crypto::is_encrypted(&password_enc) {
+                        Zeroizing::new(password_enc)
+                    } else {
+                        match crate::crypto::decrypt_password(&password_enc, &session_secret) {
+                            Ok(p) => Zeroizing::new(p),
+                            Err(e) => {
+                                warn!(provider = %provider_info.name, error = %e, "failed to decrypt provider password");
+                                continue;
+                            }
+                        }
+                    }
+                };
+
+                // Decrypt API key if present
+                let api_key: Option<Zeroizing<String>> = api_key_enc.and_then(|enc| {
+                    if enc.is_empty() { return None; }
+                    let session_secret = Zeroizing::new({
+                        let db_lock = db.lock().unwrap();
+                        db_lock.get_config("session_secret").ok().flatten().unwrap_or_default()
+                    });
+                    if session_secret.is_empty() || !crate::crypto::is_encrypted(&enc) {
+                        Some(Zeroizing::new(enc))
+                    } else {
+                        crate::crypto::decrypt_password(&enc, &session_secret).ok().map(Zeroizing::new)
+                    }
+                });
+
+                match connect(
+                    &provider_type, &url, &username, &password,
+                    ca_cert.as_deref(), site.as_deref(), api_key.as_ref().map(|k| k.as_str()),
+                    preferred_backend.as_deref(),
+                ).await {
+                    Ok((provider, tofu_pem, tls_backend)) => {
+                        // Save TOFU-pinned cert
+                        if let Some(ref pem) = tofu_pem {
+                            let db = db.lock().unwrap();
+                            let _ = db.set_wifi_provider_ca_cert(&provider_info.id, Some(pem));
+                            info!(provider = %provider_info.name, "TOFU: pinned TLS certificate");
+                        }
+                        // Cache TLS backend choice for future connections
+                        {
+                            let db = db.lock().unwrap();
+                            let _ = db.set_config(
+                                &format!("wifi_tls_backend_{}", provider_info.id),
+                                tls_backend,
+                            );
+                        }
+                        cached_sessions.insert(provider_info.id.clone(), provider);
+                    }
+                    Err(e) => {
+                        warn!(provider = %provider_info.name, error = %e, "wifi connect failed");
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs() as i64;
+                        let db = db.lock().unwrap();
+                        let _ = db.update_wifi_provider_status(&provider_info.id, "error", now);
+                        continue;
+                    }
+                }
+            }
+
+            // Use the (now-cached) provider
+            let provider = cached_sessions.get(&provider_info.id).unwrap();
+
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+
+            // Sync device list
+            match provider.list_devices().await {
+                Ok(devices) => {
+                    let db = db.lock().unwrap();
+                    let _ = db.sync_wifi_aps(&provider_info.id, &devices);
+                    let _ = db.update_wifi_provider_status(&provider_info.id, "online", now);
+                }
+                Err(e) => {
+                    warn!(provider = %provider_info.name, error = %e, "list_devices failed");
+                    // Invalidate the cached session so we reconnect next cycle
+                    cached_sessions.remove(&provider_info.id);
+                }
+            }
+
+            // Pull clients from each device and enrich device records
+            let device_macs: Vec<String> = {
+                let db = db.lock().unwrap();
+                db.list_wifi_aps().unwrap_or_default()
+                    .into_iter()
+                    .filter(|ap| ap.provider_id.as_deref() == Some(&provider_info.id))
+                    .map(|ap| ap.mac)
+                    .collect()
+            };
+
+            // Re-borrow provider after potential removal check above
+            let Some(provider) = cached_sessions.get(&provider_info.id) else {
                 continue;
             };
 
-            let ca_cert = {
-                let db = db.lock().unwrap();
-                db.get_wifi_provider_ca_cert(&provider_info.id).ok().flatten()
-            };
-
-            // Decrypt password
-            let password: Zeroizing<String> = {
-                let session_secret = Zeroizing::new({
-                    let db_lock = db.lock().unwrap();
-                    db_lock.get_config("session_secret").ok().flatten().unwrap_or_default()
-                });
-                if session_secret.is_empty() || !crate::crypto::is_encrypted(&password_enc) {
-                    Zeroizing::new(password_enc)
-                } else {
-                    match crate::crypto::decrypt_password(&password_enc, &session_secret) {
-                        Ok(p) => Zeroizing::new(p),
-                        Err(e) => {
-                            warn!(provider = %provider_info.name, error = %e, "failed to decrypt provider password");
-                            continue;
-                        }
-                    }
-                }
-            };
-
-            // Decrypt API key if present
-            let api_key: Option<Zeroizing<String>> = api_key_enc.and_then(|enc| {
-                if enc.is_empty() { return None; }
-                let session_secret = Zeroizing::new({
-                    let db_lock = db.lock().unwrap();
-                    db_lock.get_config("session_secret").ok().flatten().unwrap_or_default()
-                });
-                if session_secret.is_empty() || !crate::crypto::is_encrypted(&enc) {
-                    Some(Zeroizing::new(enc))
-                } else {
-                    crate::crypto::decrypt_password(&enc, &session_secret).ok().map(Zeroizing::new)
-                }
-            });
-
-            match connect(
-                &provider_type, &url, &username, &password,
-                ca_cert.as_deref(), site.as_deref(), api_key.as_ref().map(|k| k.as_str()),
-            ).await {
-                Ok((provider, tofu_pem)) => {
-                    // Save TOFU-pinned cert
-                    if let Some(ref pem) = tofu_pem {
+            for ap_mac in &device_macs {
+                if let Ok(device) = provider.device(ap_mac).await
+                    && let Ok(clients) = device.get_clients().await {
                         let db = db.lock().unwrap();
-                        let _ = db.set_wifi_provider_ca_cert(&provider_info.id, Some(pem));
-                        info!(provider = %provider_info.name, "TOFU: pinned TLS certificate");
-                    }
-
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs() as i64;
-
-                    // Sync device list
-                    match provider.list_devices().await {
-                        Ok(devices) => {
-                            let db = db.lock().unwrap();
-                            let _ = db.sync_wifi_aps(&provider_info.id, &devices);
-                            let _ = db.update_wifi_provider_status(&provider_info.id, "online", now);
-                        }
-                        Err(e) => {
-                            warn!(provider = %provider_info.name, error = %e, "list_devices failed");
-                        }
-                    }
-
-                    // Pull clients from each device and enrich device records
-                    let device_macs: Vec<String> = {
-                        let db = db.lock().unwrap();
-                        db.list_wifi_aps().unwrap_or_default()
-                            .into_iter()
-                            .filter(|ap| ap.provider_id.as_deref() == Some(&provider_info.id))
-                            .map(|ap| ap.mac)
-                            .collect()
-                    };
-
-                    for ap_mac in &device_macs {
-                        if let Ok(device) = provider.device(ap_mac).await
-                            && let Ok(clients) = device.get_clients().await {
-                                let db = db.lock().unwrap();
-                                for client in &clients {
-                                    let _ = db.update_device_wifi(
-                                        &client.mac,
-                                        Some(&client.ssid),
-                                        Some(&client.band),
-                                        client.rssi,
-                                        Some(&client.ap_mac),
-                                    );
-                                    // Auto-assign guest SSID devices to guest group
-                                    if let Ok(Some(device)) = db.get_device(&client.mac)
-                                        && device.device_group == "quarantine"
-                                        && let Ok(Some(guest_config)) = db.get_guest_network()
-                                        && guest_config.enabled && client.ssid == guest_config.ssid_name
-                                    {
-                                        info!(mac = %client.mac, ssid = %client.ssid, "auto-assigning to guest group");
-                                        let _ = db.set_device_group(&client.mac, "guest");
-                                        if let Some(ref ipv4) = device.ipv4 {
-                                            let _ = crate::nftables::remove_device_forward_rule(ipv4);
-                                            let _ = crate::nftables::add_device_forward_rule(ipv4, "guest");
-                                        }
-                                        if let Some(ref ipv6) = device.ipv6_ula {
-                                            let _ = crate::nftables::remove_device_forward_rule_v6(ipv6);
-                                            let _ = crate::nftables::add_device_forward_rule_v6(ipv6, "guest");
-                                        }
-                                    }
+                        for client in &clients {
+                            let _ = db.update_device_wifi(
+                                &client.mac,
+                                Some(&client.ssid),
+                                Some(&client.band),
+                                client.rssi,
+                                Some(&client.ap_mac),
+                            );
+                            // Auto-assign guest SSID devices to guest group
+                            if let Ok(Some(device)) = db.get_device(&client.mac)
+                                && device.device_group == "quarantine"
+                                && let Ok(Some(guest_config)) = db.get_guest_network()
+                                && guest_config.enabled && client.ssid == guest_config.ssid_name
+                            {
+                                info!(mac = %client.mac, ssid = %client.ssid, "auto-assigning to guest group");
+                                let _ = db.set_device_group(&client.mac, "guest");
+                                if let Some(ref ipv4) = device.ipv4 {
+                                    let _ = crate::nftables::remove_device_forward_rule(ipv4);
+                                    let _ = crate::nftables::add_device_forward_rule(ipv4, "guest");
+                                }
+                                if let Some(ref ipv6) = device.ipv6_ula {
+                                    let _ = crate::nftables::remove_device_forward_rule_v6(ipv6);
+                                    let _ = crate::nftables::add_device_forward_rule_v6(ipv6, "guest");
                                 }
                             }
+                        }
                     }
-
-                    info!(provider = %provider_info.name, "wifi poll complete");
-                }
-                Err(e) => {
-                    warn!(provider = %provider_info.name, error = %e, "wifi poll failed");
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs() as i64;
-                    let db = db.lock().unwrap();
-                    let _ = db.update_wifi_provider_status(&provider_info.id, "error", now);
-                }
             }
+
+            info!(provider = %provider_info.name, "wifi poll complete");
         }
     }
 }

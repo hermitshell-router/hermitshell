@@ -77,36 +77,39 @@ fn channel_width_str(w: u64) -> String {
 }
 
 impl EapSession {
-    /// Log in to the AP. Returns `(session, tofu_cert_pem)`.
+    /// Log in to the AP. Returns `(session, tofu_cert_pem, tls_backend)`.
     ///
     /// - If `ca_cert_pem` is `Some`, tries rustls verification first, then
     ///   falls back to native-tls with verification. Returns `None` for cert.
     /// - If `ca_cert_pem` is `None` (TOFU), grabs the leaf cert via a bare
     ///   TLS handshake, then connects with that cert as root. Returns
     ///   `Some(pem)` so the caller can save it.
+    /// - `preferred_backend`: If set, skip the TLS probe and use this backend
+    ///   directly. Accepted values: `"rustls"`, `"native"`.
     pub async fn login(
         ip: &str,
         username: &str,
         password: &str,
         ca_cert_pem: Option<&str>,
-    ) -> Result<(Self, Option<String>)> {
+        preferred_backend: Option<&str>,
+    ) -> Result<(Self, Option<String>, &'static str)> {
         let mut headers = HeaderMap::new();
         headers.insert(
             header::REFERER,
             HeaderValue::from_str(&format!("https://{}/", ip))?,
         );
 
-        let (client, tofu_pem) = if let Some(ca_pem) = ca_cert_pem {
+        let (client, tofu_pem, backend) = if let Some(ca_pem) = ca_cert_pem {
             // CA-verified path: try rustls first, fall back to native-tls
-            let client = Self::build_verified_client(ip, ca_pem, &headers).await?;
-            (client, None)
+            let (client, backend) = Self::build_verified_client(ip, ca_pem, &headers, preferred_backend).await?;
+            (client, None, backend)
         } else {
             // TOFU path: grab leaf cert, then connect with it
             let pem = crate::tls_client::grab_leaf_cert(ip, 443)
                 .await
                 .context("TOFU: failed to grab AP certificate")?;
-            let client = Self::build_verified_client(ip, &pem, &headers).await?;
-            (client, Some(pem))
+            let (client, backend) = Self::build_verified_client(ip, &pem, &headers, preferred_backend).await?;
+            (client, Some(pem), backend)
         };
 
         let base_url = format!("https://{}", ip);
@@ -172,16 +175,30 @@ impl EapSession {
                 session.mac = mac.replace('-', ":");
             }
 
-        Ok((session, tofu_pem))
+        Ok((session, tofu_pem, backend))
     }
 
     /// Build a verified reqwest client. Tries rustls first; on TLS handshake
     /// failure, retries with native-tls (for legacy ciphers).
+    /// If `preferred_backend` is set, skips probing and uses the cached choice.
+    /// Returns `(client, backend_name)`.
     async fn build_verified_client(
         ip: &str,
         ca_pem: &str,
         headers: &HeaderMap,
-    ) -> Result<reqwest::Client> {
+        preferred_backend: Option<&str>,
+    ) -> Result<(reqwest::Client, &'static str)> {
+        let probe_url = format!("https://{}/", ip);
+
+        // If we have a cached backend preference, use it directly
+        if preferred_backend == Some("native") {
+            let native_builder = crate::tls_client::builder_wifi_native_verified(ca_pem)?
+                .cookie_store(true)
+                .timeout(std::time::Duration::from_secs(10))
+                .default_headers(headers.clone());
+            return Ok((native_builder.build().context("native-tls client build failed")?, "native"));
+        }
+
         // Try rustls first (modern TLS)
         let rustls_builder = crate::tls_client::builder_with_ca(Some(ca_pem))?
             .cookie_store(true)
@@ -189,12 +206,16 @@ impl EapSession {
             .default_headers(headers.clone());
 
         let rustls_client = rustls_builder.build()?;
-        let probe_url = format!("https://{}/", ip);
 
         match rustls_client.get(&probe_url).send().await {
-            Ok(_) => return Ok(rustls_client),
+            Ok(_) => return Ok((rustls_client, "rustls")),
             Err(e) => {
-                debug!(error = %e, "rustls handshake failed, trying native-tls");
+                if preferred_backend == Some("rustls") {
+                    // Cached preference says rustls, but it failed — fall through to native
+                    debug!(error = %e, "cached rustls backend failed, falling back to native-tls");
+                } else {
+                    debug!(error = %e, "rustls handshake failed, trying native-tls");
+                }
             }
         }
 
@@ -204,7 +225,7 @@ impl EapSession {
             .timeout(std::time::Duration::from_secs(10))
             .default_headers(headers.clone());
 
-        native_builder.build().context("native-tls client build failed")
+        Ok((native_builder.build().context("native-tls client build failed")?, "native"))
     }
 
     /// GET /data/<endpoint>?operation=read[&extra_params]
