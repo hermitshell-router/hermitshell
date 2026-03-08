@@ -12,7 +12,8 @@ fn friendly_error(e: impl std::fmt::Display) -> ServerFnError {
     } else if msg.contains("Permission denied") {
         ServerFnError::new("Permission denied. You may need to log in again.")
     } else {
-        ServerFnError::new(msg)
+        eprintln!("[error] Unhandled client error: {}", msg);
+        ServerFnError::new("An unexpected error occurred. Check the server logs for details.")
     }
 }
 
