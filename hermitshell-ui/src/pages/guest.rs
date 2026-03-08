@@ -124,7 +124,7 @@ fn render_enabled(status: serde_json::Value) -> AnyView {
                 <Suspense fallback=move || view! { <p>"Generating QR code..."</p> }>
                     {move || qr_data.get().map(|result| match result {
                         Ok(svg) => view! {
-                            <div inner_html=svg></div>
+                            <div inner_html=svg role="img" aria-label="QR code for guest WiFi network"></div>
                         }.into_any(),
                         Err(e) => view! {
                             <p class="text-muted">{format!("QR code error: {}", e)}</p>
@@ -164,9 +164,19 @@ fn render_enabled(status: serde_json::Value) -> AnyView {
                     <ActionForm action=regen_action attr:class="inline-form">
                         <button type="submit" class="btn btn-warning btn-sm">"Regenerate Password"</button>
                     </ActionForm>
-                    <ActionForm action=disable_action attr:class="inline-form">
-                        <button type="submit" class="btn btn-danger btn-sm">"Disable Guest Network"</button>
-                    </ActionForm>
+                    <button type="button" class="btn btn-danger btn-sm"
+                        onclick="this.nextElementSibling.showModal()">"Disable Guest Network"</button>
+                    <dialog class="confirm-dialog" aria-labelledby="confirm-disable-guest">
+                        <h3 id="confirm-disable-guest">"Disable Guest Network?"</h3>
+                        <p>"All guests will be disconnected and the guest SSID will be removed."</p>
+                        <div class="dialog-actions">
+                            <button type="button" class="btn btn-sm"
+                                onclick="this.closest('dialog').close()">"Cancel"</button>
+                            <ActionForm action=disable_action attr:class="inline-form">
+                                <button type="submit" class="btn btn-danger btn-sm">"Confirm Disable"</button>
+                            </ActionForm>
+                        </div>
+                    </dialog>
                 </div>
                 <ErrorToast value=regen_action.value() />
                 <ErrorToast value=disable_action.value() />

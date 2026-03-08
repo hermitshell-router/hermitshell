@@ -297,10 +297,20 @@ pub fn Settings() -> impl IntoView {
                                                         <td>{r.mac.clone()}</td>
                                                         <td>{r.subnet_id}</td>
                                                         <td>
-                                                            <ActionForm action=remove_action attr:class="inline-form">
-                                                                <input type="hidden" name="mac" value={mac} />
-                                                                <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
-                                                            </ActionForm>
+                                                            <button type="button" class="btn btn-danger btn-sm"
+                                                                onclick="this.nextElementSibling.showModal()">"Remove"</button>
+                                                            <dialog class="confirm-dialog" aria-labelledby="confirm-rm-reservation">
+                                                                <h3 id="confirm-rm-reservation">"Remove Reservation?"</h3>
+                                                                <p>{format!("Reservation for {} will be removed.", r.mac)}</p>
+                                                                <div class="dialog-actions">
+                                                                    <button type="button" class="btn btn-sm"
+                                                                        onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                    <ActionForm action=remove_action attr:class="inline-form">
+                                                                        <input type="hidden" name="mac" value={mac} />
+                                                                        <button type="submit" class="btn btn-danger btn-sm">"Confirm Remove"</button>
+                                                                    </ActionForm>
+                                                                </div>
+                                                            </dialog>
                                                             <ErrorToast value=remove_action.value() />
                                                         </td>
                                                     </tr>
@@ -380,10 +390,20 @@ pub fn Settings() -> impl IntoView {
                                                         }}
                                                     </td>
                                                     <td>
-                                                        <ActionForm action=remove_action attr:class="inline-form">
-                                                            <input type="hidden" name="id" value={id.to_string()} />
-                                                            <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
-                                                        </ActionForm>
+                                                        <button type="button" class="btn btn-danger btn-sm"
+                                                            onclick="this.nextElementSibling.showModal()">"Remove"</button>
+                                                        <dialog class="confirm-dialog" aria-labelledby="confirm-rm-pf">
+                                                            <h3 id="confirm-rm-pf">"Remove Port Forward?"</h3>
+                                                            <p>"This port forward rule will be permanently removed."</p>
+                                                            <div class="dialog-actions">
+                                                                <button type="button" class="btn btn-sm"
+                                                                    onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                <ActionForm action=remove_action attr:class="inline-form">
+                                                                    <input type="hidden" name="id" value={id.to_string()} />
+                                                                    <button type="submit" class="btn btn-danger btn-sm">"Confirm Remove"</button>
+                                                                </ActionForm>
+                                                            </div>
+                                                        </dialog>
                                                         <ErrorToast value=remove_action.value() />
                                                     </td>
                                                 </tr>
@@ -489,10 +509,20 @@ pub fn Settings() -> impl IntoView {
                                                             <td>{port_end}</td>
                                                             <td>{description}</td>
                                                             <td>
-                                                                <ActionForm action=remove_action attr:class="inline-form">
-                                                                    <input type="hidden" name="id" value={id.to_string()} />
-                                                                    <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
-                                                                </ActionForm>
+                                                                <button type="button" class="btn btn-danger btn-sm"
+                                                                    onclick="this.nextElementSibling.showModal()">"Remove"</button>
+                                                                <dialog class="confirm-dialog" aria-labelledby="confirm-rm-pinhole">
+                                                                    <h3 id="confirm-rm-pinhole">"Remove Pinhole?"</h3>
+                                                                    <p>"This IPv6 pinhole will be permanently removed."</p>
+                                                                    <div class="dialog-actions">
+                                                                        <button type="button" class="btn btn-sm"
+                                                                            onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                        <ActionForm action=remove_action attr:class="inline-form">
+                                                                            <input type="hidden" name="id" value={id.to_string()} />
+                                                                            <button type="submit" class="btn btn-danger btn-sm">"Confirm Remove"</button>
+                                                                        </ActionForm>
+                                                                    </div>
+                                                                </dialog>
                                                                 <ErrorToast value=remove_action.value() />
                                                             </td>
                                                         </tr>
@@ -684,10 +714,20 @@ pub fn Settings() -> impl IntoView {
                                                                             <input type="hidden" name="name" value={name_for_test} />
                                                                             <button type="submit" class="btn btn-sm">"Test"</button>
                                                                         </ActionForm>
-                                                                        <ActionForm action=remove_action attr:class="inline-form">
-                                                                            <input type="hidden" name="name" value={name_for_remove} />
-                                                                            <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
-                                                                        </ActionForm>
+                                                                        <button type="button" class="btn btn-danger btn-sm"
+                                                                            onclick="this.nextElementSibling.showModal()">"Remove"</button>
+                                                                        <dialog class="confirm-dialog" aria-labelledby="confirm-rm-switch">
+                                                                            <h3 id="confirm-rm-switch">"Remove Switch?"</h3>
+                                                                            <p>{format!("\"{}\" will be permanently removed.", sw.name)}</p>
+                                                                            <div class="dialog-actions">
+                                                                                <button type="button" class="btn btn-sm"
+                                                                                    onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                                <ActionForm action=remove_action attr:class="inline-form">
+                                                                                    <input type="hidden" name="name" value={name_for_remove} />
+                                                                                    <button type="submit" class="btn btn-danger btn-sm">"Confirm Remove"</button>
+                                                                                </ActionForm>
+                                                                            </div>
+                                                                        </dialog>
                                                                         <ErrorToast value=test_action.value() />
                                                                         <ErrorToast value=remove_action.value() />
                                                                     </td>
@@ -776,15 +816,15 @@ pub fn Settings() -> impl IntoView {
                 <ActionForm action=password_action>
                     <div class="settings-row">
                         <span class="settings-label">"Current Password"</span>
-                        <span class="settings-value"><input type="password" name="current_password" required /></span>
+                        <span class="settings-value"><input type="password" name="current_password" autocomplete="current-password" required /></span>
                     </div>
                     <div class="settings-row">
                         <span class="settings-label">"New Password"</span>
-                        <span class="settings-value"><input type="password" name="new_password" required /></span>
+                        <span class="settings-value"><input type="password" name="new_password" autocomplete="new-password" required /></span>
                     </div>
                     <div class="settings-row">
                         <span class="settings-label">"Confirm New Password"</span>
-                        <span class="settings-value"><input type="password" name="confirm_password" required /></span>
+                        <span class="settings-value"><input type="password" name="confirm_password" autocomplete="new-password" required /></span>
                     </div>
                     <div class="actions-bar">
                         <button type="submit" class="btn btn-primary btn-sm">"Change Password"</button>
@@ -1050,7 +1090,17 @@ pub fn Settings() -> impl IntoView {
                                         <form method="post" action="/api/restore/config" enctype="multipart/form-data" class="flex-row-wrap">
                                             <input type="file" name="file" accept=".json" required />
                                             <input type="password" name="passphrase" placeholder="Passphrase (if encrypted)" class="input-md" />
-                                            <button type="submit" class="btn btn-primary btn-sm">"Restore"</button>
+                                            <button type="button" class="btn btn-primary btn-sm"
+                                                onclick="this.nextElementSibling.showModal()">"Restore"</button>
+                                            <dialog class="confirm-dialog" aria-labelledby="confirm-restore">
+                                                <h3 id="confirm-restore">"Restore Configuration?"</h3>
+                                                <p>"This will replace your current router configuration. This cannot be undone."</p>
+                                                <div class="dialog-actions">
+                                                    <button type="button" class="btn btn-sm"
+                                                        onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                    <button type="submit" class="btn btn-danger btn-sm">"Confirm Restore"</button>
+                                                </div>
+                                            </dialog>
                                         </form>
                                     </div>
                                 </div>

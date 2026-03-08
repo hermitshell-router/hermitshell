@@ -90,10 +90,20 @@ pub fn Wireguard() -> impl IntoView {
                                                                         <button type="submit" class="btn btn-sm">"Move"</button>
                                                                     </ActionForm>
                                                                     <ErrorToast value=group_action.value() />
-                                                                    <ActionForm action=remove_action attr:class="inline-form">
-                                                                        <input type="hidden" name="public_key" value={pk2} />
-                                                                        <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
-                                                                    </ActionForm>
+                                                                    <button type="button" class="btn btn-danger btn-sm"
+                                                                        onclick="this.nextElementSibling.showModal()">"Remove"</button>
+                                                                    <dialog class="confirm-dialog" aria-labelledby="confirm-rm-peer">
+                                                                        <h3 id="confirm-rm-peer">"Remove Peer?"</h3>
+                                                                        <p>{format!("\"{}\" will lose VPN access.", peer.name)}</p>
+                                                                        <div class="dialog-actions">
+                                                                            <button type="button" class="btn btn-sm"
+                                                                                onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                            <ActionForm action=remove_action attr:class="inline-form">
+                                                                                <input type="hidden" name="public_key" value={pk2} />
+                                                                                <button type="submit" class="btn btn-danger btn-sm">"Confirm Remove"</button>
+                                                                            </ActionForm>
+                                                                        </div>
+                                                                    </dialog>
                                                                     <ErrorToast value=remove_action.value() />
                                                                 </td>
                                                             </tr>

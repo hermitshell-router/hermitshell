@@ -72,10 +72,20 @@ pub fn Wifi() -> impl IntoView {
                                                         <td>
                                                             <a href={format!("/wifi?provider={}", id)} class="btn btn-sm">"Manage SSIDs"</a>
                                                             " "
-                                                            <ActionForm action=remove_provider_action attr:class="inline-form">
-                                                                <input type="hidden" name="id" value={id2} />
-                                                                <button type="submit" class="btn btn-sm btn-danger">"Remove"</button>
-                                                            </ActionForm>
+                                                            <button type="button" class="btn btn-sm btn-danger"
+                                                                onclick="this.nextElementSibling.showModal()">"Remove"</button>
+                                                            <dialog class="confirm-dialog" aria-labelledby="confirm-rm-provider">
+                                                                <h3 id="confirm-rm-provider">"Remove WiFi Provider?"</h3>
+                                                                <p>{format!("\"{}\" will be permanently removed.", p.name)}</p>
+                                                                <div class="dialog-actions">
+                                                                    <button type="button" class="btn btn-sm"
+                                                                        onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                    <ActionForm action=remove_provider_action attr:class="inline-form">
+                                                                        <input type="hidden" name="id" value={id2} />
+                                                                        <button type="submit" class="btn btn-sm btn-danger">"Confirm Remove"</button>
+                                                                    </ActionForm>
+                                                                </div>
+                                                            </dialog>
                                                         </td>
                                                     </tr>
                                                 }
@@ -348,20 +358,35 @@ fn ProviderDetail(
                                     <tbody>
                                         {ssids.into_iter().map(|s| {
                                             let pid_del = pid_c.clone();
+                                            let ssid_display = s.ssid_name.clone();
+                                            let ssid_msg = format!("\"{}\" will be permanently deleted.", s.ssid_name);
+                                            let ssid_hidden = s.ssid_name;
+                                            let band_display = s.band.clone();
+                                            let band_hidden = s.band;
                                             view! {
                                                 <tr>
-                                                    <td>{s.ssid_name.clone()}</td>
-                                                    <td>{s.band.clone()}</td>
+                                                    <td>{ssid_display}</td>
+                                                    <td>{band_display}</td>
                                                     <td>{s.security.clone()}</td>
                                                     <td>{if s.hidden { "Yes" } else { "No" }}</td>
                                                     <td>{if s.enabled { "Yes" } else { "No" }}</td>
                                                     <td>
-                                                        <ActionForm action=delete_ssid_action attr:class="inline-form">
-                                                            <input type="hidden" name="provider_id" value={pid_del} />
-                                                            <input type="hidden" name="ssid_name" value={s.ssid_name} />
-                                                            <input type="hidden" name="band" value={s.band} />
-                                                            <button type="submit" class="btn btn-sm btn-danger">"Delete"</button>
-                                                        </ActionForm>
+                                                        <button type="button" class="btn btn-sm btn-danger"
+                                                            onclick="this.nextElementSibling.showModal()">"Delete"</button>
+                                                        <dialog class="confirm-dialog" aria-labelledby="confirm-del-ssid">
+                                                            <h3 id="confirm-del-ssid">"Delete SSID?"</h3>
+                                                            <p>{ssid_msg}</p>
+                                                            <div class="dialog-actions">
+                                                                <button type="button" class="btn btn-sm"
+                                                                    onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                <ActionForm action=delete_ssid_action attr:class="inline-form">
+                                                                    <input type="hidden" name="provider_id" value={pid_del} />
+                                                                    <input type="hidden" name="ssid_name" value={ssid_hidden} />
+                                                                    <input type="hidden" name="band" value={band_hidden} />
+                                                                    <button type="submit" class="btn btn-sm btn-danger">"Confirm Delete"</button>
+                                                                </ActionForm>
+                                                            </div>
+                                                        </dialog>
                                                     </td>
                                                 </tr>
                                             }

@@ -171,10 +171,20 @@ pub fn Dns() -> impl IntoView {
                                                                 </ActionForm>
                                                             </td>
                                                             <td>
-                                                                <ActionForm action=remove_action attr:class="inline-form">
-                                                                    <input type="hidden" name="id" value={id.to_string()} />
-                                                                    <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
-                                                                </ActionForm>
+                                                                <button type="button" class="btn btn-danger btn-sm"
+                                                                    onclick="this.nextElementSibling.showModal()">"Remove"</button>
+                                                                <dialog class="confirm-dialog" aria-labelledby="confirm-rm-bl">
+                                                                    <h3 id="confirm-rm-bl">"Remove Blocklist?"</h3>
+                                                                    <p>{format!("\"{}\" will be permanently removed.", bl.name)}</p>
+                                                                    <div class="dialog-actions">
+                                                                        <button type="button" class="btn btn-sm"
+                                                                            onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                        <ActionForm action=remove_action attr:class="inline-form">
+                                                                            <input type="hidden" name="id" value={id.to_string()} />
+                                                                            <button type="submit" class="btn btn-danger btn-sm">"Confirm Remove"</button>
+                                                                        </ActionForm>
+                                                                    </div>
+                                                                </dialog>
                                                                 <ErrorToast value=remove_action.value() />
                                                             </td>
                                                         </tr>
@@ -188,19 +198,16 @@ pub fn Dns() -> impl IntoView {
 
                                 <h4>"Add Blocklist"</h4>
                                 <ActionForm action=add_bl_action attr:class="form-inline">
-                                    <label>"Name"
-                                        <input type="text" name="name" required />
-                                    </label>
-                                    <label>"URL"
-                                        <input type="text" name="url" placeholder="https://..." required />
-                                    </label>
-                                    <label>"Tag"
-                                        <select name="tag">
-                                            <option value="ads">"ads"</option>
-                                            <option value="custom">"custom"</option>
-                                            <option value="strict">"strict"</option>
-                                        </select>
-                                    </label>
+                                    <label for="add-bl-name">"Name"</label>
+                                    <input type="text" name="name" id="add-bl-name" required />
+                                    <label for="add-bl-url">"URL"</label>
+                                    <input type="text" name="url" id="add-bl-url" placeholder="https://..." required />
+                                    <label for="add-bl-tag">"Tag"</label>
+                                    <select name="tag" id="add-bl-tag">
+                                        <option value="ads">"ads"</option>
+                                        <option value="custom">"custom"</option>
+                                        <option value="strict">"strict"</option>
+                                    </select>
                                     <button type="submit" class="btn btn-primary">"Add"</button>
                                 </ActionForm>
                                 <ErrorToast value=add_bl_action.value() />
@@ -254,10 +261,20 @@ pub fn Dns() -> impl IntoView {
                                                                 </ActionForm>
                                                             </td>
                                                             <td>
-                                                                <ActionForm action=remove_action attr:class="inline-form">
-                                                                    <input type="hidden" name="id" value={id.to_string()} />
-                                                                    <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
-                                                                </ActionForm>
+                                                                <button type="button" class="btn btn-danger btn-sm"
+                                                                    onclick="this.nextElementSibling.showModal()">"Remove"</button>
+                                                                <dialog class="confirm-dialog" aria-labelledby="confirm-rm-fz">
+                                                                    <h3 id="confirm-rm-fz">"Remove Forward Zone?"</h3>
+                                                                    <p>{format!("\"{}\" will be permanently removed.", fz.domain)}</p>
+                                                                    <div class="dialog-actions">
+                                                                        <button type="button" class="btn btn-sm"
+                                                                            onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                        <ActionForm action=remove_action attr:class="inline-form">
+                                                                            <input type="hidden" name="id" value={id.to_string()} />
+                                                                            <button type="submit" class="btn btn-danger btn-sm">"Confirm Remove"</button>
+                                                                        </ActionForm>
+                                                                    </div>
+                                                                </dialog>
                                                                 <ErrorToast value=remove_action.value() />
                                                             </td>
                                                         </tr>
@@ -271,12 +288,10 @@ pub fn Dns() -> impl IntoView {
 
                                 <h4>"Add Forward Zone"</h4>
                                 <ActionForm action=add_fz_action attr:class="form-inline">
-                                    <label>"Domain"
-                                        <input type="text" name="domain" placeholder="example.local" required />
-                                    </label>
-                                    <label>"Forward Address"
-                                        <input type="text" name="forward_addr" placeholder="10.0.0.1" required />
-                                    </label>
+                                    <label for="add-fz-domain">"Domain"</label>
+                                    <input type="text" name="domain" id="add-fz-domain" placeholder="example.local" required />
+                                    <label for="add-fz-addr">"Forward Address"</label>
+                                    <input type="text" name="forward_addr" id="add-fz-addr" placeholder="10.0.0.1" required />
                                     <button type="submit" class="btn btn-primary">"Add"</button>
                                 </ActionForm>
                                 <ErrorToast value=add_fz_action.value() />
@@ -332,10 +347,20 @@ pub fn Dns() -> impl IntoView {
                                                                 </ActionForm>
                                                             </td>
                                                             <td>
-                                                                <ActionForm action=remove_action attr:class="inline-form">
-                                                                    <input type="hidden" name="id" value={id.to_string()} />
-                                                                    <button type="submit" class="btn btn-danger btn-sm">"Remove"</button>
-                                                                </ActionForm>
+                                                                <button type="button" class="btn btn-danger btn-sm"
+                                                                    onclick="this.nextElementSibling.showModal()">"Remove"</button>
+                                                                <dialog class="confirm-dialog" aria-labelledby="confirm-rm-rule">
+                                                                    <h3 id="confirm-rm-rule">"Remove DNS Rule?"</h3>
+                                                                    <p>{format!("\"{}\" will be permanently removed.", rule.domain)}</p>
+                                                                    <div class="dialog-actions">
+                                                                        <button type="button" class="btn btn-sm"
+                                                                            onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                        <ActionForm action=remove_action attr:class="inline-form">
+                                                                            <input type="hidden" name="id" value={id.to_string()} />
+                                                                            <button type="submit" class="btn btn-danger btn-sm">"Confirm Remove"</button>
+                                                                        </ActionForm>
+                                                                    </div>
+                                                                </dialog>
                                                                 <ErrorToast value=remove_action.value() />
                                                             </td>
                                                         </tr>
@@ -349,21 +374,18 @@ pub fn Dns() -> impl IntoView {
 
                                 <h4>"Add Rule"</h4>
                                 <ActionForm action=add_rule_action attr:class="form-inline">
-                                    <label>"Domain"
-                                        <input type="text" name="domain" placeholder="example.com" required />
-                                    </label>
-                                    <label>"Type"
-                                        <select name="record_type">
-                                            <option value="A">"A"</option>
-                                            <option value="AAAA">"AAAA"</option>
-                                            <option value="CNAME">"CNAME"</option>
-                                            <option value="MX">"MX"</option>
-                                            <option value="TXT">"TXT"</option>
-                                        </select>
-                                    </label>
-                                    <label>"Value"
-                                        <input type="text" name="value" placeholder="10.0.0.1" required />
-                                    </label>
+                                    <label for="add-rule-domain">"Domain"</label>
+                                    <input type="text" name="domain" id="add-rule-domain" placeholder="example.com" required />
+                                    <label for="add-rule-type">"Type"</label>
+                                    <select name="record_type" id="add-rule-type">
+                                        <option value="A">"A"</option>
+                                        <option value="AAAA">"AAAA"</option>
+                                        <option value="CNAME">"CNAME"</option>
+                                        <option value="MX">"MX"</option>
+                                        <option value="TXT">"TXT"</option>
+                                    </select>
+                                    <label for="add-rule-value">"Value"</label>
+                                    <input type="text" name="value" id="add-rule-value" placeholder="10.0.0.1" required />
                                     <button type="submit" class="btn btn-primary">"Add"</button>
                                 </ActionForm>
                                 <ErrorToast value=add_rule_action.value() />
