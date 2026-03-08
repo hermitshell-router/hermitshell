@@ -44,6 +44,7 @@ nix = { version = "0.31", features = ["fs", "hostname", "signal", "user"] }
 tempfile = "3"
 sha1 = "0.10"
 data-encoding = "2"
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 zeroize = "1"
 regex = "1"
 simple-dns = "0.11"

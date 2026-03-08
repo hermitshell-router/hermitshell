@@ -71,6 +71,41 @@ jobs:
           tar -czf "${DIR}.tar.gz" "$DIR"
           sha256sum "${DIR}.tar.gz" > "${DIR}.tar.gz.sha256"
 
+      - name: Sign tarball (Ed25519)
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo "::warning::RELEASE_SIGNING_KEY not set, skipping tarball signing"
+            exit 0
+          fi
+          pip install --break-system-packages cryptography
+          VERSION="${GITHUB_REF_NAME}"
+          TARBALL="hermitshell-${VERSION}-${{ matrix.arch }}-linux.tar.gz"
+          python3 -c "
+          import os
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+          key_hex = os.environ['RELEASE_SIGNING_KEY']
+          tarball_path = os.environ['TARBALL']
+
+          private_bytes = bytes.fromhex(key_hex)
+          key = Ed25519PrivateKey.from_private_bytes(private_bytes)
+
+          with open(tarball_path, 'rb') as f:
+              data = f.read()
+
+          signature = key.sign(data)
+          assert len(signature) == 64, f'unexpected signature length: {len(signature)}'
+
+          with open(tarball_path + '.sig', 'wb') as f:
+              f.write(signature)
+
+          print(f'Signed {tarball_path} ({len(data)} bytes)')
+          "
+        env:
+          TARBALL: hermitshell-${{ github.ref_name }}-${{ matrix.arch }}-linux.tar.gz
+
       - name: Install cargo-deb
         run: cargo install cargo-deb
 
@@ -82,7 +117,9 @@ jobs:
         with:
           name: release-${{ matrix.arch }}
           path: |
-            hermitshell-*.tar.gz*
+            hermitshell-*.tar.gz
+            hermitshell-*.tar.gz.sha256
+            hermitshell-*.tar.gz.sig
             target/${{ matrix.target }}/debian/*.deb
 
       - name: Upload SBOM artifacts
@@ -106,6 +143,7 @@ jobs:
           files: |
             hermitshell-*.tar.gz
             hermitshell-*.tar.gz.sha256
+            hermitshell-*.tar.gz.sig
             *.deb
             *.cdx.json
 

@@ -3,6 +3,10 @@ use tracing::{debug, info, warn};
 
 use crate::paths;
 
+/// Ed25519 public key for release signature verification.
+/// Generated offline; private key stored as CI secret RELEASE_SIGNING_KEY.
+const RELEASE_PUBLIC_KEY: &[u8; 32] = include_bytes!("../../keys/release.pub.bin");
+
 const GITHUB_RELEASES_URL: &str =
     "https://api.github.com/repos/hermitshell-router/hermitshell/releases/latest";
 const GITHUB_DOWNLOAD_URL: &str = "https://github.com/hermitshell-router/hermitshell/releases/download";
@@ -132,6 +136,21 @@ fn validate_version(v: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Verify an Ed25519 detached signature over data using the provided public key.
+fn verify_release_signature(
+    data: &[u8],
+    sig_bytes: &[u8; 64],
+    pub_key_bytes: &[u8; 32],
+) -> anyhow::Result<()> {
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    let verifying_key = VerifyingKey::from_bytes(pub_key_bytes)
+        .map_err(|e| anyhow::anyhow!("invalid public key: {}", e))?;
+    let signature = Signature::from_bytes(sig_bytes);
+    verifying_key
+        .verify(data, &signature)
+        .map_err(|e| anyhow::anyhow!("signature verification failed: {}", e))
+}
+
 /// Download, verify, and stage a new release. Returns the version string on success.
 /// Does NOT restart — the caller must trigger the restart after responding to the client.
 pub async fn apply_update(db: &std::sync::Arc<std::sync::Mutex<crate::db::Db>>) -> anyhow::Result<String> {
@@ -183,6 +202,26 @@ pub async fn apply_update(db: &std::sync::Arc<std::sync::Mutex<crate::db::Db>>) 
         anyhow::bail!("checksum mismatch: expected {} got {}", expected_hash, actual_hash);
     }
     info!("checksum verified");
+
+    // Download and verify Ed25519 signature
+    let sig_url = format!("{}.sig", tarball_url);
+    let sig_resp = client.get(&sig_url).send().await?;
+    if sig_resp.status().is_success() {
+        let sig_bytes = sig_resp.bytes().await?;
+        if sig_bytes.len() != 64 {
+            anyhow::bail!(
+                "invalid signature file: expected 64 bytes, got {}",
+                sig_bytes.len()
+            );
+        }
+        let sig_array: [u8; 64] = sig_bytes[..64].try_into().unwrap();
+        verify_release_signature(&tarball_bytes, &sig_array, RELEASE_PUBLIC_KEY)?;
+        info!("signature verified");
+    } else {
+        // Transitional: older releases may not have .sig files yet.
+        // TODO: Make signature verification mandatory once all releases are signed.
+        warn!(status = %sig_resp.status(), "no signature file available, skipping verification");
+    }
 
     // Create rollback dir and copy current binaries
     let rollback_dir = paths::rollback_dir();
@@ -331,5 +370,64 @@ pub fn check_update_marker() -> anyhow::Result<Option<String>> {
         );
         std::fs::remove_file(marker)?;
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_version_valid() {
+        assert!(validate_version("v0.1.0").is_ok());
+        assert!(validate_version("v1.2.3-rc1").is_ok());
+    }
+
+    #[test]
+    fn test_validate_version_invalid() {
+        assert!(validate_version("0.1.0").is_err());
+        assert!(validate_version(&format!("v{}", "a".repeat(32))).is_err());
+    }
+
+    #[test]
+    fn test_verify_signature_valid() {
+        use ed25519_dalek::{Signer, SigningKey};
+        // Deterministic key from fixed seed
+        let seed: [u8; 32] = [1u8; 32];
+        let signing_key = SigningKey::from_bytes(&seed);
+        let message = b"test tarball content";
+        let signature = signing_key.sign(message);
+        let pub_key_bytes: [u8; 32] = signing_key.verifying_key().to_bytes();
+        assert!(verify_release_signature(message, &signature.to_bytes(), &pub_key_bytes).is_ok());
+    }
+
+    #[test]
+    fn test_verify_signature_wrong_key() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let signing_key = SigningKey::from_bytes(&[1u8; 32]);
+        let message = b"test tarball content";
+        let signature = signing_key.sign(message);
+        let wrong_key = SigningKey::from_bytes(&[2u8; 32]);
+        let wrong_pub: [u8; 32] = wrong_key.verifying_key().to_bytes();
+        assert!(verify_release_signature(message, &signature.to_bytes(), &wrong_pub).is_err());
+    }
+
+    #[test]
+    fn test_verify_signature_tampered() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let signing_key = SigningKey::from_bytes(&[1u8; 32]);
+        let signature = signing_key.sign(b"original");
+        let pub_key_bytes: [u8; 32] = signing_key.verifying_key().to_bytes();
+        assert!(verify_release_signature(b"tampered", &signature.to_bytes(), &pub_key_bytes).is_err());
+    }
+
+    #[test]
+    fn test_embedded_public_key_valid() {
+        // Verify the embedded public key can be parsed as a valid Ed25519 key
+        use ed25519_dalek::VerifyingKey;
+        assert!(
+            VerifyingKey::from_bytes(RELEASE_PUBLIC_KEY).is_ok(),
+            "embedded release public key is not a valid Ed25519 key"
+        );
     }
 }
