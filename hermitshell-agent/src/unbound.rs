@@ -56,18 +56,11 @@ impl UnboundManager {
         std::fs::create_dir_all(paths::unbound_dir())?;
         std::fs::create_dir_all(paths::blocklist_dir())?;
 
-        // Copy the system root trust anchor into our directory so Unbound
-        // can update it at runtime.  The system copy lives in /var/lib/unbound/
-        // which is owned by the `unbound` user.  Because we run Unbound as
-        // root (username: ""), AppArmor's `owner` qualifier blocks writes to
-        // files owned by another UID.
-        let local_root_key = format!("{}/root.key", paths::unbound_dir());
-        if !std::path::Path::new(&local_root_key).exists() {
-            let system_root_key = std::env::var("HERMITSHELL_ROOT_KEY_PATH")
-                .unwrap_or_else(|_| "/var/lib/unbound/root.key".into());
-            if let Err(e) = std::fs::copy(&system_root_key, &local_root_key) {
-                debug!(error = %e, "could not copy system root.key, DNSSEC validation may fail");
-            }
+        // Ensure unbound data directory is accessible to the unbound user
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(paths::unbound_dir(), std::fs::Permissions::from_mode(0o755));
         }
 
         let cfg = self.generate_config_string(db)?;
@@ -167,12 +160,11 @@ impl UnboundManager {
         cfg.push_str("    do-ip6: yes\n");
         cfg.push_str("    do-udp: yes\n");
         cfg.push_str("    do-tcp: yes\n");
-        // Skip privilege drop and chroot — the agent's systemd unit already
-        // sandboxes with ProtectSystem=strict, PrivateTmp, and restricted
-        // capabilities.  Explicit settings are required because unbound's
-        // compiled-in defaults vary by distro (e.g. NixOS defaults
-        // directory to /etc/unbound which may not exist).
-        cfg.push_str("    username: \"\"\n");
+        // Drop to the `unbound` user after binding sockets.  Explicit
+        // settings are required because unbound's compiled-in defaults
+        // vary by distro (e.g. NixOS defaults directory to /etc/unbound
+        // which may not exist).
+        cfg.push_str("    username: \"unbound\"\n");
         cfg.push_str("    chroot: \"\"\n");
         cfg.push_str(&format!("    directory: \"{}\"\n", paths::unbound_dir()));
         cfg.push_str(&format!(
@@ -196,10 +188,7 @@ impl UnboundManager {
         cfg.push_str("    hide-version: yes\n");
         cfg.push_str("    harden-glue: yes\n");
         cfg.push_str("    harden-dnssec-stripped: yes\n");
-        cfg.push_str(&format!(
-            "    auto-trust-anchor-file: \"{}/root.key\"\n",
-            paths::unbound_dir()
-        ));
+        cfg.push_str("    auto-trust-anchor-file: \"/var/lib/unbound/root.key\"\n");
         cfg.push('\n');
 
         // Performance
