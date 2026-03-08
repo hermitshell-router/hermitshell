@@ -646,6 +646,17 @@ impl Db {
             )?;
         }
 
+        if version < 16 {
+            let _ = conn.execute_batch(
+                "ALTER TABLE audit_log ADD COLUMN prev_hash TEXT NOT NULL DEFAULT '';"
+            );
+            conn.execute(
+                "INSERT INTO config (key, value) VALUES ('schema_version', '16')
+                 ON CONFLICT(key) DO UPDATE SET value = '16'",
+                [],
+            )?;
+        }
+
         Ok(())
     }
 
@@ -1913,9 +1924,26 @@ impl Db {
     pub fn log_audit(&self, action: &str, detail: &str) -> Result<()> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?.as_secs() as i64;
+
+        // Get hash from most recent audit entry for chain
+        let prev_hash: String = self.conn.query_row(
+            "SELECT COALESCE(prev_hash, '') FROM audit_log ORDER BY id DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        ).unwrap_or_default();
+
+        // Compute chain hash: SHA-256(prev_hash || action || detail || timestamp)
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        hasher.update(prev_hash.as_bytes());
+        hasher.update(action.as_bytes());
+        hasher.update(detail.as_bytes());
+        hasher.update(now.to_le_bytes());
+        let hash = hex::encode(hasher.finalize());
+
         self.conn.execute(
-            "INSERT INTO audit_log (action, detail, created_at) VALUES (?1, ?2, ?3)",
-            (action, detail, now),
+            "INSERT INTO audit_log (action, detail, created_at, prev_hash) VALUES (?1, ?2, ?3, ?4)",
+            (action, detail, now, &hash),
         )?;
         Ok(())
     }
