@@ -244,7 +244,7 @@ pub fn DeviceDetail() -> impl IntoView {
                                                     <span class="bw-summary-value rx">{pct_str}</span>
                                                 </div>
                                             </div>
-                                            <div inner_html={timeline_svg}></div>
+                                            <div inner_html={timeline_svg} role="img" aria-label="Device presence timeline"></div>
                                         }.into_any()
                                     }
                                     Err(_) => view! { <span></span> }.into_any(),

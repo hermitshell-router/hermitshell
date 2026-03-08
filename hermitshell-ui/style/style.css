@@ -507,6 +507,7 @@ svg { max-width: 100%; height: auto; }
     .confirm-dialog { max-width: calc(100vw - 2rem); }
 
     .btn { min-height: 44px; }
+    .btn-sm { min-height: 44px; min-width: 44px; }
     .btn-sm { padding: 0.375rem 0.75rem; }
     .sidebar-nav a { min-height: 44px; display: flex; align-items: center; }
 
