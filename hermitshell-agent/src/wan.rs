@@ -9,6 +9,7 @@ use crate::paths;
 use dhcproto::v4::{self, DhcpOption, Decodable, Decoder, Encodable, Encoder, MessageType, OptionCode};
 use dhcproto::v6;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
+use rand::TryRng;
 use tracing::{error, info, warn};
 
 use crate::db;
@@ -396,7 +397,7 @@ fn dhcp4_acquire_blocking(
 
     for attempt in 1u32..=5 {
         // Fresh xid per DISCOVER attempt
-        let xid: u32 = rand::random();
+        let xid: u32 = rand::rngs::SysRng.try_next_u32().expect("OS RNG failed");
 
         // --- DISCOVER ---
         let discover = build_discover(xid, mac);
@@ -550,7 +551,7 @@ fn dhcp4_renew_blocking(
 ) -> Result<(Ipv4Addr, Ipv4Addr, Vec<Ipv4Addr>, Vec<Ipv4Addr>, u32)> {
     let sock = make_dhcp_socket(iface, client_ip)?;
 
-    let xid: u32 = rand::random();
+    let xid: u32 = rand::rngs::SysRng.try_next_u32().expect("OS RNG failed");
     let renew_pkt = build_renew(xid, mac, client_ip);
 
     let dest = if broadcast {

@@ -1,4 +1,5 @@
 use super::*;
+use rand::TryRng;
 use zeroize::Zeroizing;
 
 pub(super) fn handle_has_password(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
@@ -130,7 +131,11 @@ pub(super) fn handle_create_session(_req: &Request, db: &Arc<Mutex<Db>>) -> Resp
     let secret = match db.get_config("session_secret").ok().flatten() {
         Some(s) => Zeroizing::new(s),
         None => {
-            let s = hex::encode(rand::random::<[u8; 32]>());
+            let s = {
+                let mut buf = [0u8; 32];
+                rand::rngs::SysRng.try_fill_bytes(&mut buf).expect("OS RNG failed");
+                hex::encode(buf)
+            };
             if let Err(e) = db.set_config("session_secret", &s) {
                 return Response::err(&format!("failed to store secret: {}", e));
             }

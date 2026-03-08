@@ -31,6 +31,7 @@ use anyhow::Result;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
+use rand::TryRng;
 use tracing::{debug, error, info, warn};
 
 const POLL_INTERVAL_SECS: u64 = 10;
@@ -525,7 +526,11 @@ async fn main() -> Result<()> {
         }
         // Generate session secret if missing
         if db_guard.get_config("session_secret").ok().flatten().is_none() {
-            let secret = hex::encode(rand::random::<[u8; 32]>());
+            let secret = {
+                let mut buf = [0u8; 32];
+                rand::rngs::SysRng.try_fill_bytes(&mut buf).expect("OS RNG failed");
+                hex::encode(buf)
+            };
             let _ = db_guard.set_config("session_secret", &secret);
             info!("session secret generated");
         }
