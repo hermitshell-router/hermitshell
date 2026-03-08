@@ -255,7 +255,11 @@ async fn handle_wifi_kick_client(req: &Request, db: &Arc<Mutex<Db>>) -> Response
         Err(resp) => return resp,
     };
     match provider.kick_client(mac).await {
-        Ok(()) => Response::ok(),
+        Ok(()) => {
+            let db_guard = db.lock().unwrap();
+            let _ = db_guard.log_audit("wifi_kick_client", mac);
+            Response::ok()
+        }
         Err(e) => Response::err(&format!("kick_client failed: {}", e)),
     }
 }
@@ -272,7 +276,11 @@ async fn handle_wifi_block_client(req: &Request, db: &Arc<Mutex<Db>>) -> Respons
         Err(resp) => return resp,
     };
     match provider.block_client(mac).await {
-        Ok(()) => Response::ok(),
+        Ok(()) => {
+            let db_guard = db.lock().unwrap();
+            let _ = db_guard.log_audit("wifi_block_client", mac);
+            Response::ok()
+        }
         Err(e) => Response::err(&format!("block_client failed: {}", e)),
     }
 }
@@ -289,7 +297,11 @@ async fn handle_wifi_unblock_client(req: &Request, db: &Arc<Mutex<Db>>) -> Respo
         Err(resp) => return resp,
     };
     match provider.unblock_client(mac).await {
-        Ok(()) => Response::ok(),
+        Ok(()) => {
+            let db_guard = db.lock().unwrap();
+            let _ = db_guard.log_audit("wifi_unblock_client", mac);
+            Response::ok()
+        }
         Err(e) => Response::err(&format!("unblock_client failed: {}", e)),
     }
 }

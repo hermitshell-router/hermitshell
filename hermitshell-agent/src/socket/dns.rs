@@ -312,6 +312,7 @@ pub(super) fn handle_set_dns_forward_enabled(
     if let Err(e) = db_guard.set_dns_forward_zone_enabled(id, enabled) {
         return Response::err(&e.to_string());
     }
+    let _ = db_guard.log_audit("dns_toggle", &format!("forward_zone {} enabled={}", id, enabled));
     drop(db_guard);
     let mut mgr = unbound.lock().unwrap();
     let _ = mgr.write_config(db);
@@ -334,6 +335,7 @@ pub(super) fn handle_set_dns_rule_enabled(
     if let Err(e) = db_guard.set_dns_custom_rule_enabled(id, enabled) {
         return Response::err(&e.to_string());
     }
+    let _ = db_guard.log_audit("dns_toggle", &format!("custom_rule {} enabled={}", id, enabled));
     drop(db_guard);
     let mut mgr = unbound.lock().unwrap();
     let _ = mgr.write_config(db);
@@ -356,6 +358,7 @@ pub(super) fn handle_set_dns_blocklist_enabled(
     if let Err(e) = db_guard.set_dns_blocklist_enabled(id, enabled) {
         return Response::err(&e.to_string());
     }
+    let _ = db_guard.log_audit("dns_toggle", &format!("blocklist {} enabled={}", id, enabled));
     drop(db_guard);
     let mut mgr = unbound.lock().unwrap();
     let _ = mgr.download_blocklists(db);
