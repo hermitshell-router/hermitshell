@@ -1080,9 +1080,24 @@ pub fn apply_hermit_config(
 
         // Apply secrets if provided (bypasses BLOCKED_CONFIG_KEYS since this is a direct DB write)
         if let Some(s) = secrets {
-            if let Some(ref v) = s.admin_password_hash { db_guard.set_config("admin_password_hash", v).map_err(|e| format!("set secret: {e}"))?; }
-            if let Some(ref v) = s.session_secret { db_guard.set_config("session_secret", v).map_err(|e| format!("set secret: {e}"))?; }
-            if let Some(ref v) = s.wg_private_key { db_guard.set_config("wg_private_key", v).map_err(|e| format!("set secret: {e}"))?; }
+            if let Some(ref v) = s.admin_password_hash {
+                if !v.starts_with("$argon2") {
+                    return Err("invalid admin_password_hash format".to_string());
+                }
+                db_guard.set_config("admin_password_hash", v).map_err(|e| format!("set secret: {e}"))?;
+            }
+            if let Some(ref v) = s.session_secret {
+                if v.len() != 64 || !v.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err("invalid session_secret format".to_string());
+                }
+                db_guard.set_config("session_secret", v).map_err(|e| format!("set secret: {e}"))?;
+            }
+            if let Some(ref v) = s.wg_private_key {
+                if v.len() != 44 || !v.ends_with('=') {
+                    return Err("invalid wg_private_key format".to_string());
+                }
+                db_guard.set_config("wg_private_key", v).map_err(|e| format!("set secret: {e}"))?;
+            }
             if let Some(ref tls) = s.tls {
                 if let Some(ref v) = tls.key_pem { db_guard.set_config("tls_key_pem", v).map_err(|e| format!("set secret: {e}"))?; }
                 if let Some(ref v) = tls.cert_pem { db_guard.set_config("tls_cert_pem", v).map_err(|e| format!("set secret: {e}"))?; }
