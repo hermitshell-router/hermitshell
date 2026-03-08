@@ -24,6 +24,7 @@ async fn check_for_update() -> anyhow::Result<Option<String>> {
     if tag.is_empty() {
         return Ok(None);
     }
+    validate_version(&tag)?;
     Ok(Some(tag))
 }
 
