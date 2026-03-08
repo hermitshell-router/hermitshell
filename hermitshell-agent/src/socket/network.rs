@@ -208,7 +208,7 @@ pub(super) fn handle_get_upnp_config(_req: &Request, db: &Arc<Mutex<Db>>) -> Res
 }
 
 pub(super) fn handle_set_upnp_config(
-    req: &Request, db: &Arc<Mutex<Db>>, portmap: &crate::portmap::SharedRegistry
+    req: &Request, db: &Arc<Mutex<Db>>, portmap: &crate::portmap::SharedRegistry, upnp_flag: &super::UpnpFlag
 ) -> Response {
     let Some(ref value) = req.value else {
         return Response::err("value required (true or false)");
@@ -224,6 +224,7 @@ pub(super) fn handle_set_upnp_config(
         }
     }
     if value == "false" {
+        upnp_flag.store(false, std::sync::atomic::Ordering::Relaxed);
         portmap.clear_automatic();
         if let Err(e) = crate::nftables::remove_upnp_input_rules() {
             tracing::warn!(error = %e, "failed to remove UPnP input rules");

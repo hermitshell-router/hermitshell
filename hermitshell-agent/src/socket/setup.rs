@@ -110,12 +110,8 @@ pub(super) fn handle_setup_wan_config(req: &Request, db: &Arc<Mutex<Db>>) -> Res
         return Response::err("WAN config can only be set during initial setup");
     }
 
-    if let Err(e) = db.set_config("wan_mode", mode) {
-        return Response::err(&format!("failed to store wan_mode: {}", e));
-    }
-
+    // Validate all static IP fields BEFORE writing anything to the DB
     if mode == "static" {
-        // Validate and store static IP fields from key (IP/mask), name (gateway), description (DNS)
         if let Some(ref ip) = req.key {
             let valid = if let Some((addr, prefix)) = ip.split_once('/') {
                 addr.parse::<std::net::Ipv4Addr>().is_ok()
@@ -126,21 +122,33 @@ pub(super) fn handle_setup_wan_config(req: &Request, db: &Arc<Mutex<Db>>) -> Res
             if !valid {
                 return Response::err("invalid static IP address");
             }
-            let _ = db.set_config("wan_static_ip", ip);
         }
         if let Some(ref gw) = req.name {
             if gw.parse::<std::net::Ipv4Addr>().is_err() {
                 return Response::err("invalid gateway address");
             }
-            let _ = db.set_config("wan_static_gateway", gw);
         }
         if let Some(ref dns) = req.description {
-            // DNS can be comma-separated IPs
             for part in dns.split(',') {
                 if part.trim().parse::<std::net::IpAddr>().is_err() {
                     return Response::err(&format!("invalid DNS address: {}", part.trim()));
                 }
             }
+        }
+    }
+
+    if let Err(e) = db.set_config("wan_mode", mode) {
+        return Response::err(&format!("failed to store wan_mode: {}", e));
+    }
+
+    if mode == "static" {
+        if let Some(ref ip) = req.key {
+            let _ = db.set_config("wan_static_ip", ip);
+        }
+        if let Some(ref gw) = req.name {
+            let _ = db.set_config("wan_static_gateway", gw);
+        }
+        if let Some(ref dns) = req.description {
             let _ = db.set_config("wan_static_dns", dns);
         }
     }

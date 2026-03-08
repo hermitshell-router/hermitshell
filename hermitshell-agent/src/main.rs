@@ -755,10 +755,12 @@ async fn main() -> Result<()> {
     );
 
     // Spawn UPnP/NAT-PMP if enabled
-    {
+    let upnp_flag = {
         let db_check = db.lock().unwrap();
         let upnp_enabled = db_check.get_config_bool("upnp_enabled", false);
         drop(db_check);
+
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(upnp_enabled));
 
         if upnp_enabled {
             if let Err(e) = nftables::add_upnp_input_rules(&lan_iface) {
@@ -770,19 +772,23 @@ async fn main() -> Result<()> {
             let wan_upnp = wan_iface.to_string();
             let lan_upnp = lan_iface.to_string();
             let lan_ip_upnp = lan_ip.clone();
+            let flag_upnp = flag.clone();
             tokio::spawn(async move {
-                upnp::run(db_upnp, pm_upnp, wan_upnp, lan_upnp, lan_ip_upnp).await;
+                upnp::run(db_upnp, pm_upnp, wan_upnp, lan_upnp, lan_ip_upnp, flag_upnp).await;
             });
 
             let db_natpmp = db.clone();
             let pm_natpmp = portmap_registry.clone();
             let wan_natpmp = wan_iface.to_string();
             let lan_natpmp = lan_iface.to_string();
+            let flag_natpmp = flag.clone();
             tokio::spawn(async move {
-                natpmp::run(db_natpmp, pm_natpmp, lan_natpmp, wan_natpmp).await;
+                natpmp::run(db_natpmp, pm_natpmp, lan_natpmp, wan_natpmp, flag_natpmp).await;
             });
         }
-    }
+
+        flag
+    };
 
     // Lease expiry sweep (runs regardless of upnp_enabled — cleans up stale entries)
     let pm_expiry = portmap_registry.clone();
@@ -823,7 +829,7 @@ async fn main() -> Result<()> {
     let portmap_for_socket = portmap_registry.clone();
     let socket_path = paths::socket_path();
     tokio::spawn(async move {
-        if let Err(e) = socket::run_server(&socket_path, db_clone, start_time, unbound_clone, wan_for_socket, lan_for_socket, log_tx_socket, bandwidth_rt_for_socket, speed_test_state, mdns_reg_for_socket, portmap_for_socket, wan_lease.clone()).await {
+        if let Err(e) = socket::run_server(&socket_path, db_clone, start_time, unbound_clone, wan_for_socket, lan_for_socket, log_tx_socket, bandwidth_rt_for_socket, speed_test_state, mdns_reg_for_socket, portmap_for_socket, wan_lease.clone(), upnp_flag).await {
             error!(error = %e, "socket server error");
         }
     });

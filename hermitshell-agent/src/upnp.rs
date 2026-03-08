@@ -1,4 +1,5 @@
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -157,7 +158,7 @@ fn all_notify_types(uuid: &str) -> Vec<String> {
 
 /// Main SSDP loop: listen for M-SEARCH, respond to trusted devices, and
 /// periodically send NOTIFY alive multicast.  Sends ssdp:byebye on shutdown.
-async fn run_ssdp(db: Arc<Mutex<Db>>, device_uuid: String, lan_iface: String, lan_ip: Ipv4Addr) {
+async fn run_ssdp(db: Arc<Mutex<Db>>, device_uuid: String, lan_iface: String, lan_ip: Ipv4Addr, enabled: Arc<AtomicBool>) {
     let lan_ip_str = lan_ip.to_string();
     let socket = match create_ssdp_socket(&lan_iface, lan_ip) {
         Ok(s) => s,
@@ -208,6 +209,11 @@ async fn run_ssdp(db: Arc<Mutex<Db>>, device_uuid: String, lan_iface: String, la
                 }
             } => None,
         };
+
+        if !enabled.load(Ordering::Relaxed) {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            continue;
+        }
 
         let (len, src) = match recv_result {
             Some(Ok(r)) => r,
@@ -372,6 +378,7 @@ struct AppState {
     portmap: crate::portmap::SharedRegistry,
     wan_iface: String,
     device_uuid: String,
+    enabled: Arc<AtomicBool>,
 }
 
 // ---------------------------------------------------------------------------
@@ -623,6 +630,9 @@ async fn soap_handler(
     headers: HeaderMap,
     body: String,
 ) -> Response {
+    if !state.enabled.load(Ordering::Relaxed) {
+        return soap_error(501, "UPnP is disabled");
+    }
     let src_ip = match addr {
         SocketAddr::V4(v4) => *v4.ip(),
         SocketAddr::V6(v6) => {
@@ -874,12 +884,14 @@ async fn run_http_server(
     wan_iface: String,
     device_uuid: String,
     lan_ip: Ipv4Addr,
+    enabled: Arc<AtomicBool>,
 ) {
     let state = AppState {
         db,
         portmap,
         wan_iface,
         device_uuid,
+        enabled,
     };
 
     let app = Router::new()
@@ -920,6 +932,7 @@ pub async fn run(
     wan_iface: String,
     lan_iface: String,
     lan_ip_str: String,
+    enabled: Arc<AtomicBool>,
 ) {
     let lan_ip: Ipv4Addr = lan_ip_str.parse().unwrap_or(Ipv4Addr::new(10, 0, 0, 1));
 
@@ -942,10 +955,11 @@ pub async fn run(
     // Spawn SSDP listener task
     let db_ssdp = db.clone();
     let uuid_ssdp = device_uuid.clone();
+    let enabled_ssdp = enabled.clone();
     tokio::spawn(async move {
-        run_ssdp(db_ssdp, uuid_ssdp, lan_iface, lan_ip).await;
+        run_ssdp(db_ssdp, uuid_ssdp, lan_iface, lan_ip, enabled_ssdp).await;
     });
 
     // Run HTTP/SOAP server (blocks)
-    run_http_server(db, portmap, wan_iface, device_uuid, lan_ip).await;
+    run_http_server(db, portmap, wan_iface, device_uuid, lan_ip, enabled).await;
 }

@@ -1,4 +1,5 @@
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -632,6 +633,7 @@ pub async fn run(
     portmap: crate::portmap::SharedRegistry,
     lan_iface: String,
     wan_iface: String,
+    enabled: Arc<AtomicBool>,
 ) {
     info!(iface = %lan_iface, "starting NAT-PMP/PCP listener");
 
@@ -686,6 +688,10 @@ pub async fn run(
                 continue;
             }
         };
+
+        if !enabled.load(Ordering::Relaxed) {
+            continue;
+        }
 
         let data = &buf[..len];
         if data.is_empty() {
