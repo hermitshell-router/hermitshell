@@ -236,7 +236,8 @@ fn parse_syslog_target(target: &str) -> Option<String> {
 }
 
 /// Send a JSON array payload via HTTP(S) POST to the given URL (fire-and-forget).
-/// Supports HTTPS with certificate validation. Includes Bearer auth if secret is set.
+/// Supports HTTPS with certificate validation. Includes Bearer auth and
+/// HMAC-SHA256 payload signature (X-Hermitshell-Signature) if secret is set.
 async fn webhook_post(url: &str, payload: String, secret: &str) {
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
@@ -251,12 +252,23 @@ async fn webhook_post(url: &str, payload: String, secret: &str) {
 
     let mut req = client
         .post(url)
-        .header("Content-Type", "application/json")
-        .body(payload);
+        .header("Content-Type", "application/json");
 
     if !secret.is_empty() {
         req = req.header("Authorization", format!("Bearer {}", secret));
+
+        // HMAC-SHA256 payload signature
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+        type HmacSha256 = Hmac<Sha256>;
+        if let Ok(mut mac) = HmacSha256::new_from_slice(secret.as_bytes()) {
+            mac.update(payload.as_bytes());
+            let sig = hex::encode(mac.finalize().into_bytes());
+            req = req.header("X-Hermitshell-Signature", format!("sha256={}", sig));
+        }
     }
+
+    req = req.body(payload);
 
     match req.send().await {
         Ok(resp) => {
