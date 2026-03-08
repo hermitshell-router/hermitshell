@@ -713,7 +713,7 @@ pub struct WifiProviderConfig {
 }
 
 /// Secrets config (separate file, not committed to git).
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, zeroize::Zeroize)]
 pub struct HermitSecrets {
     #[serde(default)]
     pub admin_password_hash: Option<String>,
@@ -729,7 +729,7 @@ pub struct HermitSecrets {
     pub wifi: Option<WifiSecrets>,
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, zeroize::Zeroize)]
 pub struct TlsSecrets {
     #[serde(default)]
     pub key_pem: Option<String>,
@@ -741,7 +741,7 @@ pub struct TlsSecrets {
     pub acme_account_key: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, zeroize::Zeroize)]
 pub struct IntegrationSecrets {
     #[serde(default)]
     pub runzero_token: Option<String>,
@@ -749,13 +749,13 @@ pub struct IntegrationSecrets {
     pub webhook_secret: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, zeroize::Zeroize)]
 pub struct WifiSecrets {
     #[serde(default)]
     pub providers: Vec<WifiProviderSecrets>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, zeroize::Zeroize)]
 #[serde(deny_unknown_fields)]
 pub struct WifiProviderSecrets {
     pub name: String,

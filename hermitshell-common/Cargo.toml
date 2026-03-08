@@ -8,6 +8,7 @@ license = "MIT"
 serde = { workspace = true }
 toml = { workspace = true }
 serde_json = { workspace = true }
+zeroize = { version = "1", features = ["derive"] }
 
 [lints]
 workspace = true

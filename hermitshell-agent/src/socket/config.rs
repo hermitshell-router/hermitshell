@@ -1,5 +1,5 @@
 use super::*;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 const MAX_IMPORT_DEVICES: usize = 10_000;
 const MAX_IMPORT_PORT_FORWARDS: usize = 1_000;
@@ -831,11 +831,18 @@ pub(super) fn handle_apply_config(
     };
 
     // Parse optional secrets
-    let secrets: Option<hermitshell_common::HermitSecrets> = req.secrets.as_ref().and_then(|s| {
+    let mut secrets: Option<hermitshell_common::HermitSecrets> = req.secrets.as_ref().and_then(|s| {
         serde_json::from_str(s).ok()
     });
 
-    match apply_hermit_config(&config, secrets.as_ref(), db, portmap, unbound) {
+    let result = apply_hermit_config(&config, secrets.as_ref(), db, portmap, unbound);
+
+    // Zeroize secrets after DB writes
+    if let Some(ref mut s) = secrets {
+        s.zeroize();
+    }
+
+    match result {
         Ok(()) => Response::ok(),
         Err(e) => Response::err(&e),
     }
