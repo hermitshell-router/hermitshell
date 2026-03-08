@@ -291,6 +291,7 @@ pub fn Settings() -> impl IntoView {
                                         <tbody>
                                             {res.iter().map(|r| {
                                                 let mac = r.mac.clone();
+                                                let dialog_id = format!("confirm-rm-res-{}", mac);
                                                 let remove_action = ServerAction::<RemoveReservation>::new();
                                                 view! {
                                                     <tr>
@@ -299,8 +300,8 @@ pub fn Settings() -> impl IntoView {
                                                         <td>
                                                             <button type="button" class="btn btn-danger btn-sm"
                                                                 onclick="this.nextElementSibling.showModal()">"Remove"</button>
-                                                            <dialog class="confirm-dialog" aria-labelledby="confirm-rm-reservation">
-                                                                <h3 id="confirm-rm-reservation">"Remove Reservation?"</h3>
+                                                            <dialog class="confirm-dialog" aria-labelledby={dialog_id.clone()}>
+                                                                <h3 id={dialog_id.clone()}>"Remove Reservation?"</h3>
                                                                 <p>{format!("Reservation for {} will be removed.", r.mac)}</p>
                                                                 <div class="dialog-actions">
                                                                     <button type="button" class="btn btn-sm"
@@ -362,6 +363,7 @@ pub fn Settings() -> impl IntoView {
                                                 format!("{}-{}", fwd.external_port_start, fwd.external_port_end)
                                             };
                                             let remove_action = ServerAction::<RemovePortForward>::new();
+                                            let dialog_id = format!("confirm-rm-pf-{}", id);
                                             view! {
                                                 <tr>
                                                     <td>{fwd.protocol.clone()}</td>
@@ -392,8 +394,8 @@ pub fn Settings() -> impl IntoView {
                                                     <td>
                                                         <button type="button" class="btn btn-danger btn-sm"
                                                             onclick="this.nextElementSibling.showModal()">"Remove"</button>
-                                                        <dialog class="confirm-dialog" aria-labelledby="confirm-rm-pf">
-                                                            <h3 id="confirm-rm-pf">"Remove Port Forward?"</h3>
+                                                        <dialog class="confirm-dialog" aria-labelledby={dialog_id.clone()}>
+                                                            <h3 id={dialog_id.clone()}>"Remove Port Forward?"</h3>
                                                             <p>"This port forward rule will be permanently removed."</p>
                                                             <div class="dialog-actions">
                                                                 <button type="button" class="btn btn-sm"
@@ -500,6 +502,7 @@ pub fn Settings() -> impl IntoView {
                                                     let port_end = ph.get("port_end").and_then(|v| v.as_i64()).unwrap_or(0);
                                                     let description = ph.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
                                                     let id = ph.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+                                                    let dialog_id = format!("confirm-rm-ph-{}", id);
                                                     let remove_action = ServerAction::<RemoveIpv6Pinhole>::new();
                                                     view! {
                                                         <tr>
@@ -511,8 +514,8 @@ pub fn Settings() -> impl IntoView {
                                                             <td>
                                                                 <button type="button" class="btn btn-danger btn-sm"
                                                                     onclick="this.nextElementSibling.showModal()">"Remove"</button>
-                                                                <dialog class="confirm-dialog" aria-labelledby="confirm-rm-pinhole">
-                                                                    <h3 id="confirm-rm-pinhole">"Remove Pinhole?"</h3>
+                                                                <dialog class="confirm-dialog" aria-labelledby={dialog_id.clone()}>
+                                                                    <h3 id={dialog_id.clone()}>"Remove Pinhole?"</h3>
                                                                     <p>"This IPv6 pinhole will be permanently removed."</p>
                                                                     <div class="dialog-actions">
                                                                         <button type="button" class="btn btn-sm"
@@ -700,6 +703,7 @@ pub fn Settings() -> impl IntoView {
                                                         {list.iter().map(|sw| {
                                                             let name_for_remove = sw.name.clone();
                                                             let name_for_test = sw.name.clone();
+                                                            let dialog_id = format!("confirm-rm-sw-{}", name_for_remove);
                                                             let remove_action = ServerAction::<RemoveSwitch>::new();
                                                             let test_action = ServerAction::<TestSwitch>::new();
                                                             let status_class = if sw.status == "connected" { "card-value success" } else { "card-value warning" };
@@ -716,8 +720,8 @@ pub fn Settings() -> impl IntoView {
                                                                         </ActionForm>
                                                                         <button type="button" class="btn btn-danger btn-sm"
                                                                             onclick="this.nextElementSibling.showModal()">"Remove"</button>
-                                                                        <dialog class="confirm-dialog" aria-labelledby="confirm-rm-switch">
-                                                                            <h3 id="confirm-rm-switch">"Remove Switch?"</h3>
+                                                                        <dialog class="confirm-dialog" aria-labelledby={dialog_id.clone()}>
+                                                                            <h3 id={dialog_id.clone()}>"Remove Switch?"</h3>
                                                                             <p>{format!("\"{}\" will be permanently removed.", sw.name)}</p>
                                                                             <div class="dialog-actions">
                                                                                 <button type="button" class="btn btn-sm"

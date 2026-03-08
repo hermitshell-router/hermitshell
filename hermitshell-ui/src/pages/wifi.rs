@@ -57,6 +57,7 @@ pub fn Wifi() -> impl IntoView {
                                             {provs.iter().map(|p| {
                                                 let id = p.id.clone();
                                                 let id2 = p.id.clone();
+                                                let prov_dialog_id = format!("confirm-rm-prov-{}", id2);
                                                 let type_label = match p.provider_type.as_str() {
                                                     "eap_standalone" => "TP-Link EAP",
                                                     "unifi" => "UniFi",
@@ -74,8 +75,8 @@ pub fn Wifi() -> impl IntoView {
                                                             " "
                                                             <button type="button" class="btn btn-sm btn-danger"
                                                                 onclick="this.nextElementSibling.showModal()">"Remove"</button>
-                                                            <dialog class="confirm-dialog" aria-labelledby="confirm-rm-provider">
-                                                                <h3 id="confirm-rm-provider">"Remove WiFi Provider?"</h3>
+                                                            <dialog class="confirm-dialog" aria-labelledby={prov_dialog_id.clone()}>
+                                                                <h3 id={prov_dialog_id.clone()}>"Remove WiFi Provider?"</h3>
                                                                 <p>{format!("\"{}\" will be permanently removed.", p.name)}</p>
                                                                 <div class="dialog-actions">
                                                                     <button type="button" class="btn btn-sm"
@@ -360,6 +361,7 @@ fn ProviderDetail(
                                             let pid_del = pid_c.clone();
                                             let ssid_display = s.ssid_name.clone();
                                             let ssid_msg = format!("\"{}\" will be permanently deleted.", s.ssid_name);
+                                            let ssid_dialog_id = format!("confirm-del-ssid-{}", s.ssid_name);
                                             let ssid_hidden = s.ssid_name;
                                             let band_display = s.band.clone();
                                             let band_hidden = s.band;
@@ -373,8 +375,8 @@ fn ProviderDetail(
                                                     <td>
                                                         <button type="button" class="btn btn-sm btn-danger"
                                                             onclick="this.nextElementSibling.showModal()">"Delete"</button>
-                                                        <dialog class="confirm-dialog" aria-labelledby="confirm-del-ssid">
-                                                            <h3 id="confirm-del-ssid">"Delete SSID?"</h3>
+                                                        <dialog class="confirm-dialog" aria-labelledby={ssid_dialog_id.clone()}>
+                                                            <h3 id={ssid_dialog_id.clone()}>"Delete SSID?"</h3>
                                                             <p>{ssid_msg}</p>
                                                             <div class="dialog-actions">
                                                                 <button type="button" class="btn btn-sm"

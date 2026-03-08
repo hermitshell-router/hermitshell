@@ -173,8 +173,8 @@ pub fn Dns() -> impl IntoView {
                                                             <td>
                                                                 <button type="button" class="btn btn-danger btn-sm"
                                                                     onclick="this.nextElementSibling.showModal()">"Remove"</button>
-                                                                <dialog class="confirm-dialog" aria-labelledby="confirm-rm-bl">
-                                                                    <h3 id="confirm-rm-bl">"Remove Blocklist?"</h3>
+                                                                <dialog class="confirm-dialog" aria-labelledby={format!("confirm-rm-bl-{}", id)}>
+                                                                    <h3 id={format!("confirm-rm-bl-{}", id)}>"Remove Blocklist?"</h3>
                                                                     <p>{format!("\"{}\" will be permanently removed.", bl.name)}</p>
                                                                     <div class="dialog-actions">
                                                                         <button type="button" class="btn btn-sm"
@@ -263,8 +263,8 @@ pub fn Dns() -> impl IntoView {
                                                             <td>
                                                                 <button type="button" class="btn btn-danger btn-sm"
                                                                     onclick="this.nextElementSibling.showModal()">"Remove"</button>
-                                                                <dialog class="confirm-dialog" aria-labelledby="confirm-rm-fz">
-                                                                    <h3 id="confirm-rm-fz">"Remove Forward Zone?"</h3>
+                                                                <dialog class="confirm-dialog" aria-labelledby={format!("confirm-rm-fz-{}", id)}>
+                                                                    <h3 id={format!("confirm-rm-fz-{}", id)}>"Remove Forward Zone?"</h3>
                                                                     <p>{format!("\"{}\" will be permanently removed.", fz.domain)}</p>
                                                                     <div class="dialog-actions">
                                                                         <button type="button" class="btn btn-sm"
@@ -349,8 +349,8 @@ pub fn Dns() -> impl IntoView {
                                                             <td>
                                                                 <button type="button" class="btn btn-danger btn-sm"
                                                                     onclick="this.nextElementSibling.showModal()">"Remove"</button>
-                                                                <dialog class="confirm-dialog" aria-labelledby="confirm-rm-rule">
-                                                                    <h3 id="confirm-rm-rule">"Remove DNS Rule?"</h3>
+                                                                <dialog class="confirm-dialog" aria-labelledby={format!("confirm-rm-rule-{}", id)}>
+                                                                    <h3 id={format!("confirm-rm-rule-{}", id)}>"Remove DNS Rule?"</h3>
                                                                     <p>{format!("\"{}\" will be permanently removed.", rule.domain)}</p>
                                                                     <div class="dialog-actions">
                                                                         <button type="button" class="btn btn-sm"

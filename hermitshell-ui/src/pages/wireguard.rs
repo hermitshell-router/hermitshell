@@ -69,6 +69,7 @@ pub fn Wireguard() -> impl IntoView {
                                                     {wg.peers.iter().map(|peer| {
                                                         let pk = peer.public_key.clone();
                                                         let pk2 = peer.public_key.clone();
+                                                        let dialog_id = format!("confirm-rm-peer-{}", &pk2[..8.min(pk2.len())]);
                                                         let short_key = format!("{}...", &peer.public_key[..12.min(peer.public_key.len())]);
                                                         let group_action = ServerAction::<SetWgPeerGroup>::new();
                                                         let remove_action = ServerAction::<RemoveWgPeer>::new();
@@ -92,8 +93,8 @@ pub fn Wireguard() -> impl IntoView {
                                                                     <ErrorToast value=group_action.value() />
                                                                     <button type="button" class="btn btn-danger btn-sm"
                                                                         onclick="this.nextElementSibling.showModal()">"Remove"</button>
-                                                                    <dialog class="confirm-dialog" aria-labelledby="confirm-rm-peer">
-                                                                        <h3 id="confirm-rm-peer">"Remove Peer?"</h3>
+                                                                    <dialog class="confirm-dialog" aria-labelledby={dialog_id.clone()}>
+                                                                        <h3 id={dialog_id.clone()}>"Remove Peer?"</h3>
                                                                         <p>{format!("\"{}\" will lose VPN access.", peer.name)}</p>
                                                                         <div class="dialog-actions">
                                                                             <button type="button" class="btn btn-sm"
