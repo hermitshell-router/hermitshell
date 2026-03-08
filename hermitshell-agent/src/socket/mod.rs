@@ -471,7 +471,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                             "apply_update" => {
                                 config::handle_apply_update(&req, &db).await
                             }
-                            _ => handle_request(req, &db, start_time, &unbound, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt, &speed_test_state, &mdns_registry, &portmap, &wan_lease),
+                            _ => handle_request(req, &db, start_time, &unbound, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt, &speed_test_state, &mdns_registry, &portmap, &wan_lease, caller_uid),
                         }
                     }
                 } else {
@@ -492,7 +492,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
                         "apply_update" => {
                             config::handle_apply_update(&req, &db).await
                         }
-                        _ => handle_request(req, &db, start_time, &unbound, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt, &speed_test_state, &mdns_registry, &portmap, &wan_lease),
+                        _ => handle_request(req, &db, start_time, &unbound, &wan_iface, &lan_iface, &log_tx, &login_rate_limit, &password_lock, &bandwidth_rt, &speed_test_state, &mdns_registry, &portmap, &wan_lease, caller_uid),
                     }
                 }
             }
@@ -507,7 +507,7 @@ async fn handle_client(stream: UnixStream, db: Arc<Mutex<Db>>, start_time: std::
 }
 
 #[allow(clippy::too_many_arguments)]
-fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, unbound: &Arc<Mutex<UnboundManager>>, wan_iface: &str, _lan_iface: &str, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: &LoginRateLimit, password_lock: &PasswordLock, bandwidth_rt: &BandwidthRealtimeMap, speed_test_state: &SpeedTestState, mdns_registry: &crate::mdns::SharedRegistry, portmap: &crate::portmap::SharedRegistry, wan_lease: &crate::wan::SharedWanLease) -> Response {
+fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Instant, unbound: &Arc<Mutex<UnboundManager>>, wan_iface: &str, _lan_iface: &str, log_tx: &tokio::sync::mpsc::UnboundedSender<LogEvent>, login_rate_limit: &LoginRateLimit, password_lock: &PasswordLock, bandwidth_rt: &BandwidthRealtimeMap, speed_test_state: &SpeedTestState, mdns_registry: &crate::mdns::SharedRegistry, portmap: &crate::portmap::SharedRegistry, wan_lease: &crate::wan::SharedWanLease, caller_uid: u32) -> Response {
     if let Some(ref mac) = req.mac
         && let Err(e) = nftables::validate_mac(mac) {
             return Response::err(&e.to_string());
@@ -554,7 +554,7 @@ fn handle_request(req: Request, db: &Arc<Mutex<Db>>, start_time: std::time::Inst
         "set_config" => config::handle_set_config(&req, db),
         "get_ad_blocking" => config::handle_get_ad_blocking(&req, db),
         "set_ad_blocking" => config::handle_set_ad_blocking(&req, db, unbound),
-        "export_config" => config::handle_export_config(&req, db),
+        "export_config" => config::handle_export_config(&req, db, caller_uid),
         "import_config" => config::handle_import_config(&req, db, portmap),
         "apply_config" => config::handle_apply_config(&req, db, portmap, unbound),
         "get_full_config" => config::handle_get_full_config(&req, db),

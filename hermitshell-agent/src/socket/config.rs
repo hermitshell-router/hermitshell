@@ -61,8 +61,11 @@ pub(super) fn handle_set_ad_blocking(req: &Request, db: &Arc<Mutex<Db>>, unbound
     resp
 }
 
-pub(super) fn handle_export_config(req: &Request, db: &Arc<Mutex<Db>>) -> Response {
+pub(super) fn handle_export_config(req: &Request, db: &Arc<Mutex<Db>>, caller_uid: u32) -> Response {
     let include_secrets = req.include_secrets.unwrap_or(false);
+    if include_secrets && caller_uid != 0 {
+        return Response::err("include_secrets requires root");
+    }
     let db = db.lock().unwrap();
 
     // Audit log the export
