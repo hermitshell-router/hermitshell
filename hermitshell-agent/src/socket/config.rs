@@ -933,174 +933,189 @@ pub fn apply_hermit_config(
 
     let db_guard = db.lock().unwrap();
 
-    // --- Write config to DB ---
+    // --- Write config to DB (inside a transaction for atomicity) ---
+    db_guard.begin_transaction().map_err(|e| format!("begin transaction: {}", e))?;
 
-    // Network config
-    if let Some(ref iface) = config.network.wan_interface {
-        let _ = db_guard.set_config("wan_iface", iface);
-    }
-    if let Some(ref iface) = config.network.lan_interface {
-        let _ = db_guard.set_config("lan_iface", iface);
-    }
+    let db_write_result: Result<(), String> = (|| {
+        // Network config
+        if let Some(ref iface) = config.network.wan_interface {
+            db_guard.set_config("wan_iface", iface).map_err(|e| format!("set wan_iface: {e}"))?;
+        }
+        if let Some(ref iface) = config.network.lan_interface {
+            db_guard.set_config("lan_iface", iface).map_err(|e| format!("set lan_iface: {e}"))?;
+        }
 
-    // Devices
-    for dev in &config.devices {
-        let _ = db_guard.set_device_group(&dev.mac, &dev.group);
-        if let Some(ref hostname) = dev.hostname {
-            let clean = sanitize_hostname(hostname);
-            if !clean.is_empty() {
-                let _ = db_guard.set_device_hostname(&dev.mac, &clean);
+        // Devices
+        for dev in &config.devices {
+            db_guard.set_device_group(&dev.mac, &dev.group).map_err(|e| format!("set device group: {e}"))?;
+            if let Some(ref hostname) = dev.hostname {
+                let clean = sanitize_hostname(hostname);
+                if !clean.is_empty() {
+                    db_guard.set_device_hostname(&dev.mac, &clean).map_err(|e| format!("set device hostname: {e}"))?;
+                }
+            }
+            if let Some(ref nickname) = dev.nickname {
+                let mut clean: String = nickname.chars().filter(|c| !c.is_control()).collect();
+                if clean.len() > 256 {
+                    let mut end = 256;
+                    while !clean.is_char_boundary(end) { end -= 1; }
+                    clean.truncate(end);
+                }
+                db_guard.set_device_nickname(&dev.mac, &clean).map_err(|e| format!("set device nickname: {e}"))?;
             }
         }
-        if let Some(ref nickname) = dev.nickname {
-            let mut clean: String = nickname.chars().filter(|c| !c.is_control()).collect();
-            if clean.len() > 256 {
-                let mut end = 256;
-                while !clean.is_char_boundary(end) { end -= 1; }
-                clean.truncate(end);
-            }
-            let _ = db_guard.set_device_nickname(&dev.mac, &clean);
+
+        // DHCP reservations
+        db_guard.conn_exec("DELETE FROM dhcp_reservations").map_err(|e| format!("delete dhcp_reservations: {e}"))?;
+        for r in &config.dhcp.reservations {
+            db_guard.set_dhcp_reservation(&r.mac, r.subnet_id).map_err(|e| format!("set dhcp reservation: {e}"))?;
         }
-    }
 
-    // DHCP reservations
-    let _ = db_guard.conn_exec("DELETE FROM dhcp_reservations");
-    for r in &config.dhcp.reservations {
-        let _ = db_guard.set_dhcp_reservation(&r.mac, r.subnet_id);
-    }
+        // Port forwards (manual only -- UPnP/NAT-PMP managed separately)
+        db_guard.conn_exec("DELETE FROM port_forwards WHERE source = 'manual' OR source = ''").map_err(|e| format!("delete port_forwards: {e}"))?;
+        for pf in &config.firewall.port_forwards {
+            let ext_end = pf.external_port_end.unwrap_or(pf.external_port);
+            db_guard.add_port_forward(&pf.protocol, pf.external_port, ext_end, &pf.internal_ip, pf.internal_port, &pf.description).map_err(|e| format!("add port forward: {e}"))?;
+        }
 
-    // Port forwards (manual only -- UPnP/NAT-PMP managed separately)
-    let _ = db_guard.conn_exec("DELETE FROM port_forwards WHERE source = 'manual' OR source = ''");
-    for pf in &config.firewall.port_forwards {
-        let ext_end = pf.external_port_end.unwrap_or(pf.external_port);
-        let _ = db_guard.add_port_forward(&pf.protocol, pf.external_port, ext_end, &pf.internal_ip, pf.internal_port, &pf.description);
-    }
+        // IPv6 pinholes
+        db_guard.conn_exec("DELETE FROM ipv6_pinholes").map_err(|e| format!("delete ipv6_pinholes: {e}"))?;
+        for ph in &config.firewall.ipv6_pinholes {
+            let port_end = ph.port_end.unwrap_or(ph.port_start) as i64;
+            db_guard.add_ipv6_pinhole(&ph.device, &ph.protocol, ph.port_start as i64, port_end, &ph.description).map_err(|e| format!("add ipv6 pinhole: {e}"))?;
+        }
 
-    // IPv6 pinholes
-    let _ = db_guard.conn_exec("DELETE FROM ipv6_pinholes");
-    for ph in &config.firewall.ipv6_pinholes {
-        let port_end = ph.port_end.unwrap_or(ph.port_start) as i64;
-        let _ = db_guard.add_ipv6_pinhole(&ph.device, &ph.protocol, ph.port_start as i64, port_end, &ph.description);
-    }
+        // DNS config
+        db_guard.set_config("ad_blocking_enabled", if config.dns.ad_blocking { "true" } else { "false" }).map_err(|e| format!("set ad_blocking: {e}"))?;
+        if let Some(rl) = config.dns.ratelimit_per_second {
+            db_guard.set_config("dns_ratelimit_per_client", &rl.to_string()).map_err(|e| format!("set dns_ratelimit: {e}"))?;
+        }
+        if let Some(ref bypass) = config.dns.bypass_allowed {
+            db_guard.set_config("dns_bypass_allowed_trusted", if bypass.trusted { "true" } else { "false" }).map_err(|e| format!("set dns_bypass: {e}"))?;
+            db_guard.set_config("dns_bypass_allowed_guest", if bypass.guest { "true" } else { "false" }).map_err(|e| format!("set dns_bypass: {e}"))?;
+            db_guard.set_config("dns_bypass_allowed_quarantine", if bypass.quarantine { "true" } else { "false" }).map_err(|e| format!("set dns_bypass: {e}"))?;
+            db_guard.set_config("dns_bypass_allowed_iot", if bypass.iot { "true" } else { "false" }).map_err(|e| format!("set dns_bypass: {e}"))?;
+            db_guard.set_config("dns_bypass_allowed_servers", if bypass.servers { "true" } else { "false" }).map_err(|e| format!("set dns_bypass: {e}"))?;
+        }
+        db_guard.conn_exec("DELETE FROM dns_forward_zones").map_err(|e| format!("delete dns_forward_zones: {e}"))?;
+        for fz in &config.dns.forward_zones {
+            db_guard.add_dns_forward_zone(&fz.domain, &fz.forward_to).map_err(|e| format!("add dns forward zone: {e}"))?;
+        }
+        db_guard.conn_exec("DELETE FROM dns_custom_rules").map_err(|e| format!("delete dns_custom_rules: {e}"))?;
+        for cr in &config.dns.custom_records {
+            db_guard.add_dns_custom_rule(&cr.domain, &cr.record_type, &cr.value).map_err(|e| format!("add dns custom rule: {e}"))?;
+        }
+        db_guard.conn_exec("DELETE FROM dns_blocklists").map_err(|e| format!("delete dns_blocklists: {e}"))?;
+        for bl in &config.dns.blocklists {
+            db_guard.add_dns_blocklist(&bl.name, &bl.url, &bl.tag).map_err(|e| format!("add dns blocklist: {e}"))?;
+        }
 
-    // DNS config
-    let _ = db_guard.set_config("ad_blocking_enabled", if config.dns.ad_blocking { "true" } else { "false" });
-    if let Some(rl) = config.dns.ratelimit_per_second {
-        let _ = db_guard.set_config("dns_ratelimit_per_client", &rl.to_string());
-    }
-    if let Some(ref bypass) = config.dns.bypass_allowed {
-        let _ = db_guard.set_config("dns_bypass_allowed_trusted", if bypass.trusted { "true" } else { "false" });
-        let _ = db_guard.set_config("dns_bypass_allowed_guest", if bypass.guest { "true" } else { "false" });
-        let _ = db_guard.set_config("dns_bypass_allowed_quarantine", if bypass.quarantine { "true" } else { "false" });
-        let _ = db_guard.set_config("dns_bypass_allowed_iot", if bypass.iot { "true" } else { "false" });
-        let _ = db_guard.set_config("dns_bypass_allowed_servers", if bypass.servers { "true" } else { "false" });
-    }
-    let _ = db_guard.conn_exec("DELETE FROM dns_forward_zones");
-    for fz in &config.dns.forward_zones {
-        let _ = db_guard.add_dns_forward_zone(&fz.domain, &fz.forward_to);
-    }
-    let _ = db_guard.conn_exec("DELETE FROM dns_custom_rules");
-    for cr in &config.dns.custom_records {
-        let _ = db_guard.add_dns_custom_rule(&cr.domain, &cr.record_type, &cr.value);
-    }
-    let _ = db_guard.conn_exec("DELETE FROM dns_blocklists");
-    for bl in &config.dns.blocklists {
-        let _ = db_guard.add_dns_blocklist(&bl.name, &bl.url, &bl.tag);
-    }
+        // WireGuard settings
+        db_guard.set_config("wg_enabled", if config.wireguard.enabled { "true" } else { "false" }).map_err(|e| format!("set wg_enabled: {e}"))?;
+        db_guard.set_config("wg_listen_port", &config.wireguard.listen_port.to_string()).map_err(|e| format!("set wg_listen_port: {e}"))?;
 
-    // WireGuard settings
-    let _ = db_guard.set_config("wg_enabled", if config.wireguard.enabled { "true" } else { "false" });
-    let _ = db_guard.set_config("wg_listen_port", &config.wireguard.listen_port.to_string());
-
-    // WireGuard peers: replace all DB entries with config peers.
-    // Runtime wg0 reconciliation (add_peer/remove_peer calls) is deferred
-    // to the next agent restart, same as import_config.
-    let _ = db_guard.conn_exec("DELETE FROM wg_peers");
-    let (dev_base, dev_max) = nftables::device_range();
-    for peer in &config.wireguard.peers {
-        if let Ok(subnet_id) = db_guard.allocate_subnet_id(dev_max + 1) {
-            let _ = db_guard.insert_wg_peer(&peer.public_key, &peer.name, subnet_id, &peer.device_group);
-            // insert_wg_peer always sets enabled=1; disable if needed
-            if !peer.enabled {
-                let _ = db_guard.set_wg_peer_enabled(&peer.public_key, false);
-            }
-            // Set up nftables rules for the peer's subnet
-            if let Some(info) = subnet::compute_subnet(subnet_id, dev_base, dev_max) {
-                let ipv4 = info.device_ipv4.to_string();
-                let ipv6 = info.device_ipv6_ula.to_string();
-                let _ = nftables::add_device_counter(&ipv4);
-                let _ = nftables::add_device_counter_v6(&ipv6);
-                let _ = nftables::add_device_forward_rule(&ipv4, &peer.device_group);
-                let _ = nftables::add_device_forward_rule_v6(&ipv6, &peer.device_group);
+        // WireGuard peers: replace all DB entries with config peers.
+        // Runtime wg0 reconciliation (add_peer/remove_peer calls) is deferred
+        // to the next agent restart, same as import_config.
+        db_guard.conn_exec("DELETE FROM wg_peers").map_err(|e| format!("delete wg_peers: {e}"))?;
+        let (dev_base, dev_max) = nftables::device_range();
+        for peer in &config.wireguard.peers {
+            if let Ok(subnet_id) = db_guard.allocate_subnet_id(dev_max + 1) {
+                db_guard.insert_wg_peer(&peer.public_key, &peer.name, subnet_id, &peer.device_group).map_err(|e| format!("insert wg peer: {e}"))?;
+                // insert_wg_peer always sets enabled=1; disable if needed
+                if !peer.enabled {
+                    db_guard.set_wg_peer_enabled(&peer.public_key, false).map_err(|e| format!("set wg peer enabled: {e}"))?;
+                }
+                // Set up nftables rules for the peer's subnet
+                if let Some(info) = subnet::compute_subnet(subnet_id, dev_base, dev_max) {
+                    let ipv4 = info.device_ipv4.to_string();
+                    let ipv6 = info.device_ipv6_ula.to_string();
+                    let _ = nftables::add_device_counter(&ipv4);
+                    let _ = nftables::add_device_counter_v6(&ipv6);
+                    let _ = nftables::add_device_forward_rule(&ipv4, &peer.device_group);
+                    let _ = nftables::add_device_forward_rule_v6(&ipv6, &peer.device_group);
+                }
             }
         }
-    }
 
-    // QoS
-    let _ = db_guard.set_config("qos_enabled", if config.qos.enabled { "true" } else { "false" });
-    let _ = db_guard.set_config("qos_upload_mbps", &config.qos.upload_mbps.to_string());
-    let _ = db_guard.set_config("qos_download_mbps", &config.qos.download_mbps.to_string());
+        // QoS
+        db_guard.set_config("qos_enabled", if config.qos.enabled { "true" } else { "false" }).map_err(|e| format!("set qos_enabled: {e}"))?;
+        db_guard.set_config("qos_upload_mbps", &config.qos.upload_mbps.to_string()).map_err(|e| format!("set qos_upload: {e}"))?;
+        db_guard.set_config("qos_download_mbps", &config.qos.download_mbps.to_string()).map_err(|e| format!("set qos_download: {e}"))?;
 
-    // Logging
-    let _ = db_guard.set_config("log_format", &config.logging.format);
-    let _ = db_guard.set_config("log_retention_days", &config.logging.retention_days.to_string());
-    if let Some(ref target) = config.logging.syslog_target {
-        let _ = db_guard.set_config("syslog_target", target);
-    }
-    if let Some(ref url) = config.logging.webhook_url {
-        let _ = db_guard.set_config("webhook_url", url);
-    }
-
-    // TLS
-    let _ = db_guard.set_config("tls_mode", &config.tls.mode);
-
-    // Analysis
-    let _ = db_guard.set_config("analyzer_enabled", if config.analysis.enabled { "true" } else { "false" });
-    if let Some(ref rules) = config.analysis.alert_rules {
-        if let Some(v) = rules.dns_beaconing { let _ = db_guard.set_config("alert_rule_dns_beaconing", if v { "true" } else { "false" }); }
-        if let Some(v) = rules.dns_volume_spike { let _ = db_guard.set_config("alert_rule_dns_volume_spike", if v { "true" } else { "false" }); }
-        if let Some(v) = rules.new_dest_spike { let _ = db_guard.set_config("alert_rule_new_dest_spike", if v { "true" } else { "false" }); }
-        if let Some(v) = rules.suspicious_ports { let _ = db_guard.set_config("alert_rule_suspicious_ports", if v { "true" } else { "false" }); }
-        if let Some(v) = rules.bandwidth_spike { let _ = db_guard.set_config("alert_rule_bandwidth_spike", if v { "true" } else { "false" }); }
-    }
-
-    // DMZ
-    if let Some(ref dmz) = config.firewall.dmz_host {
-        let _ = db_guard.set_config("dmz_host_ip", dmz);
-    } else {
-        let _ = db_guard.set_config("dmz_host_ip", "");
-    }
-
-    // UPnP
-    if let Some(upnp) = config.firewall.upnp_enabled {
-        let _ = db_guard.set_config("upnp_enabled", if upnp { "true" } else { "false" });
-    }
-
-    // Apply secrets if provided (bypasses BLOCKED_CONFIG_KEYS since this is a direct DB write)
-    if let Some(s) = secrets {
-        if let Some(ref v) = s.admin_password_hash { let _ = db_guard.set_config("admin_password_hash", v); }
-        if let Some(ref v) = s.session_secret { let _ = db_guard.set_config("session_secret", v); }
-        if let Some(ref v) = s.wg_private_key { let _ = db_guard.set_config("wg_private_key", v); }
-        if let Some(ref tls) = s.tls {
-            if let Some(ref v) = tls.key_pem { let _ = db_guard.set_config("tls_key_pem", v); }
-            if let Some(ref v) = tls.cert_pem { let _ = db_guard.set_config("tls_cert_pem", v); }
-            if let Some(ref v) = tls.acme_cf_api_token { let _ = db_guard.set_config("acme_cf_api_token", v); }
-            if let Some(ref v) = tls.acme_account_key { let _ = db_guard.set_config("acme_account_key", v); }
+        // Logging
+        db_guard.set_config("log_format", &config.logging.format).map_err(|e| format!("set log_format: {e}"))?;
+        db_guard.set_config("log_retention_days", &config.logging.retention_days.to_string()).map_err(|e| format!("set log_retention: {e}"))?;
+        if let Some(ref target) = config.logging.syslog_target {
+            db_guard.set_config("syslog_target", target).map_err(|e| format!("set syslog_target: {e}"))?;
         }
-        if let Some(ref integ) = s.integrations
-            && let Some(ref v) = integ.runzero_token
-        {
-            let _ = db_guard.set_config("runzero_token", v);
+        if let Some(ref url) = config.logging.webhook_url {
+            db_guard.set_config("webhook_url", url).map_err(|e| format!("set webhook_url: {e}"))?;
         }
+
+        // TLS
+        db_guard.set_config("tls_mode", &config.tls.mode).map_err(|e| format!("set tls_mode: {e}"))?;
+
+        // Analysis
+        db_guard.set_config("analyzer_enabled", if config.analysis.enabled { "true" } else { "false" }).map_err(|e| format!("set analyzer_enabled: {e}"))?;
+        if let Some(ref rules) = config.analysis.alert_rules {
+            if let Some(v) = rules.dns_beaconing { db_guard.set_config("alert_rule_dns_beaconing", if v { "true" } else { "false" }).map_err(|e| format!("set alert rule: {e}"))?; }
+            if let Some(v) = rules.dns_volume_spike { db_guard.set_config("alert_rule_dns_volume_spike", if v { "true" } else { "false" }).map_err(|e| format!("set alert rule: {e}"))?; }
+            if let Some(v) = rules.new_dest_spike { db_guard.set_config("alert_rule_new_dest_spike", if v { "true" } else { "false" }).map_err(|e| format!("set alert rule: {e}"))?; }
+            if let Some(v) = rules.suspicious_ports { db_guard.set_config("alert_rule_suspicious_ports", if v { "true" } else { "false" }).map_err(|e| format!("set alert rule: {e}"))?; }
+            if let Some(v) = rules.bandwidth_spike { db_guard.set_config("alert_rule_bandwidth_spike", if v { "true" } else { "false" }).map_err(|e| format!("set alert rule: {e}"))?; }
+        }
+
+        // DMZ
+        if let Some(ref dmz) = config.firewall.dmz_host {
+            db_guard.set_config("dmz_host_ip", dmz).map_err(|e| format!("set dmz_host_ip: {e}"))?;
+        } else {
+            db_guard.set_config("dmz_host_ip", "").map_err(|e| format!("set dmz_host_ip: {e}"))?;
+        }
+
+        // UPnP
+        if let Some(upnp) = config.firewall.upnp_enabled {
+            db_guard.set_config("upnp_enabled", if upnp { "true" } else { "false" }).map_err(|e| format!("set upnp_enabled: {e}"))?;
+        }
+
+        // Apply secrets if provided (bypasses BLOCKED_CONFIG_KEYS since this is a direct DB write)
+        if let Some(s) = secrets {
+            if let Some(ref v) = s.admin_password_hash { db_guard.set_config("admin_password_hash", v).map_err(|e| format!("set secret: {e}"))?; }
+            if let Some(ref v) = s.session_secret { db_guard.set_config("session_secret", v).map_err(|e| format!("set secret: {e}"))?; }
+            if let Some(ref v) = s.wg_private_key { db_guard.set_config("wg_private_key", v).map_err(|e| format!("set secret: {e}"))?; }
+            if let Some(ref tls) = s.tls {
+                if let Some(ref v) = tls.key_pem { db_guard.set_config("tls_key_pem", v).map_err(|e| format!("set secret: {e}"))?; }
+                if let Some(ref v) = tls.cert_pem { db_guard.set_config("tls_cert_pem", v).map_err(|e| format!("set secret: {e}"))?; }
+                if let Some(ref v) = tls.acme_cf_api_token { db_guard.set_config("acme_cf_api_token", v).map_err(|e| format!("set secret: {e}"))?; }
+                if let Some(ref v) = tls.acme_account_key { db_guard.set_config("acme_account_key", v).map_err(|e| format!("set secret: {e}"))?; }
+            }
+            if let Some(ref integ) = s.integrations
+                && let Some(ref v) = integ.runzero_token
+            {
+                db_guard.set_config("runzero_token", v).map_err(|e| format!("set secret: {e}"))?;
+            }
+        }
+
+        // Audit log
+        let peer_names: Vec<&str> = config.wireguard.peers.iter().map(|p| p.name.as_str()).collect();
+        let has_secrets = secrets.is_some();
+        let _ = db_guard.log_audit("config_apply", &format!(
+            "devices={} port_forwards={} peers={} peer_names=[{}] secrets={}",
+            config.devices.len(), config.firewall.port_forwards.len(), config.wireguard.peers.len(),
+            peer_names.join(", "), has_secrets));
+
+        Ok(())
+    })();
+
+    if let Err(e) = db_write_result {
+        let _ = db_guard.rollback_transaction();
+        return Err(format!("config apply failed: {}", e));
     }
 
-    // Audit log
-    let peer_names: Vec<&str> = config.wireguard.peers.iter().map(|p| p.name.as_str()).collect();
-    let has_secrets = secrets.is_some();
-    let _ = db_guard.log_audit("config_apply", &format!(
-        "devices={} port_forwards={} peers={} peer_names=[{}] secrets={}",
-        config.devices.len(), config.firewall.port_forwards.len(), config.wireguard.peers.len(),
-        peer_names.join(", "), has_secrets));
+    db_guard.commit_transaction().map_err(|e| {
+        let _ = db_guard.rollback_transaction();
+        format!("commit: {}", e)
+    })?;
 
     // Collect data needed for reconciliation before dropping the lock
     let qos_enabled = config.qos.enabled;
