@@ -123,10 +123,10 @@ pub(super) fn handle_setup_wan_config(req: &Request, db: &Arc<Mutex<Db>>) -> Res
                 return Response::err("invalid static IP address");
             }
         }
-        if let Some(ref gw) = req.name {
-            if gw.parse::<std::net::Ipv4Addr>().is_err() {
-                return Response::err("invalid gateway address");
-            }
+        if let Some(ref gw) = req.name
+            && gw.parse::<std::net::Ipv4Addr>().is_err()
+        {
+            return Response::err("invalid gateway address");
         }
         if let Some(ref dns) = req.description {
             for part in dns.split(',') {
@@ -411,10 +411,10 @@ pub(super) fn handle_update_wan_config(req: &Request, db: &Arc<Mutex<Db>>) -> Re
                 return Response::err("invalid static IP address");
             }
         }
-        if let Some(ref gw) = req.name {
-            if gw.parse::<std::net::Ipv4Addr>().is_err() {
-                return Response::err("invalid gateway address");
-            }
+        if let Some(ref gw) = req.name
+            && gw.parse::<std::net::Ipv4Addr>().is_err()
+        {
+            return Response::err("invalid gateway address");
         }
         if let Some(ref dns) = req.description {
             for part in dns.split(',') {

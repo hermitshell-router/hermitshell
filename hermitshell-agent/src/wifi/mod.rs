@@ -55,6 +55,7 @@ pub trait WifiDevice: Send + Sync {
 /// Returns `(provider, tofu_cert_pem, tls_backend)` where tofu_cert_pem is `Some` if a TOFU
 /// certificate was captured (first connection without a CA cert), and tls_backend
 /// indicates which TLS implementation was used (`"rustls"` or `"native"`).
+#[allow(clippy::too_many_arguments)]
 pub async fn connect(
     provider_type: &str,
     url: &str,

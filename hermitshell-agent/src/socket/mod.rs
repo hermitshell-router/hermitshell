@@ -367,9 +367,9 @@ impl Response {
 }
 
 /// Start the main Unix socket API server that handles all agent commands.
-#[allow(clippy::too_many_arguments)]
 pub type UpnpFlag = std::sync::Arc<std::sync::atomic::AtomicBool>;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_server(socket_path: &str, db: Arc<Mutex<Db>>, start_time: std::time::Instant, unbound: Arc<Mutex<UnboundManager>>, wan_iface: String, lan_iface: String, log_tx: tokio::sync::mpsc::UnboundedSender<LogEvent>, bandwidth_rt: BandwidthRealtimeMap, speed_test_state: SpeedTestState, mdns_registry: crate::mdns::SharedRegistry, portmap: crate::portmap::SharedRegistry, wan_lease: crate::wan::SharedWanLease, upnp_flag: UpnpFlag) -> Result<()> {
     // Remove stale socket from previous run (ignore: may not exist)
     let _ = std::fs::remove_file(socket_path);
