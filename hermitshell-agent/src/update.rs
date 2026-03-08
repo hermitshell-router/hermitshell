@@ -279,8 +279,21 @@ pub fn trigger_staged_restart() {
             warn!(error = %e, "failed to restart hermitshell-ui");
         }
 
-        // Brief pause to let UI come up before agent restarts
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        // Poll until UI is active (max 10 seconds)
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if tokio::time::Instant::now() >= deadline {
+                warn!("hermitshell-ui did not become active within 10s");
+                break;
+            }
+            match tokio::process::Command::new("systemctl")
+                .args(["is-active", "--quiet", "hermitshell-ui"])
+                .status().await
+            {
+                Ok(status) if status.success() => break,
+                _ => tokio::time::sleep(std::time::Duration::from_millis(250)).await,
+            }
+        }
 
         info!("restarting hermitshell-agent");
         if let Err(e) = tokio::process::Command::new("systemctl")
