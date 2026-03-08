@@ -49,7 +49,7 @@ pub fn Layout(
             <body>
                 <div class="app-shell">
                     <input type="checkbox" id="nav-toggle" class="nav-toggle" />
-                    <label for="nav-toggle" class="nav-hamburger">{"\u{2630}"}</label>
+                    <label for="nav-toggle" class="nav-hamburger" aria-label="Toggle navigation menu">{"\u{2630}"}</label>
                     <label for="nav-toggle" class="nav-overlay"></label>
                     <nav class="sidebar">
                         <div class="sidebar-brand">
@@ -58,24 +58,25 @@ pub fn Layout(
                         </div>
                         <ul class="sidebar-nav">
                             {nav_items.into_iter().map(|(group, name, href)| {
-                                let class = if name.to_lowercase().replace(' ', "-") == active_page
-                                    || (name == "Dashboard" && active_page == "dashboard")
-                                { "active" } else { "" };
+                                let is_active = name.to_lowercase().replace(' ', "-") == active_page
+                                    || (name == "Dashboard" && active_page == "dashboard");
+                                let class = if is_active { "active" } else { "" };
+                                let aria_current = if is_active { Some("page") } else { None };
                                 if let Some(label) = group {
                                     if label.is_empty() {
                                         view! {
                                             <li class="nav-spacer"></li>
-                                            <li><a href={href} class={class}>{name}</a></li>
+                                            <li><a href={href} class={class} aria-current={aria_current}>{name}</a></li>
                                         }.into_any()
                                     } else {
                                         view! {
                                             <li class="nav-group-label">{label}</li>
-                                            <li><a href={href} class={class}>{name}</a></li>
+                                            <li><a href={href} class={class} aria-current={aria_current}>{name}</a></li>
                                         }.into_any()
                                     }
                                 } else {
                                     view! {
-                                        <li><a href={href} class={class}>{name}</a></li>
+                                        <li><a href={href} class={class} aria-current={aria_current}>{name}</a></li>
                                     }.into_any()
                                 }
                             }).collect_view()}
@@ -92,6 +93,20 @@ pub fn Layout(
                     </main>
                 </div>
                 <SuccessToast />
+                {use_nonce().map(|nonce| view! {
+                    <script nonce={nonce.to_string()}>"
+                        document.addEventListener('submit', function(e) {
+                            var form = e.target;
+                            if (form.tagName !== 'FORM') return;
+                            var btns = form.querySelectorAll('button[type=submit]');
+                            btns.forEach(function(btn) {
+                                btn.disabled = true;
+                                btn.style.opacity = '0.6';
+                                btn.style.cursor = 'wait';
+                            });
+                        });
+                    "</script>
+                })}
             </body>
         </html>
     }

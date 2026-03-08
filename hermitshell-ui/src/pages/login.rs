@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos::nonce::use_nonce;
 use leptos_router::hooks::use_query_map;
 use crate::components::layout::CspMeta;
 use crate::components::toast::ErrorToast;
@@ -49,7 +50,7 @@ pub fn Login() -> impl IntoView {
                             view! {
                                 <ActionForm action=login_action>
                                     <label for="password">"Admin Password"</label>
-                                    <input type="password" name="password" id="password" required autofocus />
+                                    <input type="password" name="password" id="password" required autofocus autocomplete="current-password" />
                                     <button type="submit" class="btn btn-primary">"Login"</button>
                                 </ActionForm>
                                 <ErrorToast value=login_action.value() />
@@ -57,6 +58,20 @@ pub fn Login() -> impl IntoView {
                         }
                     }}
                 </div>
+                {use_nonce().map(|nonce| view! {
+                    <script nonce={nonce.to_string()}>"
+                        document.addEventListener('submit', function(e) {
+                            var form = e.target;
+                            if (form.tagName !== 'FORM') return;
+                            var btns = form.querySelectorAll('button[type=submit]');
+                            btns.forEach(function(btn) {
+                                btn.disabled = true;
+                                btn.style.opacity = '0.6';
+                                btn.style.cursor = 'wait';
+                            });
+                        });
+                    "</script>
+                })}
             </body>
         </html>
     }

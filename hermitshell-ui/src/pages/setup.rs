@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos::nonce::use_nonce;
 use crate::client;
 use crate::components::layout::CspMeta;
 use crate::components::toast::ErrorToast;
@@ -26,13 +27,31 @@ fn SetupLayout(
                 <div class="setup-container">
                     <div class="setup-progress">
                         <span>{format!("Step {} of {}", step, TOTAL_STEPS)}</span>
-                        <div class="setup-progress-bar">
+                        <div class="setup-progress-bar" role="progressbar"
+                            aria-valuenow={step.to_string()}
+                            aria-valuemin="1"
+                            aria-valuemax={TOTAL_STEPS.to_string()}
+                            aria-label="Setup progress">
                             <div class="setup-progress-fill" style={format!("width: {}%", pct)}></div>
                         </div>
                     </div>
                     <h1>{title}</h1>
                     {children()}
                 </div>
+                {use_nonce().map(|nonce| view! {
+                    <script nonce={nonce.to_string()}>"
+                        document.addEventListener('submit', function(e) {
+                            var form = e.target;
+                            if (form.tagName !== 'FORM') return;
+                            var btns = form.querySelectorAll('button[type=submit]');
+                            btns.forEach(function(btn) {
+                                btn.disabled = true;
+                                btn.style.opacity = '0.6';
+                                btn.style.cursor = 'wait';
+                            });
+                        });
+                    "</script>
+                })}
             </body>
         </html>
     }
@@ -281,9 +300,9 @@ pub fn SetupStep6() -> impl IntoView {
             <div class="setup-card">
                 <ActionForm action=action>
                     <label for="password">"Password"</label>
-                    <input type="password" name="password" id="password" required autofocus minlength="8" />
+                    <input type="password" name="password" id="password" required autofocus minlength="8" autocomplete="new-password" />
                     <label for="confirm">"Confirm Password"</label>
-                    <input type="password" name="confirm" id="confirm" required minlength="8" />
+                    <input type="password" name="confirm" id="confirm" required minlength="8" autocomplete="new-password" />
                     <div class="setup-actions">
                         <a href="/setup/5" class="setup-back">"Back"</a>
                         <button type="submit" class="btn btn-primary">"Continue"</button>

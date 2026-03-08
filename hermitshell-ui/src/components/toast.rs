@@ -9,7 +9,7 @@ pub fn SuccessToast() -> impl IntoView {
 
     move || msg().map(|m| {
         view! {
-            <div class="toast toast-success">{m}</div>
+            <div class="toast toast-success" role="status" aria-live="polite">{m}</div>
         }
     })
 }
@@ -23,7 +23,7 @@ pub fn ErrorToast(#[prop(into)] value: Signal<Option<Result<(), ServerFnError>>>
 
     move || error_msg().map(|e| {
         view! {
-            <div class="toast toast-error">{e}</div>
+            <div class="toast toast-error" role="alert" aria-live="assertive">{e}</div>
         }
     })
 }
