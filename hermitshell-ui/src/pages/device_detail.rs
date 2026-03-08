@@ -204,7 +204,7 @@ pub fn DeviceDetail() -> impl IntoView {
                                                     <span class="bw-summary-value tx">{format_bytes(total_tx)}</span>
                                                 </div>
                                             </div>
-                                            <div inner_html={chart_svg}></div>
+                                            <div inner_html={chart_svg} role="img" aria-label="Device bandwidth chart"></div>
                                             <div class="period-selector">
                                                 {periods.iter().map(|(val, label)| {
                                                     let cls = if *val == period { "period-btn active" } else { "period-btn" };
@@ -375,8 +375,8 @@ pub fn DeviceDetail() -> impl IntoView {
                                         <button type="button"
                                             class="btn btn-danger btn-sm"
                                             onclick="this.nextElementSibling.showModal()">"Block"</button>
-                                        <dialog class="confirm-dialog">
-                                            <h3>"Block Device?"</h3>
+                                        <dialog class="confirm-dialog" aria-labelledby="confirm-block-device">
+                                            <h3 id="confirm-block-device">"Block Device?"</h3>
                                             <p>"This device will lose all network access."</p>
                                             <div class="dialog-actions">
                                                 <button type="button" class="btn btn-sm"
