@@ -943,7 +943,8 @@ pub fn apply_hermit_config(
     // --- Write config to DB (inside a transaction for atomicity) ---
     db_guard.begin_transaction().map_err(|e| format!("begin transaction: {}", e))?;
 
-    let mut peer_subnets: Vec<(String, String, String)> = Vec::new();
+    let mut peer_subnets: std::collections::HashMap<String, (String, String, String)> = std::collections::HashMap::new();
+    let mut old_wg_peers: Vec<crate::db::WgPeer> = Vec::new();
     let db_write_result: Result<(), String> = (|| {
         // Network config
         if let Some(ref iface) = config.network.wan_interface {
@@ -1022,9 +1023,8 @@ pub fn apply_hermit_config(
         db_guard.set_config("wg_enabled", if config.wireguard.enabled { "true" } else { "false" }).map_err(|e| format!("set wg_enabled: {e}"))?;
         db_guard.set_config("wg_listen_port", &config.wireguard.listen_port.to_string()).map_err(|e| format!("set wg_listen_port: {e}"))?;
 
-        // WireGuard peers: replace all DB entries with config peers.
-        // Runtime wg0 reconciliation (add_peer/remove_peer calls) is deferred
-        // to the next agent restart, same as import_config.
+        // WireGuard peers: snapshot old set, then replace all DB entries with config peers.
+        old_wg_peers = db_guard.list_wg_peers().unwrap_or_default();
         db_guard.conn_exec("DELETE FROM wg_peers").map_err(|e| format!("delete wg_peers: {e}"))?;
         let (dev_base, dev_max) = nftables::device_range();
         for peer in &config.wireguard.peers {
@@ -1036,7 +1036,7 @@ pub fn apply_hermit_config(
                 }
                 // Collect subnet data for nftables rules (applied after commit)
                 if let Some(info) = subnet::compute_subnet(subnet_id, dev_base, dev_max) {
-                    peer_subnets.push((info.device_ipv4.to_string(), info.device_ipv6_ula.to_string(), peer.device_group.clone()));
+                    peer_subnets.insert(peer.public_key.clone(), (info.device_ipv4.to_string(), info.device_ipv6_ula.to_string(), peer.device_group.clone()));
                 }
             }
         }
@@ -1153,11 +1153,48 @@ pub fn apply_hermit_config(
     // --- Full reconciliation ---
 
     // 0. WireGuard peer nftables rules (collected during DB writes, applied after commit)
-    for (ipv4, ipv6, group) in &peer_subnets {
+    for (ipv4, ipv6, group) in peer_subnets.values() {
         let _ = nftables::add_device_counter(ipv4);
         let _ = nftables::add_device_counter_v6(ipv6);
         let _ = nftables::add_device_forward_rule(ipv4, group);
         let _ = nftables::add_device_forward_rule_v6(ipv6, group);
+    }
+
+    // 0b. Reconcile live wg0 interface with new peer set
+    let wg_enabled = {
+        let db_guard = db.lock().unwrap();
+        db_guard.get_config_bool("wg_enabled", false)
+    };
+    if wg_enabled {
+        let new_peer_keys: std::collections::HashSet<&str> = config.wireguard.peers.iter()
+            .map(|p| p.public_key.as_str())
+            .collect();
+        let (dev_base, dev_max) = nftables::device_range();
+
+        // Remove peers no longer in config from wg0
+        for old_peer in &old_wg_peers {
+            if !new_peer_keys.contains(old_peer.public_key.as_str())
+                && let Some(info) = subnet::compute_subnet(old_peer.subnet_id, dev_base, dev_max)
+            {
+                let ipv4 = info.device_ipv4.to_string();
+                let ipv6 = info.device_ipv6_ula.to_string();
+                let _ = nftables::remove_device_forward_rule(&ipv4);
+                let _ = nftables::remove_device_forward_rule_v6(&ipv6);
+                let _ = crate::wireguard::remove_peer(&old_peer.public_key, &ipv4, &ipv6);
+            }
+        }
+
+        // Add new peers to wg0 (peers in config but not in old set)
+        let old_peer_keys: std::collections::HashSet<&str> = old_wg_peers.iter()
+            .map(|p| p.public_key.as_str())
+            .collect();
+        for peer in &config.wireguard.peers {
+            if peer.enabled && !old_peer_keys.contains(peer.public_key.as_str())
+                && let Some((ipv4, ipv6, _)) = peer_subnets.get(&peer.public_key)
+            {
+                let _ = crate::wireguard::add_peer(&peer.public_key, ipv4, ipv6);
+            }
+        }
     }
 
     // 1. Port forwards + DMZ (existing)
