@@ -475,6 +475,21 @@ pub(super) fn handle_update_interfaces(req: &Request, db: &Arc<Mutex<Db>>) -> Re
     }
 
     let db = db.lock().unwrap();
+
+    // Safety guard: reject if this would cross-assign WAN/LAN interfaces
+    let current_wan = db.get_config("wan_iface").ok().flatten().unwrap_or_default();
+    let current_lan = db.get_config("lan_iface").ok().flatten().unwrap_or_default();
+    if !current_wan.is_empty()
+        && !current_lan.is_empty()
+        && (wan.as_str() == current_lan || lan.as_str() == current_wan)
+    {
+        return Response::err(
+            "This would reassign your current LAN interface as WAN or vice versa. \
+             After restart, your management connection would drop. \
+             To force this change, use the console or edit the database directly.",
+        );
+    }
+
     if let Err(e) = db.set_config("wan_iface", wan) {
         return Response::err(&format!("failed to store WAN: {}", e));
     }
