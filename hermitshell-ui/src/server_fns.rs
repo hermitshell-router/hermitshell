@@ -927,7 +927,7 @@ pub async fn set_alert_rule(rule: String, enabled: String) -> Result<(), ServerF
     crate::client::set_config(&key, val)
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("set_alert_rule", &format!("{}={}", rule, val));
-    leptos_axum::redirect("/settings");
+    leptos_axum::redirect("/settings?msg=Settings%20saved");
     Ok(())
 }
 
@@ -957,7 +957,7 @@ pub async fn add_switch(
             .map_err(friendly_error)?;
     }
     let _ = crate::client::log_audit("switch_add", &name);
-    leptos_axum::redirect("/settings#switches");
+    leptos_axum::redirect("/settings?msg=Switch%20added#switches");
     Ok(())
 }
 
@@ -965,14 +965,14 @@ pub async fn add_switch(
 pub async fn remove_switch(name: String) -> Result<(), ServerFnError> {
     crate::client::remove_switch(&name).map_err(friendly_error)?;
     let _ = crate::client::log_audit("switch_remove", &name);
-    leptos_axum::redirect("/settings#switches");
+    leptos_axum::redirect("/settings?msg=Switch%20removed#switches");
     Ok(())
 }
 
 #[server]
 pub async fn test_switch(name: String) -> Result<(), ServerFnError> {
     crate::client::test_switch(&name).map_err(friendly_error)?;
-    leptos_axum::redirect("/settings#switches");
+    leptos_axum::redirect("/settings?msg=Switch%20tested#switches");
     Ok(())
 }
 
@@ -988,7 +988,7 @@ pub async fn enable_guest_network(
     crate::client::guest_network_enable(&provider_id, &ssid_name, &password, &band)
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("guest_network_enable", &ssid_name);
-    leptos_axum::redirect("/guest");
+    leptos_axum::redirect("/guest?msg=Guest%20network%20enabled");
     Ok(())
 }
 
@@ -997,7 +997,7 @@ pub async fn disable_guest_network() -> Result<(), ServerFnError> {
     crate::client::guest_network_disable()
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("guest_network_disable", "");
-    leptos_axum::redirect("/guest");
+    leptos_axum::redirect("/guest?msg=Guest%20network%20disabled");
     Ok(())
 }
 
@@ -1006,7 +1006,7 @@ pub async fn regenerate_guest_password() -> Result<(), ServerFnError> {
     crate::client::guest_network_regenerate_password()
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("guest_network_regenerate_password", "");
-    leptos_axum::redirect("/guest");
+    leptos_axum::redirect("/guest?msg=Password%20regenerated");
     Ok(())
 }
 
@@ -1048,7 +1048,7 @@ pub async fn totp_setup() -> Result<String, ServerFnError> {
 pub async fn totp_enable(code: String) -> Result<(), ServerFnError> {
     crate::client::totp_enable(&code)
         .map_err(friendly_error)?;
-    leptos_axum::redirect("/settings#security");
+    leptos_axum::redirect("/settings?msg=2FA%20enabled#security");
     Ok(())
 }
 
@@ -1056,7 +1056,7 @@ pub async fn totp_enable(code: String) -> Result<(), ServerFnError> {
 pub async fn totp_disable(password: String) -> Result<(), ServerFnError> {
     crate::client::totp_disable(&password)
         .map_err(friendly_error)?;
-    leptos_axum::redirect("/settings#security");
+    leptos_axum::redirect("/settings?msg=2FA%20disabled#security");
     Ok(())
 }
 
