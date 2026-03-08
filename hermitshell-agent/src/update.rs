@@ -212,6 +212,11 @@ pub async fn apply_update(db: &std::sync::Arc<std::sync::Mutex<crate::db::Db>>) 
         if path.is_absolute() || path.components().any(|c| c == std::path::Component::ParentDir) {
             anyhow::bail!("tarball contains unsafe path: {}", path.display());
         }
+        let entry_type = entry.header().entry_type();
+        if entry_type == tar::EntryType::Symlink || entry_type == tar::EntryType::Link {
+            warn!(path = %path.display(), "skipping symlink/hardlink in tarball");
+            continue;
+        }
         entry.unpack_in(staging)?;
     }
 
