@@ -37,7 +37,9 @@ sudo systemctl enable --now hermitshell-agent hermitshell-ui
 
 ```bash
 docker run -d --name hermitshell \
-  --privileged --network host \
+  --cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_MODULE \
+  --device /dev/net/tun --security-opt no-new-privileges \
+  --network host \
   -e WAN_IFACE=eth0 -e LAN_IFACE=eth1 \
   -v /var/lib/hermitshell:/var/lib/hermitshell \
   -v /run/hermitshell:/run/hermitshell \

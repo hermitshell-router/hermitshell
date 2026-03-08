@@ -104,7 +104,7 @@ HermitShell runs Unbound as its DNS resolver on port 5354, with nftables redirec
 
 ## Docker container won't start
 
-The all-in-one container needs `--privileged` and `--network host` because it manages nftables, WireGuard, and DHCP directly on the host.
+The all-in-one container requires specific Linux capabilities (NET_ADMIN, NET_RAW, SYS_MODULE) and `--network host` because it manages nftables, WireGuard, and DHCP directly on the host.
 
 Required volume mounts:
 - `/var/lib/hermitshell:/var/lib/hermitshell` — database and config (must persist)

@@ -204,17 +204,13 @@ This document tracks security compromises made during implementation, why they w
 
 ## Multi-Mode Deployment
 
-## 50. Docker all-in-one container runs with --privileged
+## 50. Docker all-in-one container capabilities (RESOLVED)
 
-**What:** The `hermitshell-aio` container runs with `--privileged`, giving it full access to the host kernel's capabilities, devices, and syscalls. All processes inside (agent, DHCP, blocky, web UI) run as root.
+**What:** The `hermitshell-aio` container previously ran with `--privileged`, giving it full access to the host kernel's capabilities, devices, and syscalls.
 
-**Why:** The agent needs to manage nftables rules, create/configure network interfaces (WireGuard wg0, IFB ifb0), load kernel modules (ifb, wireguard), run `ip`, `tc`, and `conntrack`, and bind to raw sockets for DHCP. These operations require `CAP_NET_ADMIN`, `CAP_NET_RAW`, `CAP_SYS_MODULE`, and access to `/dev/net/tun`. The `--privileged` flag was the expedient choice to grant all of these at once.
+**Resolution:** Replaced `--privileged` with the minimum required capabilities: `--cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_MODULE --device /dev/net/tun --security-opt no-new-privileges`. The container now runs with only the capabilities needed to manage nftables rules, create/configure network interfaces (WireGuard wg0, IFB ifb0), load kernel modules (ifb, wireguard), and bind to raw sockets for DHCP. Seccomp, AppArmor, and SELinux confinement remain active.
 
-**Risk:** A compromised process inside the container (e.g., via a web UI vulnerability) has unrestricted root access to the host. With `--network host`, this means full control over the host's network stack, filesystem (via `/proc`, `/sys`), and all devices. The `--privileged` flag also disables all seccomp, AppArmor, and SELinux confinement.
-
-**Mitigating factor:** The standalone web UI container (`hermitshell/Dockerfile`) still runs non-privileged with `--read-only --cap-drop ALL --security-opt no-new-privileges`. Only the all-in-one container requires `--privileged`. The all-in-one mode is primarily for testing and simple deployments; production-grade deployments should use install mode (systemd units with hardening directives).
-
-**Proper fix:** Replace `--privileged` with the minimum required capabilities: `--cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_MODULE --device /dev/net/tun`. Add `--security-opt no-new-privileges` and `--read-only` (with tmpfs mounts for writable paths). Run the web UI process as a non-root user inside the container using s6's `s6-setuidgid`. Keep only the agent and DHCP server as root.
+**Residual risk:** The container still runs with `--network host` (required for direct network stack management) and processes run as root inside the container. Production deployments should prefer install mode (systemd units with hardening directives).
 
 ## 51. ACME account key stored in SQLite config
 

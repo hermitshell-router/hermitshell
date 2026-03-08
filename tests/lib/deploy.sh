@@ -118,7 +118,8 @@ deploy_start() {
             vm_sudo router "docker load -i /opt/hermitshell/hermitshell-aio.tar"
             vm_sudo router "docker run -d \
                 --name hermitshell-aio \
-                --privileged \
+                --cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_MODULE \
+                --device /dev/net/tun --security-opt no-new-privileges \
                 --network host \
                 -e WAN_IFACE=eth1 \
                 -e LAN_IFACE=eth2 \

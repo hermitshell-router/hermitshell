@@ -49,7 +49,9 @@ The all-in-one Docker image is Alpine-based and includes the agent, DHCP server,
 
 ```bash
 docker run -d --name hermitshell \
-  --privileged --network host \
+  --cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_MODULE \
+  --device /dev/net/tun --security-opt no-new-privileges \
+  --network host \
   --restart unless-stopped \
   -e WAN_IFACE=eth0 \
   -e LAN_IFACE=eth1 \
@@ -60,7 +62,7 @@ docker run -d --name hermitshell \
 
 Replace `eth0` and `eth1` with your actual interface names.
 
-The container requires `--privileged` and `--network host` because it manages nftables rules, WireGuard interfaces, and DHCP directly on the host network stack.
+The container requires specific Linux capabilities (NET_ADMIN, NET_RAW, SYS_MODULE) and `--network host` for managing nftables rules, WireGuard interfaces, and DHCP directly on the host network stack.
 
 **Upgrades:** `docker pull ghcr.io/hermitshell/hermitshell:latest` and recreate the container. Data persists in `/var/lib/hermitshell`.
 

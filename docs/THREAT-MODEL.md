@@ -149,7 +149,7 @@ Query logs from Unbound reveal browsing activity for every device on the network
 - Non-root user (UID 1000)
 - `--network host` (no network namespace isolation — required for LAN-facing HTTPS)
 
-**All-in-one mode:** `--privileged` — effectively no container isolation (SECURITY.md #50). Intended for testing only.
+**All-in-one mode:** Runs with minimal capabilities (`NET_ADMIN`, `NET_RAW`, `SYS_MODULE`) and `--security-opt no-new-privileges` (SECURITY.md #50).
 
 **Residual risk:** `--network host` means the container shares the host's network stack. The `/run/hermitshell` directory mount exposes all files in that directory (#9).
 
@@ -306,7 +306,7 @@ The following risks are documented in SECURITY.md and explicitly accepted as par
 | 33 | Plaintext password over Unix socket | Local-only; root can read DB directly; better than exposing hash |
 | 40 | Sessions cannot be individually revoked | Single admin; full revocation via secret rotation; 8-hour max lifetime |
 | 41 | Rate limit state in-memory only | Root access to restart agent is already game over |
-| 50 | All-in-one Docker container runs `--privileged` | Testing/simple deployments only; production uses systemd with hardening |
+| 50 | All-in-one Docker container capabilities | Resolved: uses minimal caps (NET_ADMIN, NET_RAW, SYS_MODULE) + no-new-privileges |
 | 60 | Setup wizard endpoints unauthenticated | First-boot only; router physically controlled during initial setup |
 | 72 | HKDF with no salt for WiFi password encryption | Input is 32 bytes of OS entropy; theoretical risk only |
 | 73 | mDNS unicast-only response (RFC deviation) | Intentional privacy decision to prevent cross-group metadata leakage |
