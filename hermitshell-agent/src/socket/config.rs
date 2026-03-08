@@ -943,6 +943,7 @@ pub fn apply_hermit_config(
     // --- Write config to DB (inside a transaction for atomicity) ---
     db_guard.begin_transaction().map_err(|e| format!("begin transaction: {}", e))?;
 
+    let mut peer_subnets: Vec<(String, String, String)> = Vec::new();
     let db_write_result: Result<(), String> = (|| {
         // Network config
         if let Some(ref iface) = config.network.wan_interface {
@@ -1033,14 +1034,9 @@ pub fn apply_hermit_config(
                 if !peer.enabled {
                     db_guard.set_wg_peer_enabled(&peer.public_key, false).map_err(|e| format!("set wg peer enabled: {e}"))?;
                 }
-                // Set up nftables rules for the peer's subnet
+                // Collect subnet data for nftables rules (applied after commit)
                 if let Some(info) = subnet::compute_subnet(subnet_id, dev_base, dev_max) {
-                    let ipv4 = info.device_ipv4.to_string();
-                    let ipv6 = info.device_ipv6_ula.to_string();
-                    let _ = nftables::add_device_counter(&ipv4);
-                    let _ = nftables::add_device_counter_v6(&ipv6);
-                    let _ = nftables::add_device_forward_rule(&ipv4, &peer.device_group);
-                    let _ = nftables::add_device_forward_rule_v6(&ipv6, &peer.device_group);
+                    peer_subnets.push((info.device_ipv4.to_string(), info.device_ipv6_ula.to_string(), peer.device_group.clone()));
                 }
             }
         }
@@ -1155,6 +1151,14 @@ pub fn apply_hermit_config(
     drop(db_guard);
 
     // --- Full reconciliation ---
+
+    // 0. WireGuard peer nftables rules (collected during DB writes, applied after commit)
+    for (ipv4, ipv6, group) in &peer_subnets {
+        let _ = nftables::add_device_counter(ipv4);
+        let _ = nftables::add_device_counter_v6(ipv6);
+        let _ = nftables::add_device_forward_rule(ipv4, group);
+        let _ = nftables::add_device_forward_rule_v6(ipv6, group);
+    }
 
     // 1. Port forwards + DMZ (existing)
     portmap.reapply_rules();

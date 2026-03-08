@@ -56,11 +56,12 @@ impl UnboundManager {
         std::fs::create_dir_all(paths::unbound_dir())?;
         std::fs::create_dir_all(paths::blocklist_dir())?;
 
-        // Ensure unbound data directory is accessible to the unbound user
+        // Ensure unbound data directories are accessible to the unbound user
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(paths::unbound_dir(), std::fs::Permissions::from_mode(0o755));
+            let _ = std::fs::set_permissions(paths::blocklist_dir(), std::fs::Permissions::from_mode(0o755));
         }
 
         let cfg = self.generate_config_string(db)?;
@@ -431,7 +432,7 @@ impl UnboundManager {
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
-                        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640));
+                        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644));
                     }
                     info!(
                         id = bl.id,
