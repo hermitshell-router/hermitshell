@@ -92,13 +92,13 @@ pub fn Wireguard() -> impl IntoView {
                                                                     </ActionForm>
                                                                     <ErrorToast value=group_action.value() />
                                                                     <button type="button" class="btn btn-danger btn-sm"
-                                                                        onclick="this.nextElementSibling.showModal()">"Remove"</button>
+                                                                        data-dialog-open="">"Remove"</button>
                                                                     <dialog class="confirm-dialog" aria-labelledby={dialog_id.clone()}>
                                                                         <h3 id={dialog_id.clone()}>"Remove Peer?"</h3>
                                                                         <p>{format!("\"{}\" will lose VPN access.", peer.name)}</p>
                                                                         <div class="dialog-actions">
                                                                             <button type="button" class="btn btn-sm"
-                                                                                onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                                data-dialog-close="">"Cancel"</button>
                                                                             <ActionForm action=remove_action attr:class="inline-form">
                                                                                 <input type="hidden" name="public_key" value={pk2} />
                                                                                 <button type="submit" class="btn btn-danger btn-sm">"Confirm Remove"</button>

@@ -12,12 +12,17 @@ use hermitshell_ui::App;
 use hermitshell_ui::client;
 
 const STYLE_CSS: &str = include_str!("../../hermitshell-ui/style/style.css");
+const APP_JS: &str = include_str!("../../hermitshell-ui/static/app.js");
 const FONT_BITTER: &[u8] = include_bytes!("../../hermitshell-ui/style/fonts/bitter-variable.woff2");
 const FONT_IBM_PLEX_MONO_REGULAR: &[u8] = include_bytes!("../../hermitshell-ui/style/fonts/ibm-plex-mono-regular.woff2");
 const FONT_IBM_PLEX_MONO_BOLD: &[u8] = include_bytes!("../../hermitshell-ui/style/fonts/ibm-plex-mono-bold.woff2");
 
 async fn serve_css() -> impl IntoResponse {
     ([("content-type", "text/css")], STYLE_CSS)
+}
+
+async fn serve_js() -> impl IntoResponse {
+    ([("content-type", "application/javascript")], APP_JS)
 }
 
 async fn serve_font(font: &'static [u8]) -> impl IntoResponse {
@@ -215,7 +220,7 @@ async fn auth_middleware(
     let path = req.uri().path().to_string();
 
     // Always allow: login page, CSS
-    if path == "/login" || path == "/style.css" || path.starts_with("/fonts/") || path.starts_with("/api/login") {
+    if path == "/login" || path == "/style.css" || path.starts_with("/fonts/") || path.starts_with("/static/") || path.starts_with("/api/login") {
         return next.run(req).await;
     }
 
@@ -356,6 +361,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/style.css", axum::routing::get(serve_css))
+        .route("/static/app.js", axum::routing::get(serve_js))
         .route("/fonts/bitter-variable.woff2", axum::routing::get(|| async { serve_font(FONT_BITTER).await }))
         .route("/fonts/ibm-plex-mono-regular.woff2", axum::routing::get(|| async { serve_font(FONT_IBM_PLEX_MONO_REGULAR).await }))
         .route("/fonts/ibm-plex-mono-bold.woff2", axum::routing::get(|| async { serve_font(FONT_IBM_PLEX_MONO_BOLD).await }))

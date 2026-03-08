@@ -74,13 +74,13 @@ pub fn Wifi() -> impl IntoView {
                                                             <a href={format!("/wifi?provider={}", id)} class="btn btn-sm">"Manage SSIDs"</a>
                                                             " "
                                                             <button type="button" class="btn btn-sm btn-danger"
-                                                                onclick="this.nextElementSibling.showModal()">"Remove"</button>
+                                                                data-dialog-open="">"Remove"</button>
                                                             <dialog class="confirm-dialog" aria-labelledby={prov_dialog_id.clone()}>
                                                                 <h3 id={prov_dialog_id.clone()}>"Remove WiFi Provider?"</h3>
                                                                 <p>{format!("\"{}\" will be permanently removed.", p.name)}</p>
                                                                 <div class="dialog-actions">
                                                                     <button type="button" class="btn btn-sm"
-                                                                        onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                        data-dialog-close="">"Cancel"</button>
                                                                     <ActionForm action=remove_provider_action attr:class="inline-form">
                                                                         <input type="hidden" name="id" value={id2} />
                                                                         <button type="submit" class="btn btn-sm btn-danger">"Confirm Remove"</button>
@@ -374,13 +374,13 @@ fn ProviderDetail(
                                                     <td>{if s.enabled { "Yes" } else { "No" }}</td>
                                                     <td>
                                                         <button type="button" class="btn btn-sm btn-danger"
-                                                            onclick="this.nextElementSibling.showModal()">"Delete"</button>
+                                                            data-dialog-open="">"Delete"</button>
                                                         <dialog class="confirm-dialog" aria-labelledby={ssid_dialog_id.clone()}>
                                                             <h3 id={ssid_dialog_id.clone()}>"Delete SSID?"</h3>
                                                             <p>{ssid_msg}</p>
                                                             <div class="dialog-actions">
                                                                 <button type="button" class="btn btn-sm"
-                                                                    onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                    data-dialog-close="">"Cancel"</button>
                                                                 <ActionForm action=delete_ssid_action attr:class="inline-form">
                                                                     <input type="hidden" name="provider_id" value={pid_del} />
                                                                     <input type="hidden" name="ssid_name" value={ssid_hidden} />

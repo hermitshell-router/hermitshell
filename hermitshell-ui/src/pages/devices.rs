@@ -122,13 +122,13 @@ pub fn DeviceList() -> impl IntoView {
                                                                 view! {
                                                                     <button type="button"
                                                                         class="btn btn-danger btn-sm"
-                                                                        onclick="this.nextElementSibling.showModal()">"Block"</button>
+                                                                        data-dialog-open="">"Block"</button>
                                                                     <dialog class="confirm-dialog" aria-labelledby="confirm-block-device">
                                                                         <h3 id="confirm-block-device">"Block Device?"</h3>
                                                                         <p>"This device will lose all network access."</p>
                                                                         <div class="dialog-actions">
                                                                             <button type="button" class="btn btn-sm"
-                                                                                onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                                data-dialog-close="">"Cancel"</button>
                                                                             <ActionForm action=block_action>
                                                                                 <input type="hidden" name="mac" value={mac.clone()} />
                                                                                 <button type="submit" class="btn btn-danger btn-sm">"Confirm Block"</button>

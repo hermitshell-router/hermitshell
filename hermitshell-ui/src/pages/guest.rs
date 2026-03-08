@@ -165,13 +165,13 @@ fn render_enabled(status: serde_json::Value) -> AnyView {
                         <button type="submit" class="btn btn-warning btn-sm">"Regenerate Password"</button>
                     </ActionForm>
                     <button type="button" class="btn btn-danger btn-sm"
-                        onclick="this.nextElementSibling.showModal()">"Disable Guest Network"</button>
+                        data-dialog-open="">"Disable Guest Network"</button>
                     <dialog class="confirm-dialog" aria-labelledby="confirm-disable-guest">
                         <h3 id="confirm-disable-guest">"Disable Guest Network?"</h3>
                         <p>"All guests will be disconnected and the guest SSID will be removed."</p>
                         <div class="dialog-actions">
                             <button type="button" class="btn btn-sm"
-                                onclick="this.closest('dialog').close()">"Cancel"</button>
+                                data-dialog-close="">"Cancel"</button>
                             <ActionForm action=disable_action attr:class="inline-form">
                                 <button type="submit" class="btn btn-danger btn-sm">"Confirm Disable"</button>
                             </ActionForm>

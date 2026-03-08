@@ -299,13 +299,13 @@ pub fn Settings() -> impl IntoView {
                                                         <td>{r.subnet_id}</td>
                                                         <td>
                                                             <button type="button" class="btn btn-danger btn-sm"
-                                                                onclick="this.nextElementSibling.showModal()">"Remove"</button>
+                                                                data-dialog-open="">"Remove"</button>
                                                             <dialog class="confirm-dialog" aria-labelledby={dialog_id.clone()}>
                                                                 <h3 id={dialog_id.clone()}>"Remove Reservation?"</h3>
                                                                 <p>{format!("Reservation for {} will be removed.", r.mac)}</p>
                                                                 <div class="dialog-actions">
                                                                     <button type="button" class="btn btn-sm"
-                                                                        onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                        data-dialog-close="">"Cancel"</button>
                                                                     <ActionForm action=remove_action attr:class="inline-form">
                                                                         <input type="hidden" name="mac" value={mac} />
                                                                         <button type="submit" class="btn btn-danger btn-sm">"Confirm Remove"</button>
@@ -393,13 +393,13 @@ pub fn Settings() -> impl IntoView {
                                                     </td>
                                                     <td>
                                                         <button type="button" class="btn btn-danger btn-sm"
-                                                            onclick="this.nextElementSibling.showModal()">"Remove"</button>
+                                                            data-dialog-open="">"Remove"</button>
                                                         <dialog class="confirm-dialog" aria-labelledby={dialog_id.clone()}>
                                                             <h3 id={dialog_id.clone()}>"Remove Port Forward?"</h3>
                                                             <p>"This port forward rule will be permanently removed."</p>
                                                             <div class="dialog-actions">
                                                                 <button type="button" class="btn btn-sm"
-                                                                    onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                    data-dialog-close="">"Cancel"</button>
                                                                 <ActionForm action=remove_action attr:class="inline-form">
                                                                     <input type="hidden" name="id" value={id.to_string()} />
                                                                     <button type="submit" class="btn btn-danger btn-sm">"Confirm Remove"</button>
@@ -513,13 +513,13 @@ pub fn Settings() -> impl IntoView {
                                                             <td>{description}</td>
                                                             <td>
                                                                 <button type="button" class="btn btn-danger btn-sm"
-                                                                    onclick="this.nextElementSibling.showModal()">"Remove"</button>
+                                                                    data-dialog-open="">"Remove"</button>
                                                                 <dialog class="confirm-dialog" aria-labelledby={dialog_id.clone()}>
                                                                     <h3 id={dialog_id.clone()}>"Remove Pinhole?"</h3>
                                                                     <p>"This IPv6 pinhole will be permanently removed."</p>
                                                                     <div class="dialog-actions">
                                                                         <button type="button" class="btn btn-sm"
-                                                                            onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                            data-dialog-close="">"Cancel"</button>
                                                                         <ActionForm action=remove_action attr:class="inline-form">
                                                                             <input type="hidden" name="id" value={id.to_string()} />
                                                                             <button type="submit" class="btn btn-danger btn-sm">"Confirm Remove"</button>
@@ -719,13 +719,13 @@ pub fn Settings() -> impl IntoView {
                                                                             <button type="submit" class="btn btn-sm">"Test"</button>
                                                                         </ActionForm>
                                                                         <button type="button" class="btn btn-danger btn-sm"
-                                                                            onclick="this.nextElementSibling.showModal()">"Remove"</button>
+                                                                            data-dialog-open="">"Remove"</button>
                                                                         <dialog class="confirm-dialog" aria-labelledby={dialog_id.clone()}>
                                                                             <h3 id={dialog_id.clone()}>"Remove Switch?"</h3>
                                                                             <p>{format!("\"{}\" will be permanently removed.", sw.name)}</p>
                                                                             <div class="dialog-actions">
                                                                                 <button type="button" class="btn btn-sm"
-                                                                                    onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                                    data-dialog-close="">"Cancel"</button>
                                                                                 <ActionForm action=remove_action attr:class="inline-form">
                                                                                     <input type="hidden" name="name" value={name_for_remove} />
                                                                                     <button type="submit" class="btn btn-danger btn-sm">"Confirm Remove"</button>
@@ -1068,26 +1068,18 @@ pub fn Settings() -> impl IntoView {
                                         <h4 class="mb-sm">"Download Backup"</h4>
                                         <form method="post" action="/api/backup/config" class="flex-row-wrap">
                                             <label class="backup-label">
-                                                <input type="checkbox" name="secrets" value="1" id="backup-secrets-cb" />
+                                                <input type="checkbox" name="secrets" value="1" id="backup-secrets-cb" data-toggle-visibility="#backup-passphrase-row" />
                                                 " Include secrets"
                                             </label>
                                             <div id="backup-passphrase-row" style="display:none;align-items:center;gap:0.25rem">
                                                 <label class="backup-label">
-                                                    <input type="checkbox" id="backup-encrypt-cb" />
+                                                    <input type="checkbox" id="backup-encrypt-cb" data-toggle-disabled="#backup-passphrase-row" />
                                                     " Encrypt"
                                                 </label>
                                                 <input type="password" name="passphrase" placeholder="Passphrase" class="input-md" disabled />
                                             </div>
                                             <button type="submit" class="btn btn-primary btn-sm">"Download"</button>
                                         </form>
-                                        <script>"
-                                            document.getElementById('backup-secrets-cb').addEventListener('change', function() {
-                                                document.getElementById('backup-passphrase-row').style.display = this.checked ? 'flex' : 'none';
-                                            });
-                                            document.getElementById('backup-encrypt-cb').addEventListener('change', function() {
-                                                this.closest('#backup-passphrase-row').querySelector('input[type=password]').disabled = !this.checked;
-                                            });
-                                        "</script>
                                     </div>
                                     <div>
                                         <h4 class="mb-sm">"Restore from Backup"</h4>
@@ -1095,13 +1087,13 @@ pub fn Settings() -> impl IntoView {
                                             <input type="file" name="file" accept=".json" required />
                                             <input type="password" name="passphrase" placeholder="Passphrase (if encrypted)" class="input-md" />
                                             <button type="button" class="btn btn-primary btn-sm"
-                                                onclick="this.nextElementSibling.showModal()">"Restore"</button>
+                                                data-dialog-open="">"Restore"</button>
                                             <dialog class="confirm-dialog" aria-labelledby="confirm-restore">
                                                 <h3 id="confirm-restore">"Restore Configuration?"</h3>
                                                 <p>"This will replace your current router configuration. This cannot be undone."</p>
                                                 <div class="dialog-actions">
                                                     <button type="button" class="btn btn-sm"
-                                                        onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                        data-dialog-close="">"Cancel"</button>
                                                     <button type="submit" class="btn btn-danger btn-sm">"Confirm Restore"</button>
                                                 </div>
                                             </dialog>

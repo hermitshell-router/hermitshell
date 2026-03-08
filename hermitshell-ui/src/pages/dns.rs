@@ -172,13 +172,13 @@ pub fn Dns() -> impl IntoView {
                                                             </td>
                                                             <td>
                                                                 <button type="button" class="btn btn-danger btn-sm"
-                                                                    onclick="this.nextElementSibling.showModal()">"Remove"</button>
+                                                                    data-dialog-open="">"Remove"</button>
                                                                 <dialog class="confirm-dialog" aria-labelledby={format!("confirm-rm-bl-{}", id)}>
                                                                     <h3 id={format!("confirm-rm-bl-{}", id)}>"Remove Blocklist?"</h3>
                                                                     <p>{format!("\"{}\" will be permanently removed.", bl.name)}</p>
                                                                     <div class="dialog-actions">
                                                                         <button type="button" class="btn btn-sm"
-                                                                            onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                            data-dialog-close="">"Cancel"</button>
                                                                         <ActionForm action=remove_action attr:class="inline-form">
                                                                             <input type="hidden" name="id" value={id.to_string()} />
                                                                             <button type="submit" class="btn btn-danger btn-sm">"Confirm Remove"</button>
@@ -262,13 +262,13 @@ pub fn Dns() -> impl IntoView {
                                                             </td>
                                                             <td>
                                                                 <button type="button" class="btn btn-danger btn-sm"
-                                                                    onclick="this.nextElementSibling.showModal()">"Remove"</button>
+                                                                    data-dialog-open="">"Remove"</button>
                                                                 <dialog class="confirm-dialog" aria-labelledby={format!("confirm-rm-fz-{}", id)}>
                                                                     <h3 id={format!("confirm-rm-fz-{}", id)}>"Remove Forward Zone?"</h3>
                                                                     <p>{format!("\"{}\" will be permanently removed.", fz.domain)}</p>
                                                                     <div class="dialog-actions">
                                                                         <button type="button" class="btn btn-sm"
-                                                                            onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                            data-dialog-close="">"Cancel"</button>
                                                                         <ActionForm action=remove_action attr:class="inline-form">
                                                                             <input type="hidden" name="id" value={id.to_string()} />
                                                                             <button type="submit" class="btn btn-danger btn-sm">"Confirm Remove"</button>
@@ -348,13 +348,13 @@ pub fn Dns() -> impl IntoView {
                                                             </td>
                                                             <td>
                                                                 <button type="button" class="btn btn-danger btn-sm"
-                                                                    onclick="this.nextElementSibling.showModal()">"Remove"</button>
+                                                                    data-dialog-open="">"Remove"</button>
                                                                 <dialog class="confirm-dialog" aria-labelledby={format!("confirm-rm-rule-{}", id)}>
                                                                     <h3 id={format!("confirm-rm-rule-{}", id)}>"Remove DNS Rule?"</h3>
                                                                     <p>{format!("\"{}\" will be permanently removed.", rule.domain)}</p>
                                                                     <div class="dialog-actions">
                                                                         <button type="button" class="btn btn-sm"
-                                                                            onclick="this.closest('dialog').close()">"Cancel"</button>
+                                                                            data-dialog-close="">"Cancel"</button>
                                                                         <ActionForm action=remove_action attr:class="inline-form">
                                                                             <input type="hidden" name="id" value={id.to_string()} />
                                                                             <button type="submit" class="btn btn-danger btn-sm">"Confirm Remove"</button>

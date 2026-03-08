@@ -1,5 +1,4 @@
 use leptos::prelude::*;
-use leptos::nonce::use_nonce;
 use crate::client;
 use crate::components::layout::CspMeta;
 use crate::components::toast::ErrorToast;
@@ -38,20 +37,7 @@ fn SetupLayout(
                     <h1>{title}</h1>
                     {children()}
                 </div>
-                {use_nonce().map(|nonce| view! {
-                    <script nonce={nonce.to_string()}>"
-                        document.addEventListener('submit', function(e) {
-                            var form = e.target;
-                            if (form.tagName !== 'FORM') return;
-                            var btns = form.querySelectorAll('button[type=submit]');
-                            btns.forEach(function(btn) {
-                                btn.disabled = true;
-                                btn.style.opacity = '0.6';
-                                btn.style.cursor = 'wait';
-                            });
-                        });
-                    "</script>
-                })}
+                <script src="/static/app.js"></script>
             </body>
         </html>
     }

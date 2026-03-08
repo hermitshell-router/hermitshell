@@ -8,7 +8,7 @@ use crate::server_fns::Logout;
 pub fn CspMeta() -> impl IntoView {
     let csp = use_nonce().map(|nonce| {
         format!(
-            "default-src 'self'; script-src 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'"
+            "default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'"
         )
     });
     view! {
@@ -93,20 +93,7 @@ pub fn Layout(
                     </main>
                 </div>
                 <SuccessToast />
-                {use_nonce().map(|nonce| view! {
-                    <script nonce={nonce.to_string()}>"
-                        document.addEventListener('submit', function(e) {
-                            var form = e.target;
-                            if (form.tagName !== 'FORM') return;
-                            var btns = form.querySelectorAll('button[type=submit]');
-                            btns.forEach(function(btn) {
-                                btn.disabled = true;
-                                btn.style.opacity = '0.6';
-                                btn.style.cursor = 'wait';
-                            });
-                        });
-                    "</script>
-                })}
+                <script src="/static/app.js"></script>
             </body>
         </html>
     }
