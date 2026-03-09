@@ -1166,14 +1166,18 @@ pub fn apply_hermit_config(
         db_guard.get_config_bool("wg_enabled", false)
     };
     if wg_enabled {
-        let new_peer_keys: std::collections::HashSet<&str> = config.wireguard.peers.iter()
-            .map(|p| p.public_key.as_str())
+        // Build lookup maps for old and new peer sets
+        let old_peer_map: std::collections::HashMap<&str, &crate::db::WgPeer> = old_wg_peers.iter()
+            .map(|p| (p.public_key.as_str(), p))
+            .collect();
+        let new_peer_map: std::collections::HashMap<&str, &hermitshell_common::WgPeerConfig> = config.wireguard.peers.iter()
+            .map(|p| (p.public_key.as_str(), p))
             .collect();
         let (dev_base, dev_max) = nftables::device_range();
 
         // Remove peers no longer in config from wg0
         for old_peer in &old_wg_peers {
-            if !new_peer_keys.contains(old_peer.public_key.as_str())
+            if !new_peer_map.contains_key(old_peer.public_key.as_str())
                 && let Some(info) = subnet::compute_subnet(old_peer.subnet_id, dev_base, dev_max)
             {
                 let ipv4 = info.device_ipv4.to_string();
@@ -1184,15 +1188,31 @@ pub fn apply_hermit_config(
             }
         }
 
-        // Add new peers to wg0 (peers in config but not in old set)
-        let old_peer_keys: std::collections::HashSet<&str> = old_wg_peers.iter()
-            .map(|p| p.public_key.as_str())
-            .collect();
+        // Add new peers to wg0
         for peer in &config.wireguard.peers {
-            if peer.enabled && !old_peer_keys.contains(peer.public_key.as_str())
+            if !peer.enabled {
+                continue;
+            }
+            if !old_peer_map.contains_key(peer.public_key.as_str())
                 && let Some((ipv4, ipv6, _)) = peer_subnets.get(&peer.public_key)
             {
                 let _ = crate::wireguard::add_peer(&peer.public_key, ipv4, ipv6);
+            }
+        }
+
+        // Reconcile group changes for peers in both old and new sets.
+        // The post-commit nftables loop (section 0) already added the new group's
+        // forward rule using the new subnet IP, but the old group's rule on the
+        // old subnet IP was never removed.
+        for old_peer in &old_wg_peers {
+            if let Some(new_peer) = new_peer_map.get(old_peer.public_key.as_str())
+                && old_peer.device_group != new_peer.device_group
+                && let Some(info) = subnet::compute_subnet(old_peer.subnet_id, dev_base, dev_max)
+            {
+                let ipv4 = info.device_ipv4.to_string();
+                let ipv6 = info.device_ipv6_ula.to_string();
+                let _ = nftables::remove_device_forward_rule(&ipv4);
+                let _ = nftables::remove_device_forward_rule_v6(&ipv6);
             }
         }
     }
