@@ -38,7 +38,7 @@ pub fn Wifi() -> impl IntoView {
                     {move || providers.get().map(|result| match result {
                         Ok(provs) => {
                             if provs.is_empty() {
-                                view! { <p class="text-muted">"No WiFi providers configured."</p> }.into_any()
+                                view! { <p class="text-muted">"No WiFi providers configured. Add a UniFi or TP-Link EAP access point to manage WiFi."</p> }.into_any()
                             } else {
                                 view! {
                                     <div class="table-scroll">
@@ -144,26 +144,30 @@ pub fn Wifi() -> impl IntoView {
                             <input type="password" id="provider-password" name="password" required />
                         </div>
                     </div>
-                    <p class="text-muted my-sm">"For TP-Link EAP (standalone):"</p>
-                    <div class="form-grid">
-                        <div class="form-group">
-                            <label for="provider-mac">"AP MAC Address"</label>
-                            <input type="text" id="provider-mac" name="mac" placeholder="aa:bb:cc:dd:ee:ff" />
-                        </div>
-                        <div class="form-group">
-                            <label for="provider-url-eap">"AP IP Address"</label>
-                            <input type="text" id="provider-url-eap" name="url" placeholder="192.168.1.100" />
+                    <div class="provider-field-eap" data-provider-type="eap_standalone">
+                        <p class="text-muted my-sm">"For TP-Link EAP (standalone):"</p>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="provider-mac">"AP MAC Address"</label>
+                                <input type="text" id="provider-mac" name="mac" placeholder="aa:bb:cc:dd:ee:ff" />
+                            </div>
+                            <div class="form-group">
+                                <label for="provider-url-eap">"AP IP Address"</label>
+                                <input type="text" id="provider-url-eap" name="url" placeholder="192.168.1.100" />
+                            </div>
                         </div>
                     </div>
-                    <p class="text-muted my-sm">"For UniFi Controller:"</p>
-                    <div class="form-grid">
-                        <div class="form-group">
-                            <label for="provider-site">"Site"</label>
-                            <input type="text" id="provider-site" name="site" placeholder="default" />
-                        </div>
-                        <div class="form-group">
-                            <label for="provider-api-key">"API Key (optional)"</label>
-                            <input type="text" id="provider-api-key" name="api_key" placeholder="(optional)" />
+                    <div class="provider-field-unifi provider-field-hidden" data-provider-type="unifi">
+                        <p class="text-muted my-sm">"For UniFi Controller:"</p>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="provider-site">"Site"</label>
+                                <input type="text" id="provider-site" name="site" placeholder="default" />
+                            </div>
+                            <div class="form-group">
+                                <label for="provider-api-key">"API Key (optional)"</label>
+                                <input type="text" id="provider-api-key" name="api_key" placeholder="(optional)" />
+                            </div>
                         </div>
                     </div>
                     <button type="submit" class="btn">"Add Provider"</button>
@@ -180,7 +184,7 @@ pub fn Wifi() -> impl IntoView {
                         aps.get().map(|result| match result {
                         Ok(aps) => {
                             if aps.is_empty() {
-                                view! { <p class="text-muted">"No access points discovered."</p> }.into_any()
+                                view! { <p class="text-muted">"No access points discovered. Check that the provider URL is reachable."</p> }.into_any()
                             } else {
                                 view! {
                                     <div class="table-scroll">
@@ -341,7 +345,7 @@ fn ProviderDetail(
                     Ok(ssids) => {
                         let ssids = ssids.clone();
                         if ssids.is_empty() {
-                            view! { <p class="text-muted">"No SSIDs configured."</p> }.into_any()
+                            view! { <p class="text-muted">"No SSIDs configured on this provider."</p> }.into_any()
                         } else {
                             view! {
                                 <div class="table-scroll">

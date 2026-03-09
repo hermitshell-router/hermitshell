@@ -41,3 +41,21 @@ document.addEventListener('change', function(e) {
         }
     }
 });
+
+// WiFi provider type toggle: show/hide fields based on selected provider type
+function updateProviderFields(select) {
+    var val = select.value;
+    var fields = select.closest('form').querySelectorAll('[data-provider-type]');
+    fields.forEach(function(f) {
+        if (f.dataset.providerType === val) {
+            f.classList.remove('provider-field-hidden');
+        } else {
+            f.classList.add('provider-field-hidden');
+        }
+    });
+}
+var providerSelect = document.getElementById('provider-type');
+if (providerSelect) {
+    providerSelect.addEventListener('change', function() { updateProviderFields(this); });
+    updateProviderFields(providerSelect);
+}

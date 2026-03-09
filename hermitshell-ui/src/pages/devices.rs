@@ -22,16 +22,41 @@ pub fn DeviceList() -> impl IntoView {
             <Suspense fallback=move || view! { <p>"Loading..."</p> }>
                 {move || {
                     let filter = query.with(|q| q.get("group").unwrap_or_else(|| "all".to_string()));
+                    let search = query.with(|q| q.get("search").unwrap_or_default());
+                    let search_lower = search.to_lowercase();
 
                     data.get().map(|result| match result {
                         Ok(devices) => {
-                            let filtered: Vec<_> = if filter == "all" {
+                            let mut filtered: Vec<_> = if filter == "all" {
                                 devices.clone()
                             } else {
                                 devices.into_iter().filter(|d| d.device_group == filter).collect()
                             };
 
+                            if !search_lower.is_empty() {
+                                filtered.retain(|d| {
+                                    d.nickname.as_deref().unwrap_or("").to_lowercase().contains(&search_lower)
+                                    || d.hostname.as_deref().unwrap_or("").to_lowercase().contains(&search_lower)
+                                    || d.ipv4.as_deref().unwrap_or("").to_lowercase().contains(&search_lower)
+                                    || d.mac.to_lowercase().contains(&search_lower)
+                                });
+                            }
+
+                            let search_val = search.clone();
+                            let filter_for_hidden = filter.clone();
+
                             view! {
+                                <form method="get" action="/devices" class="device-search">
+                                    <input type="text" name="search" placeholder="Search by name, IP, or MAC\u{2026}"
+                                           value={search_val} />
+                                    {if filter_for_hidden != "all" {
+                                        Some(view! { <input type="hidden" name="group" value={filter_for_hidden} /> })
+                                    } else {
+                                        None
+                                    }}
+                                    <button type="submit" class="btn btn-sm">"Search"</button>
+                                </form>
+
                                 <div class="filter-bar">
                                     {GROUPS.iter().map(|g| {
                                         let href = if *g == "all" {

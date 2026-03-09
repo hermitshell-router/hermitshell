@@ -1119,6 +1119,71 @@ tr.row-highlight {
     flex-shrink: 0;
 }
 
+/* --- Settings Sub-Navigation Tabs --- */
+.settings-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px dashed var(--grid-line);
+    margin-bottom: 1.5rem;
+}
+.settings-tabs a {
+    padding: 0.5rem 1rem;
+    text-decoration: none;
+    color: var(--wood);
+    border-bottom: 2px solid transparent;
+    font-size: 0.8125rem;
+    letter-spacing: 0.02em;
+    transition: color 0.15s, border-color 0.15s;
+}
+.settings-tabs a.active {
+    color: var(--canopy);
+    border-bottom-color: var(--canopy);
+    font-weight: 600;
+}
+.settings-tabs a:hover {
+    color: var(--leaf);
+}
+
+/* --- Collapsible Settings Sections --- */
+details.settings-section > summary {
+    cursor: pointer;
+    list-style: none;
+}
+details.settings-section > summary::-webkit-details-marker {
+    display: none;
+}
+details.settings-section > summary::before {
+    content: '\25B6';
+    display: inline-block;
+    margin-right: 0.5rem;
+    transition: transform 0.15s;
+    font-size: 0.7em;
+}
+details[open].settings-section > summary::before {
+    transform: rotate(90deg);
+}
+
+/* --- WiFi Provider Conditional Fields --- */
+.provider-field-eap,
+.provider-field-unifi {
+    transition: opacity 0.15s;
+}
+.provider-field-hidden {
+    display: none;
+}
+
+/* --- Device Search --- */
+.device-search {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+.device-search input[type="text"] {
+    flex: 1;
+    max-width: 24rem;
+}
+
 /* --- Reduced Motion --- */
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {

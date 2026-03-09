@@ -60,6 +60,7 @@ pub fn DeviceDetail() -> impl IntoView {
                         let mac_for_block_unblock = mac.clone();
                         let mac_for_reserve = mac.clone();
                         let mac_for_alerts = mac.clone();
+                        let mac_for_activity = mac.clone();
 
                         view! {
                             <div class="detail-grid">
@@ -401,135 +402,171 @@ pub fn DeviceDetail() -> impl IntoView {
                             <ErrorToast value=reserve_action.value() />
                             <ErrorToast value=set_nickname_action.value() />
 
+                            // Activity tabs: Connections | DNS | Alerts
                             {
+                                let activity_query = use_query_map();
+                                let activity_tab = activity_query.with(|q| q.get("activity").unwrap_or_else(|| "connections".to_string()));
+                                let activity_tab = match activity_tab.as_str() {
+                                    "dns" | "alerts" => activity_tab.as_str(),
+                                    _ => "connections",
+                                };
+                                let period_query = activity_query.with(|q| q.get("period").unwrap_or_else(|| "24h".to_string()));
                                 let device_ip = d.ipv4.clone();
+                                let tab_mac = mac_for_activity;
 
-                                let conn_result: Result<Vec<_>, String> = match device_ip.as_ref() {
-                                    Some(ip) => client::list_connection_logs(Some(ip), None, None, None, 50, 0),
-                                    None => Ok(vec![]),
+                                // Fetch counts for tab labels
+                                let conn_count = match device_ip.as_ref() {
+                                    Some(ip) => client::list_connection_logs(Some(ip), None, None, None, 50, 0)
+                                        .map(|v| v.len()).unwrap_or(0),
+                                    None => 0,
+                                };
+                                let dns_count = match device_ip.as_ref() {
+                                    Some(ip) => client::list_dns_logs(Some(ip), None, 50, 0)
+                                        .map(|v| v.len()).unwrap_or(0),
+                                    None => 0,
+                                };
+                                let alerts_count = client::list_alerts(Some(&mac_for_alerts), 50)
+                                    .map(|v| v.len()).unwrap_or(0);
+
+                                let make_tab_href = |tab: &str| {
+                                    let mut href = format!("/devices/{}?activity={}", tab_mac, tab);
+                                    if period_query != "24h" {
+                                        href.push_str(&format!("&period={}", period_query));
+                                    }
+                                    href
                                 };
 
-                                let dns_result: Result<Vec<_>, String> = match device_ip.as_ref() {
-                                    Some(ip) => client::list_dns_logs(Some(ip), None, 50, 0),
-                                    None => Ok(vec![]),
+                                let tab_bar = view! {
+                                    <div class="filter-bar">
+                                        <a href={make_tab_href("connections")}
+                                           class={if activity_tab == "connections" { "active" } else { "" }}>
+                                            {format!("Connections ({})", conn_count)}
+                                        </a>
+                                        <a href={make_tab_href("dns")}
+                                           class={if activity_tab == "dns" { "active" } else { "" }}>
+                                            {format!("DNS ({})", dns_count)}
+                                        </a>
+                                        <a href={make_tab_href("alerts")}
+                                           class={if activity_tab == "alerts" { "active" } else { "" }}>
+                                            {format!("Alerts ({})", alerts_count)}
+                                        </a>
+                                    </div>
                                 };
 
-                                let conn_view = match conn_result {
-                                    Ok(conn_logs) if conn_logs.is_empty() => {
-                                        view! { <p class="muted">"No connections recorded."</p> }.into_any()
+                                let tab_content = match activity_tab {
+                                    "dns" => {
+                                        match device_ip.as_ref() {
+                                            Some(ip) => match client::list_dns_logs(Some(ip), None, 50, 0) {
+                                                Ok(dns_logs) if dns_logs.is_empty() => {
+                                                    view! { <p class="muted">"No DNS queries recorded."</p> }.into_any()
+                                                }
+                                                Ok(dns_logs) => {
+                                                    view! {
+                                                        <div class="table-scroll">
+                                                        <table class="data-table">
+                                                            <thead><tr>
+                                                                <th>"Domain"</th><th>"Type"</th><th>"Time"</th>
+                                                            </tr></thead>
+                                                            <tbody>
+                                                                {dns_logs.iter().map(|log| {
+                                                                    view! {
+                                                                        <tr>
+                                                                            <td>{log.domain.clone()}</td>
+                                                                            <td>{log.query_type.clone()}</td>
+                                                                            <td>{format_timestamp(log.ts)}</td>
+                                                                        </tr>
+                                                                    }
+                                                                }).collect_view()}
+                                                            </tbody>
+                                                        </table>
+                                                        </div>
+                                                    }.into_any()
+                                                }
+                                                Err(e) => view! { <p class="error">{format!("Error loading DNS logs: {e}")}</p> }.into_any(),
+                                            },
+                                            None => view! { <p class="muted">"No IP address assigned."</p> }.into_any(),
+                                        }
                                     }
-                                    Ok(conn_logs) => {
-                                        view! {
-                                            <div class="table-scroll">
-                                            <table class="data-table">
-                                                <thead><tr>
-                                                    <th>"Destination"</th><th>"Port"</th><th>"Protocol"</th>
-                                                    <th>"Sent"</th><th>"Received"</th><th>"Time"</th>
-                                                </tr></thead>
-                                                <tbody>
-                                                    {conn_logs.iter().map(|log| {
-                                                        view! {
-                                                            <tr>
-                                                                <td>{log.dest_ip.clone()}</td>
-                                                                <td>{log.dest_port}</td>
-                                                                <td>{log.protocol.clone()}</td>
-                                                                <td>{format_bytes(log.bytes_sent)}</td>
-                                                                <td>{format_bytes(log.bytes_recv)}</td>
-                                                                <td>{format_timestamp(log.started_at)}</td>
-                                                            </tr>
-                                                        }
-                                                    }).collect_view()}
-                                                </tbody>
-                                            </table>
-                                            </div>
-                                        }.into_any()
+                                    "alerts" => {
+                                        match client::list_alerts(Some(&tab_mac), 50) {
+                                            Ok(device_alerts) if device_alerts.is_empty() => {
+                                                view! { <p class="muted">"No alerts for this device."</p> }.into_any()
+                                            }
+                                            Ok(device_alerts) => {
+                                                view! {
+                                                    <div class="table-scroll">
+                                                    <table class="data-table">
+                                                        <thead><tr>
+                                                            <th>"Time"</th><th>"Rule"</th><th>"Severity"</th><th>"Message"</th>
+                                                        </tr></thead>
+                                                        <tbody>
+                                                            {device_alerts.iter().map(|a| {
+                                                                let sev_class = match a.severity.as_str() {
+                                                                    "high" => "badge badge-high",
+                                                                    "medium" => "badge badge-medium",
+                                                                    _ => "badge badge-low",
+                                                                };
+                                                                view! {
+                                                                    <tr>
+                                                                        <td>{format_timestamp(a.created_at)}</td>
+                                                                        <td>{a.rule.clone()}</td>
+                                                                        <td><span class={sev_class}>{a.severity.clone()}</span></td>
+                                                                        <td>{a.message.clone()}</td>
+                                                                    </tr>
+                                                                }
+                                                            }).collect_view()}
+                                                        </tbody>
+                                                    </table>
+                                                    </div>
+                                                }.into_any()
+                                            }
+                                            Err(e) => view! { <p class="error">{format!("Error loading alerts: {e}")}</p> }.into_any(),
+                                        }
                                     }
-                                    Err(e) => {
-                                        view! { <p class="error">{format!("Error loading connections: {e}")}</p> }.into_any()
-                                    }
-                                };
-
-                                let dns_view = match dns_result {
-                                    Ok(dns_logs) if dns_logs.is_empty() => {
-                                        view! { <p class="muted">"No DNS queries recorded."</p> }.into_any()
-                                    }
-                                    Ok(dns_logs) => {
-                                        view! {
-                                            <div class="table-scroll">
-                                            <table class="data-table">
-                                                <thead><tr>
-                                                    <th>"Domain"</th><th>"Type"</th><th>"Time"</th>
-                                                </tr></thead>
-                                                <tbody>
-                                                    {dns_logs.iter().map(|log| {
-                                                        view! {
-                                                            <tr>
-                                                                <td>{log.domain.clone()}</td>
-                                                                <td>{log.query_type.clone()}</td>
-                                                                <td>{format_timestamp(log.ts)}</td>
-                                                            </tr>
-                                                        }
-                                                    }).collect_view()}
-                                                </tbody>
-                                            </table>
-                                            </div>
-                                        }.into_any()
-                                    }
-                                    Err(e) => {
-                                        view! { <p class="error">{format!("Error loading DNS logs: {e}")}</p> }.into_any()
+                                    // "connections" (default)
+                                    _ => {
+                                        match device_ip.as_ref() {
+                                            Some(ip) => match client::list_connection_logs(Some(ip), None, None, None, 50, 0) {
+                                                Ok(conn_logs) if conn_logs.is_empty() => {
+                                                    view! { <p class="muted">"No connections recorded."</p> }.into_any()
+                                                }
+                                                Ok(conn_logs) => {
+                                                    view! {
+                                                        <div class="table-scroll">
+                                                        <table class="data-table">
+                                                            <thead><tr>
+                                                                <th>"Destination"</th><th>"Port"</th><th>"Protocol"</th>
+                                                                <th>"Sent"</th><th>"Received"</th><th>"Time"</th>
+                                                            </tr></thead>
+                                                            <tbody>
+                                                                {conn_logs.iter().map(|log| {
+                                                                    view! {
+                                                                        <tr>
+                                                                            <td>{log.dest_ip.clone()}</td>
+                                                                            <td>{log.dest_port}</td>
+                                                                            <td>{log.protocol.clone()}</td>
+                                                                            <td>{format_bytes(log.bytes_sent)}</td>
+                                                                            <td>{format_bytes(log.bytes_recv)}</td>
+                                                                            <td>{format_timestamp(log.started_at)}</td>
+                                                                        </tr>
+                                                                    }
+                                                                }).collect_view()}
+                                                            </tbody>
+                                                        </table>
+                                                        </div>
+                                                    }.into_any()
+                                                }
+                                                Err(e) => view! { <p class="error">{format!("Error loading connections: {e}")}</p> }.into_any(),
+                                            },
+                                            None => view! { <p class="muted">"No IP address assigned."</p> }.into_any(),
+                                        }
                                     }
                                 };
 
                                 view! {
-                                    <h2 class="section-header">"Recent Connections"</h2>
-                                    {conn_view}
-
-                                    <h2 class="section-header">"Recent DNS Queries"</h2>
-                                    {dns_view}
-                                }
-                            }
-
-                            {
-                                let alerts_view = match client::list_alerts(Some(&mac_for_alerts), 50) {
-                                    Ok(device_alerts) if device_alerts.is_empty() => {
-                                        view! { <p class="muted">"No alerts for this device."</p> }.into_any()
-                                    }
-                                    Ok(device_alerts) => {
-                                        view! {
-                                            <div class="table-scroll">
-                                            <table class="data-table">
-                                                <thead><tr>
-                                                    <th>"Time"</th><th>"Rule"</th><th>"Severity"</th><th>"Message"</th>
-                                                </tr></thead>
-                                                <tbody>
-                                                    {device_alerts.iter().map(|a| {
-                                                        let sev_class = match a.severity.as_str() {
-                                                            "high" => "badge badge-high",
-                                                            "medium" => "badge badge-medium",
-                                                            _ => "badge badge-low",
-                                                        };
-                                                        view! {
-                                                            <tr>
-                                                                <td>{format_timestamp(a.created_at)}</td>
-                                                                <td>{a.rule.clone()}</td>
-                                                                <td><span class={sev_class}>{a.severity.clone()}</span></td>
-                                                                <td>{a.message.clone()}</td>
-                                                            </tr>
-                                                        }
-                                                    }).collect_view()}
-                                                </tbody>
-                                            </table>
-                                            </div>
-                                        }.into_any()
-                                    }
-                                    Err(e) => {
-                                        view! { <p class="error">{format!("Error loading alerts: {e}")}</p> }.into_any()
-                                    }
-                                };
-
-                                view! {
-                                    <h2 class="section-header">"Recent Alerts"</h2>
-                                    {alerts_view}
+                                    <h2 class="section-header">"Activity"</h2>
+                                    {tab_bar}
+                                    {tab_content}
                                 }
                             }
                         }.into_any()

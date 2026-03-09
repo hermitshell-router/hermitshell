@@ -151,7 +151,7 @@ pub async fn toggle_upnp(enabled: String) -> Result<(), ServerFnError> {
     crate::client::set_upnp_enabled(enabled)
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("set_upnp_config", &enabled.to_string());
-    leptos_axum::redirect("/settings?msg=UPnP%20updated#port-forwarding");
+    leptos_axum::redirect("/settings/network?msg=UPnP%20updated#port-forwarding");
     Ok(())
 }
 
@@ -222,7 +222,7 @@ pub async fn add_port_forward(
     )
     .map_err(friendly_error)?;
     let _ = crate::client::log_audit("add_port_forward", &format!("{}:{}-{}", internal_ip, external_port_start, external_port_end));
-    leptos_axum::redirect("/settings?msg=Port%20forward%20added#port-forwarding");
+    leptos_axum::redirect("/settings/network?msg=Port%20forward%20added#port-forwarding");
     Ok(())
 }
 
@@ -231,7 +231,7 @@ pub async fn remove_port_forward(id: i64) -> Result<(), ServerFnError> {
     crate::client::remove_port_forward(id)
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("remove_port_forward", &id.to_string());
-    leptos_axum::redirect("/settings?msg=Port%20forward%20removed#port-forwarding");
+    leptos_axum::redirect("/settings/network?msg=Port%20forward%20removed#port-forwarding");
     Ok(())
 }
 
@@ -239,7 +239,7 @@ pub async fn remove_port_forward(id: i64) -> Result<(), ServerFnError> {
 pub async fn set_reservation(mac: String) -> Result<(), ServerFnError> {
     crate::client::set_dhcp_reservation(&mac, None)
         .map_err(friendly_error)?;
-    leptos_axum::redirect("/settings?msg=Reservation%20added");
+    leptos_axum::redirect("/settings/network?msg=Reservation%20added");
     Ok(())
 }
 
@@ -247,7 +247,7 @@ pub async fn set_reservation(mac: String) -> Result<(), ServerFnError> {
 pub async fn remove_reservation(mac: String) -> Result<(), ServerFnError> {
     crate::client::remove_dhcp_reservation(&mac)
         .map_err(friendly_error)?;
-    leptos_axum::redirect("/settings?msg=Reservation%20removed");
+    leptos_axum::redirect("/settings/network?msg=Reservation%20removed");
     Ok(())
 }
 
@@ -269,7 +269,7 @@ pub async fn set_log_config(
     crate::client::set_log_config(&config)
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("set_log_config", "");
-    leptos_axum::redirect("/settings?msg=Settings%20saved");
+    leptos_axum::redirect("/settings/monitoring?msg=Settings%20saved");
     Ok(())
 }
 
@@ -291,7 +291,7 @@ pub async fn set_runzero_config(
     crate::client::set_runzero_config(&config)
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("set_runzero_config", "");
-    leptos_axum::redirect("/settings?msg=Settings%20saved");
+    leptos_axum::redirect("/settings/monitoring?msg=Settings%20saved");
     Ok(())
 }
 
@@ -299,7 +299,7 @@ pub async fn set_runzero_config(
 pub async fn sync_runzero() -> Result<(), ServerFnError> {
     crate::client::sync_runzero()
         .map_err(friendly_error)?;
-    leptos_axum::redirect("/settings?msg=Sync%20started");
+    leptos_axum::redirect("/settings/monitoring?msg=Sync%20started");
     Ok(())
 }
 
@@ -331,7 +331,7 @@ pub async fn set_qos_config(
     crate::client::set_qos_config(enabled, upload, download)
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("set_qos_config", &format!("enabled={}", enabled));
-    leptos_axum::redirect("/settings?msg=Settings%20saved");
+    leptos_axum::redirect("/settings/network?msg=Settings%20saved");
     Ok(())
 }
 
@@ -339,7 +339,7 @@ pub async fn set_qos_config(
 pub async fn set_qos_test_url(url: String) -> Result<(), ServerFnError> {
     crate::client::set_qos_test_url(&url)
         .map_err(friendly_error)?;
-    leptos_axum::redirect("/settings?msg=Settings%20saved");
+    leptos_axum::redirect("/settings/network?msg=Settings%20saved");
     Ok(())
 }
 
@@ -347,7 +347,7 @@ pub async fn set_qos_test_url(url: String) -> Result<(), ServerFnError> {
 pub async fn run_speed_test() -> Result<(), ServerFnError> {
     crate::client::run_speed_test()
         .map_err(friendly_error)?;
-    leptos_axum::redirect("/settings?msg=Speed%20test%20started");
+    leptos_axum::redirect("/settings/network?msg=Speed%20test%20started");
     Ok(())
 }
 
@@ -356,7 +356,7 @@ pub async fn set_tls_custom_cert(cert_pem: String, key_pem: String) -> Result<()
     crate::client::set_tls_cert(&cert_pem, &key_pem)
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("set_tls_cert", "custom cert uploaded");
-    leptos_axum::redirect("/settings?msg=TLS%20settings%20saved");
+    leptos_axum::redirect("/settings/system?msg=TLS%20settings%20saved");
     Ok(())
 }
 
@@ -365,7 +365,7 @@ pub async fn set_tls_self_signed() -> Result<(), ServerFnError> {
     crate::client::set_tls_mode("self_signed", None)
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("set_tls_mode", "self_signed");
-    leptos_axum::redirect("/settings?msg=TLS%20settings%20saved");
+    leptos_axum::redirect("/settings/system?msg=TLS%20settings%20saved");
     Ok(())
 }
 
@@ -374,7 +374,7 @@ pub async fn set_tls_tailscale(domain: String) -> Result<(), ServerFnError> {
     crate::client::set_tls_mode("tailscale", Some(&domain))
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("set_tls_mode", &format!("tailscale: {}", domain));
-    leptos_axum::redirect("/settings?msg=TLS%20settings%20saved");
+    leptos_axum::redirect("/settings/system?msg=TLS%20settings%20saved");
     Ok(())
 }
 
@@ -388,7 +388,7 @@ pub async fn set_tls_acme(
     crate::client::set_acme_config(&domain, &email, &cf_api_token, &cf_zone_id)
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("set_acme_config", &domain);
-    leptos_axum::redirect("/settings?msg=TLS%20settings%20saved");
+    leptos_axum::redirect("/settings/system?msg=TLS%20settings%20saved");
     Ok(())
 }
 
@@ -523,7 +523,7 @@ pub async fn set_auto_update(enabled: String) -> Result<(), ServerFnError> {
     crate::client::set_auto_update(enabled)
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("set_auto_update", &enabled.to_string());
-    leptos_axum::redirect("/settings?msg=Settings%20saved");
+    leptos_axum::redirect("/settings/system?msg=Settings%20saved");
     Ok(())
 }
 
@@ -651,7 +651,7 @@ pub async fn change_password(
     crate::client::setup_password(&new_password, Some(&current_password))
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("change_password", "");
-    leptos_axum::redirect("/settings?msg=Password%20changed#security");
+    leptos_axum::redirect("/settings/system?msg=Password%20changed");
     Ok(())
 }
 
@@ -659,7 +659,7 @@ pub async fn change_password(
 pub async fn update_hostname(hostname: String) -> Result<(), ServerFnError> {
     crate::client::update_hostname(&hostname)
         .map_err(friendly_error)?;
-    leptos_axum::redirect("/settings?msg=Settings%20saved");
+    leptos_axum::redirect("/settings/network?msg=Settings%20saved");
     Ok(())
 }
 
@@ -667,7 +667,7 @@ pub async fn update_hostname(hostname: String) -> Result<(), ServerFnError> {
 pub async fn update_timezone(timezone: String) -> Result<(), ServerFnError> {
     crate::client::update_timezone(&timezone)
         .map_err(friendly_error)?;
-    leptos_axum::redirect("/settings?msg=Settings%20saved");
+    leptos_axum::redirect("/settings/network?msg=Settings%20saved");
     Ok(())
 }
 
@@ -682,7 +682,7 @@ pub async fn update_upstream_dns(upstream_dns: String, custom_dns: Option<String
     };
     crate::client::update_upstream_dns(&dns)
         .map_err(friendly_error)?;
-    leptos_axum::redirect("/settings?msg=Settings%20saved");
+    leptos_axum::redirect("/settings/network?msg=Settings%20saved");
     Ok(())
 }
 
@@ -702,7 +702,7 @@ pub async fn update_wan_config(
     )
     .map_err(friendly_error)?;
     let _ = crate::client::log_audit("update_wan_config", mode);
-    leptos_axum::redirect("/settings?msg=Settings%20saved");
+    leptos_axum::redirect("/settings/network?msg=Settings%20saved");
     Ok(())
 }
 
@@ -710,7 +710,7 @@ pub async fn update_wan_config(
 pub async fn update_interfaces(wan: String, lan: String) -> Result<(), ServerFnError> {
     crate::client::update_interfaces(&wan, &lan)
         .map_err(friendly_error)?;
-    leptos_axum::redirect("/settings?msg=Settings%20saved");
+    leptos_axum::redirect("/settings/network?msg=Settings%20saved");
     Ok(())
 }
 
@@ -821,7 +821,7 @@ pub async fn toggle_port_forward(id: i64, enabled: String) -> Result<(), ServerF
     crate::client::set_port_forward_enabled(id, enabled)
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("set_port_forward_enabled", &format!("{}={}", id, enabled));
-    leptos_axum::redirect("/settings?msg=Port%20forward%20updated#port-forwarding");
+    leptos_axum::redirect("/settings/network?msg=Port%20forward%20updated#port-forwarding");
     Ok(())
 }
 
@@ -836,7 +836,7 @@ pub async fn add_ipv6_pinhole(
     crate::client::add_ipv6_pinhole(&device_mac, &protocol, port_start, port_end, &description)
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("add_ipv6_pinhole", &format!("{}: {}/{}-{}", device_mac, protocol, port_start, port_end));
-    leptos_axum::redirect("/settings?msg=Pinhole%20added#port-forwarding");
+    leptos_axum::redirect("/settings/network?msg=Pinhole%20added#port-forwarding");
     Ok(())
 }
 
@@ -845,7 +845,7 @@ pub async fn remove_ipv6_pinhole(id: i64) -> Result<(), ServerFnError> {
     crate::client::remove_ipv6_pinhole(id)
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("remove_ipv6_pinhole", &id.to_string());
-    leptos_axum::redirect("/settings?msg=Pinhole%20removed#port-forwarding");
+    leptos_axum::redirect("/settings/network?msg=Pinhole%20removed#port-forwarding");
     Ok(())
 }
 
@@ -884,7 +884,7 @@ pub async fn set_wg_peer_group(public_key: String, group: String) -> Result<(), 
 pub async fn enable_vlan() -> Result<(), ServerFnError> {
     crate::client::vlan_enable().map_err(friendly_error)?;
     let _ = crate::client::log_audit("vlan_enable", "");
-    leptos_axum::redirect("/settings?msg=VLANs%20enabled#vlans");
+    leptos_axum::redirect("/settings/network?msg=VLANs%20enabled#vlans");
     Ok(())
 }
 
@@ -892,7 +892,7 @@ pub async fn enable_vlan() -> Result<(), ServerFnError> {
 pub async fn disable_vlan() -> Result<(), ServerFnError> {
     crate::client::vlan_disable().map_err(friendly_error)?;
     let _ = crate::client::log_audit("vlan_disable", "");
-    leptos_axum::redirect("/settings?msg=VLANs%20disabled#vlans");
+    leptos_axum::redirect("/settings/network?msg=VLANs%20disabled#vlans");
     Ok(())
 }
 
@@ -901,7 +901,7 @@ pub async fn update_vlan_id(group: String, vlan_id: u16) -> Result<(), ServerFnE
     crate::client::vlan_update_config(&group, vlan_id)
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("vlan_update_config", &format!("{}: {}", group, vlan_id));
-    leptos_axum::redirect("/settings?msg=VLAN%20ID%20updated#vlans");
+    leptos_axum::redirect("/settings/network?msg=VLAN%20ID%20updated#vlans");
     Ok(())
 }
 
@@ -913,7 +913,7 @@ pub async fn set_analyzer_enabled(enabled: String) -> Result<(), ServerFnError> 
     crate::client::set_config("analyzer_enabled", val)
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("set_analyzer_enabled", val);
-    leptos_axum::redirect("/settings?msg=Settings%20saved");
+    leptos_axum::redirect("/settings/monitoring?msg=Settings%20saved");
     Ok(())
 }
 
@@ -928,7 +928,7 @@ pub async fn set_alert_rule(rule: String, enabled: String) -> Result<(), ServerF
     crate::client::set_config(&key, val)
         .map_err(friendly_error)?;
     let _ = crate::client::log_audit("set_alert_rule", &format!("{}={}", rule, val));
-    leptos_axum::redirect("/settings?msg=Settings%20saved");
+    leptos_axum::redirect("/settings/monitoring?msg=Settings%20saved");
     Ok(())
 }
 
@@ -958,7 +958,7 @@ pub async fn add_switch(
             .map_err(friendly_error)?;
     }
     let _ = crate::client::log_audit("switch_add", &name);
-    leptos_axum::redirect("/settings?msg=Switch%20added#switches");
+    leptos_axum::redirect("/settings/network?msg=Switch%20added#switches");
     Ok(())
 }
 
@@ -966,14 +966,14 @@ pub async fn add_switch(
 pub async fn remove_switch(name: String) -> Result<(), ServerFnError> {
     crate::client::remove_switch(&name).map_err(friendly_error)?;
     let _ = crate::client::log_audit("switch_remove", &name);
-    leptos_axum::redirect("/settings?msg=Switch%20removed#switches");
+    leptos_axum::redirect("/settings/network?msg=Switch%20removed#switches");
     Ok(())
 }
 
 #[server]
 pub async fn test_switch(name: String) -> Result<(), ServerFnError> {
     crate::client::test_switch(&name).map_err(friendly_error)?;
-    leptos_axum::redirect("/settings?msg=Switch%20tested#switches");
+    leptos_axum::redirect("/settings/network?msg=Switch%20tested#switches");
     Ok(())
 }
 
@@ -1049,7 +1049,7 @@ pub async fn totp_setup() -> Result<String, ServerFnError> {
 pub async fn totp_enable(code: String) -> Result<(), ServerFnError> {
     crate::client::totp_enable(&code)
         .map_err(friendly_error)?;
-    leptos_axum::redirect("/settings?msg=2FA%20enabled#security");
+    leptos_axum::redirect("/settings/system?msg=2FA%20enabled");
     Ok(())
 }
 
@@ -1057,7 +1057,7 @@ pub async fn totp_enable(code: String) -> Result<(), ServerFnError> {
 pub async fn totp_disable(password: String) -> Result<(), ServerFnError> {
     crate::client::totp_disable(&password)
         .map_err(friendly_error)?;
-    leptos_axum::redirect("/settings?msg=2FA%20disabled#security");
+    leptos_axum::redirect("/settings/system?msg=2FA%20disabled");
     Ok(())
 }
 

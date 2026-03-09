@@ -45,7 +45,7 @@ pub fn Dashboard() -> impl IntoView {
                             <div class="alert-banner">
                                 <span>"Protect your router with two-factor authentication."</span>
                                 <div class="alert-banner-actions">
-                                    <a href="/settings#two-factor" class="btn btn-sm btn-primary">"Enable in Settings"</a>
+                                    <a href="/settings/system#two-factor" class="btn btn-sm btn-primary">"Enable in Settings"</a>
                                     <ActionForm action=dismiss_action>
                                         <button type="submit" class="btn btn-sm">"Dismiss"</button>
                                     </ActionForm>

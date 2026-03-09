@@ -136,7 +136,7 @@ pub fn Dns() -> impl IntoView {
                             <div class="settings-section">
                                 <h3>"Block Lists"</h3>
                                 {if lists.is_empty() {
-                                    view! { <p class="settings-empty">"No blocklists configured"</p> }.into_any()
+                                    view! { <p class="settings-empty">"No blocklists configured. Add one to block ads and trackers by domain."</p> }.into_any()
                                 } else {
                                     view! {
                                         <div class="table-scroll">
@@ -228,7 +228,7 @@ pub fn Dns() -> impl IntoView {
                             <div class="settings-section">
                                 <h3>"Forward Zones"</h3>
                                 {if zones.is_empty() {
-                                    view! { <p class="settings-empty">"No forward zones configured"</p> }.into_any()
+                                    view! { <p class="settings-empty">"No forward zones configured. Use these to resolve local domains via a specific DNS server."</p> }.into_any()
                                 } else {
                                     view! {
                                         <div class="table-scroll">
@@ -312,7 +312,7 @@ pub fn Dns() -> impl IntoView {
                             <div class="settings-section">
                                 <h3>"Custom DNS Rules"</h3>
                                 {if rules.is_empty() {
-                                    view! { <p class="settings-empty">"No custom rules configured"</p> }.into_any()
+                                    view! { <p class="settings-empty">"No custom rules configured. Override DNS resolution for specific domains."</p> }.into_any()
                                 } else {
                                     view! {
                                         <div class="table-scroll">

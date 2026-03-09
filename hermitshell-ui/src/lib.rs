@@ -19,6 +19,9 @@ use pages::guest::Guest;
 use pages::login::Login;
 use pages::logs::Logs;
 use pages::settings::Settings;
+use pages::settings_network::SettingsNetwork;
+use pages::settings_monitoring::SettingsMonitoring;
+use pages::settings_system::SettingsSystem;
 use pages::setup::{Setup, SetupStep1, SetupStep2, SetupStep3, SetupStep4, SetupStep5, SetupStep6, SetupStep7, SetupStep8};
 use pages::traffic::Traffic;
 use pages::wifi::Wifi;
@@ -40,6 +43,9 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/guest") view=Guest />
                     <Route path=path!("/wifi") view=Wifi />
                     <Route path=path!("/settings") view=Settings />
+                    <Route path=path!("/settings/network") view=SettingsNetwork />
+                    <Route path=path!("/settings/monitoring") view=SettingsMonitoring />
+                    <Route path=path!("/settings/system") view=SettingsSystem />
                     <Route path=path!("/logs") view=Logs />
                     <Route path=path!("/login") view=Login />
                     <Route path=path!("/setup") view=Setup />

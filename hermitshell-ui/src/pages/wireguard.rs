@@ -51,7 +51,7 @@ pub fn Wireguard() -> impl IntoView {
                             <div class="settings-section">
                                 <h3>"Peers"</h3>
                                 {if wg.peers.is_empty() {
-                                    view! { <p class="text-muted">"No peers configured."</p> }.into_any()
+                                    view! { <p class="text-muted">"No peers configured. Add a peer to allow VPN access to your network."</p> }.into_any()
                                 } else {
                                     view! {
                                         <div class="table-scroll">
