@@ -2,31 +2,7 @@
 
 This document tracks security compromises made during implementation, why they were made, and what the proper fix would be.
 
-Most entries from the original audit have been resolved — either fixed in code, accepted as appropriate for the home router threat model, or addressed by the 2026-03-08 security hardening sweep. The remaining items below require future architectural work.
-
----
-
-## Software Updates
-
-## 86. Update binaries downloaded without signature verification
-
-**What:** `apply_update` downloads release tarballs from GitHub and verifies them via SHA256 checksum. There is no GPG signature verification. The checksum is fetched alongside the tarball from the same origin.
-
-**Why:** The checksum verifies download integrity but not authenticity — an attacker who compromises the GitHub release could publish a malicious tarball with a matching checksum. This is the same trust model as the `install.sh` script and most projects that distribute via GitHub releases (OpenWrt, OPNsense).
-
-**Risk:** Medium. Requires compromising the GitHub repo or performing a MITM on the HTTPS connection to github.com (TLS protects against the latter). If successful, an attacker gets code execution as root on the router.
-
-**Proper fix:** GPG-sign releases with a project key. Embed the public key in the agent binary and verify the detached signature before extracting.
-
-## 87. Auto-update installs new code without admin interaction
-
-**What:** When `auto_update_enabled` is true, the agent downloads and installs new releases automatically when discovered by the update checker.
-
-**Why:** Convenience for users who prefer hands-off maintenance. Opt-in, disabled by default.
-
-**Risk:** Combined with #86 (no signature verification), a compromised release would be auto-installed without the admin seeing a notification first. The rollback mechanism catches crashes but not deliberately malicious code that runs successfully.
-
-**Proper fix:** Acceptable as opt-in. Signature verification (#86) is the proper mitigation.
+Most entries from the original audit have been resolved — either fixed in code, accepted as appropriate for the home router threat model, or addressed by the 2026-03-08/09 security hardening sweeps. The remaining items below require future architectural work or are accepted tradeoffs.
 
 ---
 
@@ -46,34 +22,6 @@ Most entries from the original audit have been resolved — either fixed in code
 
 ---
 
-## Post-Wizard Settings
-
-## 107. Post-wizard interface change can lock out the admin
-
-**What:** The wizard's `handle_set_interfaces` can only run before a password is set — meaning before the admin has a management session and before real traffic flows. The post-wizard `handle_update_interfaces` has no such guard. An admin can swap WAN and LAN assignments on a live router.
-
-**Why:** The whole point of the post-wizard settings is to allow reconfiguration after setup. Blocking interface changes would defeat the purpose.
-
-**Risk:** If the admin swaps WAN and LAN (or assigns the management interface as WAN), the next agent restart applies the new assignment. The firewall rules flip, the DHCP server binds to the wrong interface, and the admin's management connection drops. Recovery requires console access or physical presence to fix the config DB.
-
-**Proper fix:** Display a confirmation warning in the UI when the new interface assignment differs from the current running config. Consider a watchdog timer that reverts the change if the admin does not confirm via a second request within 60 seconds (similar to display resolution change dialogs).
-
----
-
-## Declarative Config System
-
-## 111. WireGuard peer reconciliation deferred to agent restart
-
-**What:** When `apply_config` processes WireGuard peers, it deletes all rows from `wg_peers` and re-inserts the declared peers with fresh subnet allocations and nftables rules. However, runtime changes to the `wg0` interface (adding/removing peers via the `wg` command) are not performed — they are deferred to the next agent restart.
-
-**Why:** Reconciling the live wg0 interface requires kernel syscalls for each peer add/remove and must coordinate with the interface's private key and listen port. The same deferral pattern is used by `import_config`.
-
-**Risk:** Between apply and restart, the database and running WireGuard interface are out of sync. Peers deleted from the config can still connect via wg0, and newly declared peers cannot connect until the agent restarts. If the agent crashes before restarting, the DB has the new state while wg0 retains the old state.
-
-**Proper fix:** Reconcile WireGuard peers live by computing a diff (peers to add, remove, keep) and applying changes via `wg set` commands. Use a transaction to ensure DB and wg0 changes are atomic.
-
----
-
 ## Security Logging and Monitoring (OWASP C9)
 
 ## 141. Syslog export limited to unencrypted UDP
@@ -85,3 +33,51 @@ Most entries from the original audit have been resolved — either fixed in code
 **Risk:** On a shared network, syslog messages are visible to any observer. For a home router where the syslog receiver is typically on the same trusted LAN, the risk is low. However, for users forwarding logs to a cloud SIEM over the WAN, plaintext UDP is unacceptable. The webhook export (which supports HTTPS) is the recommended alternative for encrypted log forwarding.
 
 **Proper fix:** Add `tcp+tls://` prefix support to `parse_syslog_target()`. Implement a persistent TCP+TLS connection using `rustls` (already a dependency) with automatic reconnection. Use RFC 5425 octet counting framing. This removes the 480-byte message limit and provides confidentiality and integrity for syslog transport.
+
+---
+
+## Cryptographic Design
+
+## 142. HKDF-SHA256 without salt for WiFi password encryption (enc:v1)
+
+**What:** `crypto.rs` derives AES-256 encryption keys from the session secret using HKDF-SHA256 with no salt (`Hkdf::new(None, ...)`). The encrypted values are stored in the database with an `enc:v1:` prefix.
+
+**Why:** The session secret is 32 bytes of OS-sourced random data, making the unsalted HKDF output indistinguishable from random. Adding a salt now would break decryption of all existing `enc:v1:` values with no recovery path.
+
+**Risk:** Low. The cryptographic argument is sound — HKDF with high-entropy input does not benefit from a salt. The concern is defense-in-depth: a salt provides domain separation in case the same secret is reused across contexts (it is not, but a future refactor could introduce this).
+
+**Proper fix:** Introduce `enc:v2:` with a static domain-separation salt and transparent migration from v1 values on first read.
+
+## 143. CSP allows `unsafe-inline` for stylesheets
+
+**What:** The Content-Security-Policy meta tag in `layout.rs` includes `style-src 'self' 'unsafe-inline'`. Scripts are properly nonce-gated.
+
+**Why:** Leptos SSR renders component styles inline. Extracting them into external stylesheets or computing per-element hashes at SSR time is not supported by the framework.
+
+**Risk:** Low. CSS injection can exfiltrate data via `background-image: url(...)` or overlay UI elements, but requires an HTML injection point first. All user-controlled values in the UI are escaped by Leptos's templating system.
+
+**Proper fix:** When Leptos supports nonce-gated inline styles or style extraction, switch to `style-src 'self' 'nonce-{nonce}'`.
+
+## 144. MD5 used for TP-Link EAP720 authentication
+
+**What:** `wifi/eap_standalone.rs` hashes the AP management password with MD5 (uppercase hex) before sending it to the EAP720 web UI.
+
+**Why:** The EAP720 firmware (1.0.0) requires this specific authentication format. This is a reverse-engineered protocol constraint, not a design choice.
+
+**Risk:** Low. The MD5 hash is sent over HTTPS to a device on the local LAN. MD5's collision weakness is irrelevant for this use case (password obfuscation, not integrity verification). The actual password is stored encrypted (AES-256-GCM) in the HermitShell database.
+
+**Proper fix:** None available — the AP firmware dictates the protocol. If TP-Link releases firmware with a stronger auth scheme, update the provider implementation.
+
+---
+
+## Concurrency Design
+
+## 145. Mutex poisoning causes cascading panics
+
+**What:** All `Mutex::lock()` calls use `.unwrap()`, which panics if the mutex is poisoned (i.e., another thread panicked while holding the lock). The database mutex is shared across the socket handler, REST API, conntrack thread, update loop, and background tasks.
+
+**Why:** This is a deliberate fail-fast design. If a thread panics while holding the DB mutex, the database state may be inconsistent. Continuing to serve requests against a potentially corrupted state is worse than crashing. The systemd unit restarts the agent on crash, and SQLite's WAL journal ensures database integrity across restarts.
+
+**Risk:** Low. A single panic in any DB-holding code path takes down the entire agent. This is acceptable for a router daemon where a clean restart is the correct recovery strategy. The agent starts in ~2 seconds, so downtime is minimal.
+
+**Accepted as intentional.** The fail-fast behavior is the correct choice for this threat model.
