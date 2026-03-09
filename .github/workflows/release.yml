@@ -74,14 +74,13 @@ jobs:
       - name: Sign tarball (Ed25519)
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          TARBALL: hermitshell-${{ github.ref_name }}-${{ matrix.arch }}-linux.tar.gz
         run: |
           if [ -z "$RELEASE_SIGNING_KEY" ]; then
             echo "::warning::RELEASE_SIGNING_KEY not set, skipping tarball signing"
             exit 0
           fi
           pip install --break-system-packages cryptography
-          VERSION="${GITHUB_REF_NAME}"
-          TARBALL="hermitshell-${VERSION}-${{ matrix.arch }}-linux.tar.gz"
           python3 -c "
           import os
           from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -103,8 +102,6 @@ jobs:
 
           print(f'Signed {tarball_path} ({len(data)} bytes)')
           "
-        env:
-          TARBALL: hermitshell-${{ github.ref_name }}-${{ matrix.arch }}-linux.tar.gz
 
       - name: Install cargo-deb
         run: cargo install cargo-deb
