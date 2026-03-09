@@ -205,23 +205,19 @@ pub async fn apply_update(db: &std::sync::Arc<std::sync::Mutex<crate::db::Db>>) 
 
     // Download and verify Ed25519 signature
     let sig_url = format!("{}.sig", tarball_url);
-    let sig_resp = client.get(&sig_url).send().await?;
-    if sig_resp.status().is_success() {
-        let sig_bytes = sig_resp.bytes().await?;
-        if sig_bytes.len() != 64 {
-            anyhow::bail!(
-                "invalid signature file: expected 64 bytes, got {}",
-                sig_bytes.len()
-            );
-        }
-        let sig_array: [u8; 64] = sig_bytes[..64].try_into().unwrap();
-        verify_release_signature(&tarball_bytes, &sig_array, RELEASE_PUBLIC_KEY)?;
-        info!("signature verified");
-    } else {
-        // Transitional: older releases may not have .sig files yet.
-        // TODO: Make signature verification mandatory once all releases are signed.
-        warn!(status = %sig_resp.status(), "no signature file available, skipping verification");
+    let sig_bytes = client.get(&sig_url).send().await?
+        .error_for_status()
+        .map_err(|e| anyhow::anyhow!("signature file not available for {}: {}", version, e))?
+        .bytes().await?;
+    if sig_bytes.len() != 64 {
+        anyhow::bail!(
+            "invalid signature file: expected 64 bytes, got {}",
+            sig_bytes.len()
+        );
     }
+    let sig_array: [u8; 64] = sig_bytes[..64].try_into().unwrap();
+    verify_release_signature(&tarball_bytes, &sig_array, RELEASE_PUBLIC_KEY)?;
+    info!("signature verified");
 
     // Create rollback dir and copy current binaries
     let rollback_dir = paths::rollback_dir();
