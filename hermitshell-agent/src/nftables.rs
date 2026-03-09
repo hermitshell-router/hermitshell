@@ -260,12 +260,13 @@ table inet traffic {{
 }
 
 fn execute_nft_script(rules: &str) -> Result<()> {
-    let temp_path = "/tmp/hermitshell-rules.nft";
-    std::fs::write(temp_path, rules)?;
+    use std::io::Write;
+    let mut temp = tempfile::NamedTempFile::new()
+        .map_err(|e| anyhow::anyhow!("failed to create temp file: {}", e))?;
+    temp.write_all(rules.as_bytes())?;
     let status = Command::new(paths::nft())
-        .args(["-f", temp_path])
+        .args(["-f", temp.path().to_str().unwrap_or("/dev/null")])
         .status()?;
-    let _ = std::fs::remove_file(temp_path);
     if !status.success() {
         anyhow::bail!("Failed to apply nftables rules");
     }

@@ -1,6 +1,6 @@
 use super::*;
 use rand::TryRng;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 pub(super) fn handle_has_password(_req: &Request, db: &Arc<Mutex<Db>>) -> Response {
     let db = db.lock().unwrap();
@@ -122,8 +122,12 @@ pub(super) fn handle_setup_password(req: &Request, db: &Arc<Mutex<Db>>, login_ra
             {
                 let mut buf = [0u8; 32];
                 rand::rngs::SysRng.try_fill_bytes(&mut buf).expect("OS RNG failed");
-                let new_secret = hex::encode(buf);
-                let _ = db.set_config("session_secret", &new_secret);
+                let new_secret = Zeroizing::new(hex::encode(buf));
+                buf.zeroize();
+                if let Err(e) = db.set_config("session_secret", &new_secret) {
+                    error!("failed to rotate session secret: {}", e);
+                    return Response::err("password changed but session rotation failed");
+                }
                 info!("session secret rotated after password change");
             }
             let action = if is_change { "password_changed" } else { "password_set" };
@@ -142,7 +146,9 @@ pub(super) fn handle_create_session(_req: &Request, db: &Arc<Mutex<Db>>) -> Resp
             let s = {
                 let mut buf = [0u8; 32];
                 rand::rngs::SysRng.try_fill_bytes(&mut buf).expect("OS RNG failed");
-                hex::encode(buf)
+                let encoded = hex::encode(buf);
+                buf.zeroize();
+                encoded
             };
             if let Err(e) = db.set_config("session_secret", &s) {
                 return Response::err(&format!("failed to store secret: {}", e));

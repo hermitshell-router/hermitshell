@@ -33,6 +33,7 @@ use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 use rand::TryRng;
 use tracing::{debug, error, info, warn};
+use zeroize::Zeroize;
 
 const POLL_INTERVAL_SECS: u64 = 10;
 
@@ -529,7 +530,9 @@ async fn main() -> Result<()> {
             let secret = {
                 let mut buf = [0u8; 32];
                 rand::rngs::SysRng.try_fill_bytes(&mut buf).expect("OS RNG failed");
-                hex::encode(buf)
+                let encoded = hex::encode(buf);
+                buf.zeroize();
+                encoded
             };
             let _ = db_guard.set_config("session_secret", &secret);
             info!("session secret generated");
