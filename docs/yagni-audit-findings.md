@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-**31 features evaluated. 13 Keep, 9 Defer, 9 Cut.**
+**31 features evaluated. 14 Keep, 8 Defer, 9 Cut.**
 
 Estimated removal: **~6,400 lines of Rust** plus significant dependency reductions (snmp2, flate2, tar, ed25519-dalek, instant-acme, data-encoding). The cuts concentrate in three areas:
 
@@ -33,7 +33,7 @@ Sorted by verdict (Cut → Defer → Keep), then by average score ascending.
 | 8 | PCP protocol | VPN/Remote | 2.6 | **Cut** | ~430 | No consumer device requires it |
 | 9 | DNS bypass per group | DNS | 2.6 | **Cut** | ~30 | Dead code; undermines privacy promise |
 | 10 | Webhook export | Ops | 2.6 | **Cut** | ~100 | Enterprise; syslog covers it |
-| 11 | UniFi controller integration | Integrations | 2.4 | **Defer** | 895 | "No controller" product IS a controller |
+| 11 | UniFi controller integration | Integrations | 2.4 | **Keep** | 895 | Already implemented; clean trait abstraction |
 | 12 | WiFi feature scope (active) | Integrations | 2.6 | **Defer** | 940 | AP's own UI does this |
 | 13 | Behavioral analysis | Ops | 2.6 | **Defer** | 297 | Mini-IDS; too noisy for home users |
 | 14 | DNS forward zones | DNS | 2.8 | **Defer** | ~120 | Niche split-horizon DNS |
@@ -74,7 +74,7 @@ Sorted by verdict (Cut → Defer → Keep), then by average score ascending.
 |-----------|-------|--------|
 | `upnp.rs` | 965 | Cut (replace with miniupnpd) |
 | `natpmp.rs` | 734 | Cut (free with miniupnpd) |
-| `wifi/unifi.rs` | 895 | Defer |
+| `wifi/unifi.rs` | 895 | Keep |
 | `wifi/eap_standalone.rs` | 765 | Cut |
 | `socket/wifi.rs` | 647 | Defer (keep passive WiFi only) |
 | `wifi/mod.rs` | 293 | Defer (keep passive WiFi only) |
@@ -132,7 +132,7 @@ Each step leaves the project in a compiling, functional state:
 7. **Cut GUI self-update** — independent module
 8. **Cut ACME DNS-01** — portion of tls.rs
 9. **Cut webhook export** — portion of log_export.rs
-10. **Defer UniFi + active WiFi management** — behind trait; remove providers
+10. **Defer active WiFi management (non-UniFi)** — keep UniFi provider
 11. **Defer guest network** — depends on WiFi providers
 12. **Defer behavioral analysis** — independent module
 13. **Defer QoS (CAKE + DSCP)** — independent module
@@ -145,7 +145,7 @@ Each step leaves the project in a compiling, functional state:
 ## Architectural Observations
 
 ### The Controller Paradox
-HermitShell positions itself as "no controller needed" but ships a multi-vendor WiFi AP controller (1,660 lines across two vendors). This is a branding and messaging contradiction. If WiFi management returns post-1.0, it should be an explicitly optional, separately installable component.
+HermitShell positions itself as "no controller needed" but ships WiFi AP management. The UniFi integration is already implemented and well-abstracted behind traits — keeping it is pragmatic since UniFi is the dominant prosumer AP platform. The TP-Link EAP standalone provider (reverse-engineered, fragile) should still be cut.
 
 ### The VLAN-SNMP Cascade
 VLANs, SNMP switches, and WiFi SSID VLAN tagging form a coupled dependency chain. Cutting VLANs cleanly cascades to cutting SNMP and WiFi VLAN tagging — three features removed by one decision.
