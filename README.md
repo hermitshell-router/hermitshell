@@ -2,9 +2,9 @@
 
 Open-source router platform. No cloud, no controller, runs on commodity hardware.
 
-Every device on your network gets its own isolated subnet automatically — no VLANs to configure. HermitShell handles routing, firewalling, DHCP, DNS ad blocking, WireGuard VPN, WiFi AP management (UniFi and TP-Link EAP), behavioral analysis, and more through a web UI.
+Every device on your network gets its own isolated /32 subnet automatically with no VLANs to configure. HermitShell handles routing, firewalling, DHCP, DNS ad blocking, WireGuard VPN, WiFi AP management (UniFi and TP-Link EAP), and more through a web UI.
 
-Runs on any x86_64 or aarch64 Linux box with two NICs.
+Runs on any x86_64 or aarch64 Linux box with two NICs; one for WAN and one for LAN.
 
 ## What You Need
 
@@ -55,7 +55,7 @@ sudo bash install.sh --wan eth0 --lan eth1
 
 ### After Install
 
-Open **https://10.0.0.1** in your browser (the default LAN gateway). You'll see a self-signed certificate warning on first visit — this is expected. The setup wizard walks you through interface selection, LAN configuration, and setting an admin password.
+Open **https://10.0.0.1** in your browser (the default LAN gateway). You'll see a self-signed certificate warning on first visit, but this is expected. The setup wizard walks you through interface selection, LAN configuration, and setting an admin password.
 
 ## Features
 
