@@ -42,7 +42,7 @@ rustls-pki-types = "1"
 urlencoding = "2"
 nix = { version = "0.31", features = ["fs", "hostname", "signal", "user"] }
 tempfile = "3"
-sha1 = "0.10"
+sha1 = "0.11"
 data-encoding = "2"
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 zeroize = "1"
