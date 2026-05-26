@@ -54,7 +54,7 @@ fn render_traffic(mut devices: Vec<crate::types::Device>, realtime: Vec<hermitsh
 
     // Sort real-time by throughput (descending)
     let mut rt_sorted = realtime;
-    rt_sorted.sort_by(|a, b| (b.rx_bps + b.tx_bps).cmp(&(a.rx_bps + a.tx_bps)));
+    rt_sorted.sort_by_key(|d| std::cmp::Reverse(d.rx_bps + d.tx_bps));
 
     devices.sort_by(|a, b| {
         let total_b = b.rx_bytes + b.tx_bytes;

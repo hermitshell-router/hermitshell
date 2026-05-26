@@ -7,7 +7,6 @@ targets = [
 [advisories]
 ignore = [
     # Transitive deps from Leptos/reqwest — can't upgrade without upstream changes.
-    { id = "RUSTSEC-2024-0421", reason = "idna 0.2.3 via cookie_store; awaiting upstream update" },
     { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; used by Leptos macros" },
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained; used by hermitshell-agent directly, migrate to rustls-pki-types" },
 ]

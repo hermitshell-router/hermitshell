@@ -95,7 +95,7 @@ fn render_dashboard(status: Status, mut devices: Vec<Device>, guest_status: serd
     let guest_ssid = guest_status["ssid_name"].as_str().unwrap_or("").to_string();
     let guest_count = devices.iter().filter(|d| d.device_group == "guest").count();
 
-    devices.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+    devices.sort_by_key(|d| std::cmp::Reverse(d.last_seen));
     let recent: Vec<Device> = devices.into_iter().take(5).collect();
 
     view! {

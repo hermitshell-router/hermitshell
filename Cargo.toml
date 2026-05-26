@@ -6,7 +6,7 @@ members = ["hermitshell", "hermitshell-agent", "hermitshell-common", "hermitshel
 hermitshell-common = { path = "hermitshell-common" }
 anyhow = "1"
 axum = "0.8"
-dhcproto = "0.14"
+dhcproto = "0.15"
 leptos = { version = "0.8", features = ["ssr", "nonce"] }
 leptos_axum = "0.8"
 leptos_router = { version = "0.8", features = ["ssr"] }

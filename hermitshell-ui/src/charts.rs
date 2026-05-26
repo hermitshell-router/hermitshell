@@ -52,7 +52,7 @@ pub fn bandwidth_chart(data: &[BandwidthPoint], width: u32, height: u32) -> Stri
 
     // Close paths for fill (go to baseline and back)
     let baseline_y = (margin_top + chart_h) as f64;
-    let last_x = margin_left as f64 + (n - 1).max(0) as f64 * x_step;
+    let last_x = margin_left as f64 + (n - 1) as f64 * x_step;
     let first_x = margin_left as f64;
 
     let rx_fill = format!("{rx_points}L{last_x:.1},{baseline_y:.1}L{first_x:.1},{baseline_y:.1}Z");
