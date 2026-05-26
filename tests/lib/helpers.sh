@@ -142,6 +142,7 @@ wait_for() {
 
 require_agent() {
     _check_ready() {
+        vm_sudo router "chmod 666 /run/hermitshell/agent.sock" 2>/dev/null
         vm_exec router 'echo "{\"method\":\"get_status\"}" | socat - UNIX-CONNECT:/run/hermitshell/agent.sock' 2>/dev/null | grep -q '"ok":true'
     }
     wait_for 15 "Agent socket ready" _check_ready
