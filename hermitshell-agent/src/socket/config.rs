@@ -441,11 +441,9 @@ pub(super) fn handle_import_config(req: &Request, db: &Arc<Mutex<Db>>, portmap: 
 
             // Type-specific URL validation (matches handle_wifi_add_provider)
             match provider_type {
-                "eap_standalone" => {
-                    if url.parse::<std::net::IpAddr>().is_err() {
-                        warn!(url = %url, "import_config: skipping eap_standalone provider with invalid IP");
-                        continue;
-                    }
+                "eap_standalone" if url.parse::<std::net::IpAddr>().is_err() => {
+                    warn!(url = %url, "import_config: skipping eap_standalone provider with invalid IP");
+                    continue;
                 }
                 "unifi" => {
                     match reqwest::Url::parse(url) {

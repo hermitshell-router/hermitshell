@@ -165,15 +165,11 @@ pub(super) fn handle_add_dns_rule(
 
     // Validate value based on type
     match record_type {
-        "A" => {
-            if value.parse::<std::net::Ipv4Addr>().is_err() {
-                return Response::err("A record value must be a valid IPv4 address");
-            }
+        "A" if value.parse::<std::net::Ipv4Addr>().is_err() => {
+            return Response::err("A record value must be a valid IPv4 address");
         }
-        "AAAA" => {
-            if value.parse::<std::net::Ipv6Addr>().is_err() {
-                return Response::err("AAAA record value must be a valid IPv6 address");
-            }
+        "AAAA" if value.parse::<std::net::Ipv6Addr>().is_err() => {
+            return Response::err("AAAA record value must be a valid IPv6 address");
         }
         "CNAME" | "MX" => {
             if let Err(e) = crate::unbound::validate_domain(value) {

@@ -436,13 +436,10 @@ fn dhcp4_acquire_blocking(
                 }
             };
             match v4::Message::decode(&mut Decoder::new(&buf[..n])) {
-                Ok(msg) if msg.xid() == xid => {
-                    if msg.opts().msg_type() == Some(MessageType::Offer) {
-                        break Some(msg);
-                    }
-                    // Not an OFFER for us, keep listening
+                Ok(msg) if msg.xid() == xid && msg.opts().msg_type() == Some(MessageType::Offer) => {
+                    break Some(msg);
                 }
-                _ => {} // ignore parse errors or wrong xid
+                _ => {}
             }
         };
 
