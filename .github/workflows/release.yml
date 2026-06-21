@@ -21,7 +21,7 @@ jobs:
             docker_platform: linux/arm64
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install musl tools
         if: matrix.arch == 'x86_64'
@@ -148,7 +148,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/download-artifact@v8
         with:
